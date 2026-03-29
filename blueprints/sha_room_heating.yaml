@@ -10,6 +10,11 @@ blueprint:
     detection and manual override support.
     Requires Smart Heating Advisor integration for AI-optimized
     heating rate.
+    **Ensure that you have installed the uptime integration:**
+
+    [![Open your Home Assistant instance and show an integration.](https://my.home-assistant.io/badges/integration.svg)](https://my.home-assistant.io/redirect/integration/?domain=uptime)
+
+  source_url: https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_room_heating.yaml
   domain: automation
   input:
     # --- Entities ---

@@ -1,0 +1,11 @@
+{
+  "name": "Smart Heating Advisor",
+  "content_in_root": false,
+  "homeassistant": "2024.1.0",
+  "filename": "smart_heating_advisor.zip",
+  "country": [],
+  "description": "AI-powered smart heating advisor that optimizes room temperatures using historical data, weather forecasts and local AI (Ollama) to save energy and reduce heating bills.",
+  "domains": ["climate", "sensor", "input_number"],
+  "iot_class": "local_polling",
+  "render_readme": true
+}

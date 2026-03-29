@@ -1,0 +1,443 @@
+# ============================================================
+# Bathroom - Smart Heating Workdays
+# ============================================================
+# Main heating automation that handles:
+#   - Smart pre-heat (3AM-6AM): starts based on actual temps
+#   - Maintain (6AM-7AM): keeps room at target
+#   - Standby (7AM-11PM): maintains 16°C
+#   - Vacation mode: frost protection at 12°C
+#   - Window detection: pauses heating if window open
+#   - Manual override: pauses 2 hours on TRV change
+#
+# Required entities:
+#   - sensor.bathroom_thermostat_temperature
+#   - climate.bathroom_radiator
+#   - climate.bathroom_heated_towel_rail
+#   - binary_sensor.bathroom_window
+#   - binary_sensor.bathroom_window_small
+#   - calendar.home (vacation detection)
+#   - input_number.bathroom_heating_rate (set by Smart Heating Advisor)
+# ============================================================
+
+alias: Bathroom - Smart Heating Workdays
+description: >-
+  Pre-heats to reach 26°C by 6AM, maintains 26°C 6-7AM,
+  then maintains 16°C standby from 7AM on workdays.
+  Drops to 12°C during vacation. Pauses if any window is open.
+triggers:
+  - trigger: time_pattern
+    minutes: /5
+conditions:
+  - condition: time
+    weekday:
+      - mon
+      - tue
+      - wed
+      - thu
+      - fri
+  - condition: time
+    after: "03:00:00"
+    before: "23:00:00"
+  - condition: template
+    value_template: >
+      {{ states('input_boolean.bathroom_heating_override') == 'off' or
+         now() > as_datetime(states('input_datetime.bathroom_override_until')).replace(tzinfo=now().tzinfo) }}
+actions:
+  - variables:
+      room_temp: "{{ states('sensor.bathroom_thermostat_temperature') | float(0) }}"
+      towel_temp: "{{ state_attr('climate.bathroom_heated_towel_rail', 'current_temperature') | float(0) }}"
+      room_target: 26
+      towel_target: 30
+      standby_target: 16
+      vacation_target: 12
+      heating_rate: "{{ states('input_number.bathroom_heating_rate') | float(0.15) }}"
+      windows_open: >
+        {{ is_state('binary_sensor.bathroom_window', 'on') or
+           is_state('binary_sensor.bathroom_window_small', 'on') }}
+      on_vacation: >
+        {{ states('calendar.home') == 'on' and
+           state_attr('calendar.home', 'message') is not none and
+           state_attr('calendar.home', 'message') | string | lower | truncate(8, true, '') == 'vacation' }}
+      minutes_to_6am: >
+        {% set target = today_at('06:00:00') %}
+        {% if now() >= target %}
+          0
+        {% else %}
+          {{ ((target - now()).total_seconds() / 60) | round(1) }}
+        {% endif %}
+      room_needs_preheat: >
+        {{ room_temp < room_target and
+           (room_target - room_temp) / heating_rate <= (minutes_to_6am | float) + 30 }}
+      towel_needs_preheat: >
+        {{ towel_temp < towel_target and
+           (towel_target - towel_temp) / heating_rate <= (minutes_to_6am | float) + 30 }}
+      room_just_reached: >
+        {{ room_temp >= room_target and
+           states('input_boolean.bathroom_room_target_notified') == 'off' }}
+      towel_just_reached: >
+        {{ towel_temp >= towel_target and
+           states('input_boolean.bathroom_towel_target_notified') == 'off' }}
+
+  # === WINDOW OPEN: stop all heating ===
+  - if:
+      - condition: template
+        value_template: "{{ windows_open }}"
+    then:
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.bathroom_automation_running
+      - action: climate.set_hvac_mode
+        target:
+          entity_id: climate.bathroom_radiator
+        data:
+          hvac_mode: "off"
+      - action: climate.set_hvac_mode
+        target:
+          entity_id: climate.bathroom_heated_towel_rail
+        data:
+          hvac_mode: "off"
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.bathroom_automation_running
+      - if:
+          - condition: state
+            entity_id: input_boolean.bathroom_window_notified
+            state: "off"
+        then:
+          - action: notify.notify
+            data:
+              title: "🪟 Bathroom Window Open"
+              message: >
+                Heating paused — window open.
+                Room: {{ room_temp }}°C, Towel: {{ towel_temp }}°C.
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.bathroom_window_notified
+    else:
+      # === WINDOWS CLOSED: reset window flag ===
+      - if:
+          - condition: state
+            entity_id: input_boolean.bathroom_window_notified
+            state: "on"
+        then:
+          - action: notify.notify
+            data:
+              title: "🪟 Bathroom Window Closed"
+              message: >
+                All windows closed. Heating resumed.
+                Room: {{ room_temp }}°C, Towel: {{ towel_temp }}°C.
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.bathroom_window_notified
+
+      - choose:
+
+          # === VACATION MODE ===
+          - conditions:
+              - condition: template
+                value_template: "{{ on_vacation }}"
+            sequence:
+              - if:
+                  - condition: state
+                    entity_id: input_boolean.bathroom_mode_standby
+                    state: "off"
+                then:
+                  - action: notify.notify
+                    data:
+                      title: "🏖️ Bathroom Vacation Mode"
+                      message: >
+                        Vacation mode active. Maintaining frost protection at 12°C.
+                        Current room: {{ room_temp }}°C.
+                  - action: input_boolean.turn_on
+                    target:
+                      entity_id: input_boolean.bathroom_mode_standby
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.bathroom_automation_running
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ room_temp < (vacation_target - 0.5) }}"
+                    sequence:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: climate.bathroom_radiator
+                        data:
+                          hvac_mode: heat
+                      - action: climate.set_temperature
+                        target:
+                          entity_id: climate.bathroom_radiator
+                        data:
+                          temperature: "{{ vacation_target }}"
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ room_temp >= vacation_target }}"
+                    sequence:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: climate.bathroom_radiator
+                        data:
+                          hvac_mode: "off"
+              - action: climate.set_hvac_mode
+                target:
+                  entity_id: climate.bathroom_heated_towel_rail
+                data:
+                  hvac_mode: "off"
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.bathroom_automation_running
+
+          # === PRE-HEAT: 3AM - 6AM ===
+          - conditions:
+              - condition: time
+                after: "03:00:00"
+                before: "06:00:00"
+            sequence:
+              - if:
+                  - condition: state
+                    entity_id: input_boolean.bathroom_mode_preheat
+                    state: "off"
+                then:
+                  - action: notify.notify
+                    data:
+                      title: "🌅 Bathroom Pre-heat Mode"
+                      message: >
+                        Pre-heat started at {{ now().strftime('%H:%M') }}.
+                        Room: {{ room_temp }}°C → target 26°C,
+                        Towel: {{ towel_temp }}°C → target 30°C.
+                        Est. heat time: room {{ ((room_target - room_temp) / heating_rate) | round(0) }} min,
+                        towel {{ ((towel_target - towel_temp) / heating_rate) | round(0) }} min.
+                  - action: input_boolean.turn_on
+                    target:
+                      entity_id: input_boolean.bathroom_mode_preheat
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.bathroom_automation_running
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ room_needs_preheat and not room_just_reached }}"
+                    sequence:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: climate.bathroom_radiator
+                        data:
+                          hvac_mode: heat
+                      - action: climate.set_temperature
+                        target:
+                          entity_id: climate.bathroom_radiator
+                        data:
+                          temperature: "{{ room_target }}"
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ room_just_reached }}"
+                    sequence:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: climate.bathroom_radiator
+                        data:
+                          hvac_mode: "off"
+                      - action: notify.notify
+                        data:
+                          title: "✅ Bathroom Room Target Reached"
+                          message: >
+                            Room reached {{ room_temp }}°C at {{ now().strftime('%H:%M') }},
+                            {{ minutes_to_6am | round(0) }} min before 6AM.
+                      - action: input_boolean.turn_on
+                        target:
+                          entity_id: input_boolean.bathroom_room_target_notified
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ towel_needs_preheat and not towel_just_reached }}"
+                    sequence:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: climate.bathroom_heated_towel_rail
+                        data:
+                          hvac_mode: heat
+                      - action: climate.set_temperature
+                        target:
+                          entity_id: climate.bathroom_heated_towel_rail
+                        data:
+                          temperature: "{{ towel_target }}"
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ towel_just_reached }}"
+                    sequence:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: climate.bathroom_heated_towel_rail
+                        data:
+                          hvac_mode: "off"
+                      - action: notify.notify
+                        data:
+                          title: "✅ Towel Rail Target Reached"
+                          message: >
+                            Towel rail reached {{ towel_temp }}°C at {{ now().strftime('%H:%M') }},
+                            {{ minutes_to_6am | round(0) }} min before 6AM.
+                      - action: input_boolean.turn_on
+                        target:
+                          entity_id: input_boolean.bathroom_towel_target_notified
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.bathroom_automation_running
+
+          # === MAINTAIN: 6AM - 7AM ===
+          - conditions:
+              - condition: time
+                after: "06:00:00"
+                before: "07:00:00"
+            sequence:
+              - if:
+                  - condition: state
+                    entity_id: input_boolean.bathroom_mode_maintain
+                    state: "off"
+                then:
+                  - action: notify.notify
+                    data:
+                      title: "🛁 Bathroom Heating Window Active"
+                      message: >
+                        6AM window started.
+                        Room: {{ room_temp }}°C (target 26°C),
+                        Towel: {{ towel_temp }}°C (target 30°C).
+                  - action: input_boolean.turn_on
+                    target:
+                      entity_id: input_boolean.bathroom_mode_maintain
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.bathroom_automation_running
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ room_temp < (room_target - 0.5) }}"
+                    sequence:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: climate.bathroom_radiator
+                        data:
+                          hvac_mode: heat
+                      - action: climate.set_temperature
+                        target:
+                          entity_id: climate.bathroom_radiator
+                        data:
+                          temperature: "{{ room_target }}"
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ room_temp >= room_target }}"
+                    sequence:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: climate.bathroom_radiator
+                        data:
+                          hvac_mode: "off"
+                      - if:
+                          - condition: template
+                            value_template: "{{ room_just_reached }}"
+                        then:
+                          - action: notify.notify
+                            data:
+                              title: "✅ Bathroom Room Target Reached"
+                              message: >
+                                Room reached {{ room_temp }}°C at {{ now().strftime('%H:%M') }}.
+                          - action: input_boolean.turn_on
+                            target:
+                              entity_id: input_boolean.bathroom_room_target_notified
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ towel_temp < (towel_target - 0.5) }}"
+                    sequence:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: climate.bathroom_heated_towel_rail
+                        data:
+                          hvac_mode: heat
+                      - action: climate.set_temperature
+                        target:
+                          entity_id: climate.bathroom_heated_towel_rail
+                        data:
+                          temperature: "{{ towel_target }}"
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ towel_temp >= towel_target }}"
+                    sequence:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: climate.bathroom_heated_towel_rail
+                        data:
+                          hvac_mode: "off"
+                      - if:
+                          - condition: template
+                            value_template: "{{ towel_just_reached }}"
+                        then:
+                          - action: notify.notify
+                            data:
+                              title: "✅ Towel Rail Target Reached"
+                              message: >
+                                Towel rail reached {{ towel_temp }}°C at {{ now().strftime('%H:%M') }}.
+                          - action: input_boolean.turn_on
+                            target:
+                              entity_id: input_boolean.bathroom_towel_target_notified
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.bathroom_automation_running
+
+          # === STANDBY: 7AM - 11PM ===
+          - conditions:
+              - condition: time
+                after: "07:00:00"
+                before: "23:00:00"
+            sequence:
+              - if:
+                  - condition: state
+                    entity_id: input_boolean.bathroom_mode_standby
+                    state: "off"
+                then:
+                  - action: notify.notify
+                    data:
+                      title: "🌡️ Bathroom Standby Mode"
+                      message: >
+                        Heating window ended. Switching to 16°C standby.
+                        Final room: {{ room_temp }}°C,
+                        Final towel: {{ towel_temp }}°C.
+                  - action: input_boolean.turn_on
+                    target:
+                      entity_id: input_boolean.bathroom_mode_standby
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.bathroom_automation_running
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ room_temp < (standby_target - 0.5) }}"
+                    sequence:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: climate.bathroom_radiator
+                        data:
+                          hvac_mode: heat
+                      - action: climate.set_temperature
+                        target:
+                          entity_id: climate.bathroom_radiator
+                        data:
+                          temperature: "{{ standby_target }}"
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ room_temp >= standby_target }}"
+                    sequence:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: climate.bathroom_radiator
+                        data:
+                          hvac_mode: "off"
+              - action: climate.set_hvac_mode
+                target:
+                  entity_id: climate.bathroom_heated_towel_rail
+                data:
+                  hvac_mode: "off"
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.bathroom_automation_running
+
+mode: single

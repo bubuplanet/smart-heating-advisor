@@ -151,14 +151,14 @@ blueprint:
         vacation_mode:
           name: Vacation Behavior
           description: Off disables heating. Frost keeps a low anti-freeze target.
-          default: off
+          default: "off"
           selector:
             select:
               options:
                 - label: Off (no heating)
-                  value: off
+                  value: "off"
                 - label: Frost protection
-                  value: frost
+                  value: "frost"
 
         vacation_temperature:
           name: Vacation Frost Temperature

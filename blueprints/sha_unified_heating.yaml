@@ -32,7 +32,7 @@ blueprint:
       input:
         room_name:
           name: Room Name
-          description: "Example: Bathroom, Parents, Office"
+          description: Like Bathroom or Parents or Office
           default: Room
           selector:
             text:

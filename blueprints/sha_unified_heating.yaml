@@ -19,7 +19,7 @@ blueprint:
     - 📅 Up to two schedule slots with different days and times
     - 🪟 Optional window sensors
     - 🗓️ Vacation calendar + keyword
-    - ⏱️ Override duration (up to 24 hours)
+    - ⏱️ Override duration (max 2 hours)
 
     📝 Notes
     - Create one automation instance per room.
@@ -57,6 +57,7 @@ blueprint:
           name: Schedule TRVs
           description: >-
             TRVs that follow the calculated room target temperature.
+            Target temperature is determined by the active schedule (A or B) and whether we're in pre-heat, comfort, or standby time.
             Select all radiators that heat the room to the comfort setpoint.
           selector:
             entity:

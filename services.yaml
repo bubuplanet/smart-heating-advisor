@@ -1,0 +1,11 @@
+run_daily_analysis:
+  name: Run Daily Analysis
+  description: >
+    Manually trigger the daily bathroom heating rate analysis
+    using the last 7 days of InfluxDB data and Ollama AI.
+
+run_weekly_analysis:
+  name: Run Weekly Analysis
+  description: >
+    Manually trigger the weekly bathroom heating rate analysis
+    using the last 30 days of InfluxDB data and Ollama AI.

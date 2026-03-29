@@ -1,0 +1,59 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Smart Heating Advisor — Ollama Setup",
+        "description": "Step 1 of 3 — Configure your local Ollama AI instance",
+        "data": {
+          "ollama_url": "Ollama URL",
+          "ollama_model": "Ollama Model Name"
+        }
+      },
+      "influxdb": {
+        "title": "Smart Heating Advisor — InfluxDB Setup",
+        "description": "Step 2 of 3 — Configure your InfluxDB 2.x connection",
+        "data": {
+          "influxdb_url": "InfluxDB URL",
+          "influxdb_token": "InfluxDB API Token",
+          "influxdb_org": "InfluxDB Organisation",
+          "influxdb_bucket": "InfluxDB Bucket"
+        }
+      },
+      "entities": {
+        "title": "Smart Heating Advisor — HA Entities",
+        "description": "Step 3 of 3 — Configure Home Assistant entities",
+        "data": {
+          "temp_sensor": "Room Temperature Sensor",
+          "heating_rate_helper": "Heating Rate Helper (input_number)",
+          "weather_entity": "Weather Entity",
+          "target_temp": "Target Temperature (°C)",
+          "target_time": "Target Time (HH:MM)"
+        }
+      }
+    },
+    "error": {
+      "ollama_connection_failed": "Cannot connect to Ollama or model not found. Check URL and model name.",
+      "influxdb_connection_failed": "Cannot connect to InfluxDB. Check URL, token, org and bucket.",
+      "entity_not_found": "Entity not found in Home Assistant. Check the entity ID."
+    },
+    "abort": {
+      "already_configured": "Smart Heating Advisor is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "sha_bathroom_heating_rate": {
+        "name": "Bathroom Heating Rate"
+      },
+      "sha_bathroom_last_analysis": {
+        "name": "Bathroom Last Analysis"
+      },
+      "sha_bathroom_confidence": {
+        "name": "Bathroom AI Confidence"
+      },
+      "sha_bathroom_weekly_report": {
+        "name": "Bathroom Weekly Report"
+      }
+    }
+  }
+}

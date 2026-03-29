@@ -5,22 +5,26 @@ blueprint:
     🌡️ Unified room heating control in one blueprint.
 
     ✨ Features
-    - 📅 Weekday scheduling (pre-heat, comfort window, standby)
-    - 🏖️ Vacation handling via calendar keyword (for example: VACATION)
+    - 📅 Two independent schedules (e.g. weekdays + weekend)
+    - 🔥 Fixed-temperature TRVs for towel rails or floor heating
+    - 🏖️ Vacation handling via calendar keyword
     - 🪟 Window-open pause logic
     - ✋ Manual override with automatic resume
 
     🛠️ During setup, this blueprint asks for:
     - 🏷️ Room name
     - 🌡️ Room temperature sensor
-    - 🔥 One or more TRVs / climate entities
-    - 📆 Active weekdays and schedule times
+    - 🔥 Schedule TRVs (follow room target temperature)
+    - 📌 Fixed TRVs with their own temperature (e.g. towel rail)
+    - 📅 Up to two schedule slots with different days and times
     - 🪟 Optional window sensors
     - 🗓️ Vacation calendar + keyword
-    - ⏱️ Override duration (max 2 hours)
+    - ⏱️ Override duration (up to 24 hours)
 
     📝 Notes
     - Create one automation instance per room.
+    - Schedule B is optional — useful for different weekend times.
+    - Fixed TRVs always heat to their fixed temperature when heating is active.
     - Manual TRV changes pause automation for the override duration.
     - When override ends, schedule control resumes automatically.
   source_url: https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_unified_heating.yaml
@@ -45,22 +49,53 @@ blueprint:
                 - domain: sensor
                   device_class: temperature
 
-        trvs:
-          name: TRVs / Climate Entities
-          description: Select one or more thermostats for this room.
+    trvs_section:
+      name: Thermostats / TRVs
+      icon: mdi:thermostat
+      input:
+        schedule_trvs:
+          name: Schedule TRVs
+          description: >-
+            TRVs that follow the calculated room target temperature.
+            Select all radiators that heat the room to the comfort setpoint.
           selector:
             entity:
               filter:
                 - domain: climate
               multiple: true
 
-    schedule_section:
-      name: Schedule
+        fixed_trvs:
+          name: Fixed Temperature TRVs
+          description: >-
+            Optional. TRVs that always heat to a fixed temperature when
+            the heating window is active (e.g. towel rail, floor heating).
+            Leave empty if not needed.
+          default: []
+          selector:
+            entity:
+              filter:
+                - domain: climate
+              multiple: true
+
+        fixed_trv_temperature:
+          name: Fixed TRV Temperature
+          description: >-
+            Temperature applied to fixed TRVs whenever heating is active.
+            Has no effect if no fixed TRVs are selected above.
+          default: 35
+          selector:
+            number:
+              min: 20
+              max: 60
+              step: 0.5
+              unit_of_measurement: "°C"
+
+    schedule_a_section:
+      name: "Schedule A — Primary"
       icon: mdi:clock-outline
       input:
-        active_weekdays:
-          name: Active Weekdays
-          description: Days where this room follows the comfort schedule.
+        schedule_a_days:
+          name: Schedule A — Active Days
           default:
             - mon
             - tue
@@ -86,29 +121,39 @@ blueprint:
                 - label: Sunday
                   value: sun
 
-        preheat_start_time:
-          name: Pre-Heat Start Time
+        schedule_a_preheat_start:
+          name: Schedule A — Pre-Heat Start
           description: Earliest time pre-heat can begin.
           default: "05:00:00"
           selector:
             time:
 
-        comfort_start_time:
-          name: Comfort Start Time
+        schedule_a_comfort_start:
+          name: Schedule A — Comfort Start
           description: Room should be warm by this time.
           default: "06:30:00"
           selector:
             time:
 
-        comfort_end_time:
-          name: Comfort End Time
+        schedule_a_comfort_end:
+          name: Schedule A — Comfort End
           description: Switches to standby after this time.
           default: "08:30:00"
           selector:
             time:
 
-        standby_temperature:
-          name: Standby Temperature
+        schedule_a_comfort_temp:
+          name: Schedule A — Comfort Temperature
+          default: 22
+          selector:
+            number:
+              min: 12
+              max: 30
+              step: 0.5
+              unit_of_measurement: "°C"
+
+        schedule_a_standby_temp:
+          name: Schedule A — Standby Temperature
           default: 17
           selector:
             number:
@@ -117,13 +162,77 @@ blueprint:
               step: 0.5
               unit_of_measurement: "°C"
 
-        comfort_temperature:
-          name: Comfort Temperature
+    schedule_b_section:
+      name: "Schedule B — Optional (e.g. Weekend)"
+      icon: mdi:clock-outline
+      collapsed: true
+      input:
+        schedule_b_enabled:
+          name: Enable Schedule B
+          default: false
+          selector:
+            boolean:
+
+        schedule_b_days:
+          name: Schedule B — Active Days
+          default:
+            - sat
+            - sun
+          selector:
+            select:
+              multiple: true
+              options:
+                - label: Monday
+                  value: mon
+                - label: Tuesday
+                  value: tue
+                - label: Wednesday
+                  value: wed
+                - label: Thursday
+                  value: thu
+                - label: Friday
+                  value: fri
+                - label: Saturday
+                  value: sat
+                - label: Sunday
+                  value: sun
+
+        schedule_b_preheat_start:
+          name: Schedule B — Pre-Heat Start
+          description: Earliest time pre-heat can begin on schedule B days.
+          default: "08:00:00"
+          selector:
+            time:
+
+        schedule_b_comfort_start:
+          name: Schedule B — Comfort Start
+          default: "09:00:00"
+          selector:
+            time:
+
+        schedule_b_comfort_end:
+          name: Schedule B — Comfort End
+          default: "11:00:00"
+          selector:
+            time:
+
+        schedule_b_comfort_temp:
+          name: Schedule B — Comfort Temperature
           default: 22
           selector:
             number:
               min: 12
               max: 30
+              step: 0.5
+              unit_of_measurement: "°C"
+
+        schedule_b_standby_temp:
+          name: Schedule B — Standby Temperature
+          default: 17
+          selector:
+            number:
+              min: 8
+              max: 24
               step: 0.5
               unit_of_measurement: "°C"
 
@@ -202,12 +311,12 @@ blueprint:
 
         override_minutes:
           name: Override Duration
-          description: Maximum 2 hours.
+          description: How long to pause automation after a manual TRV change (up to 24 hours).
           default: 120
           selector:
             number:
               min: 5
-              max: 120
+              max: 1440
               step: 5
               unit_of_measurement: min
 
@@ -236,16 +345,28 @@ trigger:
     id: control_loop
 
   - trigger: time
-    at: !input preheat_start_time
-    id: boundary_preheat
+    at: !input schedule_a_preheat_start
+    id: boundary_a_preheat
 
   - trigger: time
-    at: !input comfort_start_time
-    id: boundary_comfort_start
+    at: !input schedule_a_comfort_start
+    id: boundary_a_comfort_start
 
   - trigger: time
-    at: !input comfort_end_time
-    id: boundary_comfort_end
+    at: !input schedule_a_comfort_end
+    id: boundary_a_comfort_end
+
+  - trigger: time
+    at: !input schedule_b_preheat_start
+    id: boundary_b_preheat
+
+  - trigger: time
+    at: !input schedule_b_comfort_start
+    id: boundary_b_comfort_start
+
+  - trigger: time
+    at: !input schedule_b_comfort_end
+    id: boundary_b_comfort_end
 
   - trigger: state
     entity_id: !input window_sensors
@@ -256,12 +377,12 @@ trigger:
     id: vacation_changed
 
   - trigger: state
-    entity_id: !input trvs
+    entity_id: !input schedule_trvs
     attribute: temperature
     id: manual_override
 
   - trigger: state
-    entity_id: !input trvs
+    entity_id: !input schedule_trvs
     attribute: hvac_mode
     id: manual_override
 
@@ -274,13 +395,22 @@ trigger:
 variables:
   room_name: !input room_name
   temperature_sensor: !input temperature_sensor
-  trvs: !input trvs
-  active_weekdays: !input active_weekdays
-  preheat_start_time: !input preheat_start_time
-  comfort_start_time: !input comfort_start_time
-  comfort_end_time: !input comfort_end_time
-  comfort_temperature: !input comfort_temperature
-  standby_temperature: !input standby_temperature
+  schedule_trvs: !input schedule_trvs
+  fixed_trvs: !input fixed_trvs
+  fixed_trv_temperature: !input fixed_trv_temperature
+  schedule_a_days: !input schedule_a_days
+  schedule_a_preheat_start: !input schedule_a_preheat_start
+  schedule_a_comfort_start: !input schedule_a_comfort_start
+  schedule_a_comfort_end: !input schedule_a_comfort_end
+  schedule_a_comfort_temp: !input schedule_a_comfort_temp
+  schedule_a_standby_temp: !input schedule_a_standby_temp
+  schedule_b_enabled: !input schedule_b_enabled
+  schedule_b_days: !input schedule_b_days
+  schedule_b_preheat_start: !input schedule_b_preheat_start
+  schedule_b_comfort_start: !input schedule_b_comfort_start
+  schedule_b_comfort_end: !input schedule_b_comfort_end
+  schedule_b_comfort_temp: !input schedule_b_comfort_temp
+  schedule_b_standby_temp: !input schedule_b_standby_temp
   vacation_calendar: !input vacation_calendar
   vacation_keyword: !input vacation_keyword
   vacation_mode: !input vacation_mode
@@ -292,8 +422,33 @@ variables:
   send_notifications: !input send_notifications
 
   room_temp: "{{ states(temperature_sensor) | float(0) }}"
+  today: "{{ now().strftime('%a') | lower }}"
 
-  active_today: "{{ now().strftime('%a') | lower in active_weekdays }}"
+  active_schedule: >
+    {% if today in schedule_a_days %}
+      a
+    {% elif schedule_b_enabled and today in schedule_b_days %}
+      b
+    {% else %}
+      none
+    {% endif %}
+
+  active_preheat_start: >
+    {{ schedule_a_preheat_start if active_schedule == 'a' else schedule_b_preheat_start }}
+
+  active_comfort_start: >
+    {{ schedule_a_comfort_start if active_schedule == 'a' else schedule_b_comfort_start }}
+
+  active_comfort_end: >
+    {{ schedule_a_comfort_end if active_schedule == 'a' else schedule_b_comfort_end }}
+
+  active_comfort_temp: >
+    {{ (schedule_a_comfort_temp | float) if active_schedule == 'a'
+       else (schedule_b_comfort_temp | float) }}
+
+  active_standby_temp: >
+    {{ (schedule_a_standby_temp | float) if active_schedule == 'a'
+       else (schedule_b_standby_temp | float) }}
 
   windows_open: >
     {{ expand(window_sensors)
@@ -309,24 +464,34 @@ variables:
   override_active: "{{ is_state(override_timer, 'active') }}"
 
   in_preheat: >
-    {% set now_t = now() %}
-    {% set start = today_at(preheat_start_time) %}
-    {% set comfort = today_at(comfort_start_time) %}
-    {{ now_t >= start and now_t < comfort }}
+    {% if active_schedule == 'none' %}
+      {{ false }}
+    {% else %}
+      {% set now_t = now() %}
+      {% set start = today_at(active_preheat_start) %}
+      {% set comfort = today_at(active_comfort_start) %}
+      {{ now_t >= start and now_t < comfort }}
+    {% endif %}
 
   in_comfort: >
-    {% set now_t = now() %}
-    {% set start = today_at(comfort_start_time) %}
-    {% set stop = today_at(comfort_end_time) %}
-    {{ now_t >= start and now_t < stop }}
+    {% if active_schedule == 'none' %}
+      {{ false }}
+    {% else %}
+      {% set now_t = now() %}
+      {% set start = today_at(active_comfort_start) %}
+      {% set stop = today_at(active_comfort_end) %}
+      {{ now_t >= start and now_t < stop }}
+    {% endif %}
 
   target_temperature: >
     {% if vacation_active %}
-      {{ iif(vacation_mode == 'frost', vacation_temperature, 0) }}
-    {% elif active_today and (in_preheat or in_comfort) %}
-      {{ comfort_temperature }}
+      {{ iif(vacation_mode == 'frost', vacation_temperature | float, 0) }}
+    {% elif active_schedule != 'none' and (in_preheat or in_comfort) %}
+      {{ active_comfort_temp }}
+    {% elif active_schedule != 'none' %}
+      {{ active_standby_temp }}
     {% else %}
-      {{ standby_temperature }}
+      {{ schedule_a_standby_temp | float }}
     {% endif %}
 
   target_mode: >
@@ -381,6 +546,7 @@ action:
         target:
           entity_id: !input automation_guard_boolean
 
+      # --- Schedule TRVs: follow calculated target temperature ---
       - choose:
           - conditions:
               - condition: template
@@ -388,7 +554,7 @@ action:
             sequence:
               - action: climate.set_hvac_mode
                 target:
-                  entity_id: !input trvs
+                  entity_id: !input schedule_trvs
                 data:
                   hvac_mode: "off"
 
@@ -398,14 +564,45 @@ action:
             sequence:
               - action: climate.set_hvac_mode
                 target:
-                  entity_id: !input trvs
+                  entity_id: !input schedule_trvs
                 data:
                   hvac_mode: heat
               - action: climate.set_temperature
                 target:
-                  entity_id: !input trvs
+                  entity_id: !input schedule_trvs
                 data:
                   temperature: "{{ target_temperature | float }}"
+
+      # --- Fixed TRVs: always heat to fixed_trv_temperature when active ---
+      - if:
+          - condition: template
+            value_template: "{{ fixed_trvs | list | count > 0 }}"
+        then:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ target_mode == 'off' }}"
+                sequence:
+                  - action: climate.set_hvac_mode
+                    target:
+                      entity_id: "{{ fixed_trvs }}"
+                    data:
+                      hvac_mode: "off"
+
+              - conditions:
+                  - condition: template
+                    value_template: "{{ target_mode == 'heat' }}"
+                sequence:
+                  - action: climate.set_hvac_mode
+                    target:
+                      entity_id: "{{ fixed_trvs }}"
+                    data:
+                      hvac_mode: heat
+                  - action: climate.set_temperature
+                    target:
+                      entity_id: "{{ fixed_trvs }}"
+                    data:
+                      temperature: "{{ fixed_trv_temperature | float }}"
 
       - action: input_boolean.turn_off
         target:

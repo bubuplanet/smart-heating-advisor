@@ -39,11 +39,11 @@ Import each blueprint into Home Assistant via URL:
 2. Click **Import Blueprint**
 3. Paste the raw GitHub URL for each blueprint:
 ```
-https://raw.githubusercontent.com/yourusername/smart_heating_advisor/main/blueprints/automation/smart_heating_advisor/sha_room_heating.yaml
-https://raw.githubusercontent.com/yourusername/smart_heating_advisor/main/blueprints/automation/smart_heating_advisor/sha_override_activated.yaml
-https://raw.githubusercontent.com/yourusername/smart_heating_advisor/main/blueprints/automation/smart_heating_advisor/sha_override_resume.yaml
-https://raw.githubusercontent.com/yourusername/smart_heating_advisor/main/blueprints/automation/smart_heating_advisor/sha_daily_reset.yaml
-https://raw.githubusercontent.com/yourusername/smart_heating_advisor/main/blueprints/automation/smart_heating_advisor/sha_end_of_day_notification.yaml
+https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_daily_reset.yaml
+https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_override_activated.yaml
+https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_override_resume.yaml
+https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_daily_reset.yaml
+https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_end_of_day_notification.yaml
 ```
 
 ### Step 2 — Create helpers per room

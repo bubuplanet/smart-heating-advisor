@@ -5,25 +5,25 @@ blueprint:
     🌡️ Unified room heating control in one blueprint.
 
     ✨ Features
-    - 📅 Two independent schedules (e.g. weekdays + weekend)
+    - 📅 Unlimited schedule slots — define any number of daily time windows
     - 🔥 Fixed-temperature TRVs for towel rails or floor heating
     - 🏖️ Vacation handling via calendar keyword
-    - 🪟 Window-open pause logic
+    - 🪟 Window-open heating pause — no heat while any window is open
     - ✋ Manual override with automatic resume
 
     🛠️ During setup, this blueprint asks for:
     - 🏷️ Room name
     - 🌡️ Room temperature sensor
+    - 🪟 Window sensors (heating stops immediately when any window opens)
     - 🔥 Schedule TRVs (follow room target temperature)
     - 📌 Fixed TRVs with their own temperature (e.g. towel rail)
-    - 📅 Up to two schedule slots with different days and times
-    - 🪟 Optional window sensors
+    - 📅 Schedules — define as many slots as you need in YAML
     - 🗓️ Vacation calendar + keyword
-    - ⏱️ Override duration (max 2 hours)
+    - ⏱️ Override duration (5 min – 24 hours)
 
     📝 Notes
     - Create one automation instance per room.
-    - Schedule B is optional — useful for different weekend times.
+    - Each schedule entry specifies its own days, times, and temperatures.
     - Fixed TRVs always heat to their fixed temperature when heating is active.
     - Manual TRV changes pause automation for the override duration.
     - When override ends, schedule control resumes automatically.
@@ -49,6 +49,20 @@ blueprint:
                 - domain: sensor
                   device_class: temperature
 
+        window_sensors:
+          name: Window Sensors
+          description: |
+            ⚠️ IMPORTANT: While ANY selected window is open ALL TRVs in this room are turned off immediately — regardless of schedule, override, or any other setting.
+            Heating resumes automatically once every window is closed again.
+            Leave empty if you have no window sensors in this room.
+          default: []
+          selector:
+            entity:
+              filter:
+                - domain: binary_sensor
+                  device_class: window
+              multiple: true
+
     trvs_section:
       name: Thermostats / TRVs
       icon: mdi:thermostat
@@ -57,7 +71,8 @@ blueprint:
           name: Schedule TRVs
           description: >-
             TRVs that follow the calculated room target temperature.
-            Target temperature is determined by the active schedule (A or B) and whether we're in pre-heat, comfort, or standby time.
+            Target temperature is determined by the active schedule and whether
+            we are in pre-heat, comfort, or standby time.
             Select all radiators that heat the room to the comfort setpoint.
           selector:
             entity:
@@ -91,151 +106,39 @@ blueprint:
               step: 0.5
               unit_of_measurement: "°C"
 
-    schedule_a_section:
-      name: "Schedule A — Primary"
+    schedules_section:
+      name: Schedules
       icon: mdi:clock-outline
       input:
-        schedule_a_days:
-          name: Schedule A — Active Days
+        schedules:
+          name: Heating Schedules
+          description: |
+            Define one or more schedule entries. Each entry specifies which days it applies to plus pre-heat/comfort/standby times and temperatures.
+
+            Fields per entry:
+            • days — list of 3-letter abbreviations: mon tue wed thu fri sat sun
+            • preheat_start — earliest time pre-heat begins (HH:MM:SS)
+            • comfort_start — room should be warm by this time (HH:MM:SS)
+            • comfort_end — switches to standby after this time (HH:MM:SS)
+            • comfort_temp — target temperature during comfort period (°C)
+            • standby_temp — target temperature outside comfort period (°C)
+
+            You can add as many entries as you need (e.g. one per day if required).
           default:
-            - mon
-            - tue
-            - wed
-            - thu
-            - fri
+            - days: [mon, tue, wed, thu, fri]
+              preheat_start: "05:00:00"
+              comfort_start: "06:30:00"
+              comfort_end: "08:30:00"
+              comfort_temp: 22
+              standby_temp: 17
+            - days: [sat, sun]
+              preheat_start: "08:00:00"
+              comfort_start: "09:00:00"
+              comfort_end: "11:00:00"
+              comfort_temp: 22
+              standby_temp: 17
           selector:
-            select:
-              multiple: true
-              options:
-                - label: Monday
-                  value: mon
-                - label: Tuesday
-                  value: tue
-                - label: Wednesday
-                  value: wed
-                - label: Thursday
-                  value: thu
-                - label: Friday
-                  value: fri
-                - label: Saturday
-                  value: sat
-                - label: Sunday
-                  value: sun
-
-        schedule_a_preheat_start:
-          name: Schedule A — Pre-Heat Start
-          description: Earliest time pre-heat can begin.
-          default: "05:00:00"
-          selector:
-            time:
-
-        schedule_a_comfort_start:
-          name: Schedule A — Comfort Start
-          description: Room should be warm by this time.
-          default: "06:30:00"
-          selector:
-            time:
-
-        schedule_a_comfort_end:
-          name: Schedule A — Comfort End
-          description: Switches to standby after this time.
-          default: "08:30:00"
-          selector:
-            time:
-
-        schedule_a_comfort_temp:
-          name: Schedule A — Comfort Temperature
-          default: 22
-          selector:
-            number:
-              min: 12
-              max: 30
-              step: 0.5
-              unit_of_measurement: "°C"
-
-        schedule_a_standby_temp:
-          name: Schedule A — Standby Temperature
-          default: 17
-          selector:
-            number:
-              min: 8
-              max: 24
-              step: 0.5
-              unit_of_measurement: "°C"
-
-    schedule_b_section:
-      name: "Schedule B — Optional (e.g. Weekend)"
-      icon: mdi:clock-outline
-      collapsed: true
-      input:
-        schedule_b_enabled:
-          name: Enable Schedule B
-          default: false
-          selector:
-            boolean:
-
-        schedule_b_days:
-          name: Schedule B — Active Days
-          default:
-            - sat
-            - sun
-          selector:
-            select:
-              multiple: true
-              options:
-                - label: Monday
-                  value: mon
-                - label: Tuesday
-                  value: tue
-                - label: Wednesday
-                  value: wed
-                - label: Thursday
-                  value: thu
-                - label: Friday
-                  value: fri
-                - label: Saturday
-                  value: sat
-                - label: Sunday
-                  value: sun
-
-        schedule_b_preheat_start:
-          name: Schedule B — Pre-Heat Start
-          description: Earliest time pre-heat can begin on schedule B days.
-          default: "08:00:00"
-          selector:
-            time:
-
-        schedule_b_comfort_start:
-          name: Schedule B — Comfort Start
-          default: "09:00:00"
-          selector:
-            time:
-
-        schedule_b_comfort_end:
-          name: Schedule B — Comfort End
-          default: "11:00:00"
-          selector:
-            time:
-
-        schedule_b_comfort_temp:
-          name: Schedule B — Comfort Temperature
-          default: 22
-          selector:
-            number:
-              min: 12
-              max: 30
-              step: 0.5
-              unit_of_measurement: "°C"
-
-        schedule_b_standby_temp:
-          name: Schedule B — Standby Temperature
-          default: 17
-          selector:
-            number:
-              min: 8
-              max: 24
-              step: 0.5
-              unit_of_measurement: "°C"
+            object:
 
     vacation_section:
       name: Vacation
@@ -280,22 +183,6 @@ blueprint:
               max: 16
               step: 0.5
               unit_of_measurement: "°C"
-
-    windows_section:
-      name: Windows
-      icon: mdi:window-open-variant
-      collapsed: true
-      input:
-        window_sensors:
-          name: Window Sensors
-          description: Optional. If any window opens, heating is paused.
-          default: []
-          selector:
-            entity:
-              filter:
-                - domain: binary_sensor
-                  device_class: window
-              multiple: true
 
     override_section:
       name: Manual Override
@@ -345,30 +232,6 @@ trigger:
     minutes: "/5"
     id: control_loop
 
-  - trigger: time
-    at: !input schedule_a_preheat_start
-    id: boundary_a_preheat
-
-  - trigger: time
-    at: !input schedule_a_comfort_start
-    id: boundary_a_comfort_start
-
-  - trigger: time
-    at: !input schedule_a_comfort_end
-    id: boundary_a_comfort_end
-
-  - trigger: time
-    at: !input schedule_b_preheat_start
-    id: boundary_b_preheat
-
-  - trigger: time
-    at: !input schedule_b_comfort_start
-    id: boundary_b_comfort_start
-
-  - trigger: time
-    at: !input schedule_b_comfort_end
-    id: boundary_b_comfort_end
-
   - trigger: state
     entity_id: !input window_sensors
     id: windows_changed
@@ -399,19 +262,7 @@ variables:
   schedule_trvs: !input schedule_trvs
   fixed_trvs: !input fixed_trvs
   fixed_trv_temperature: !input fixed_trv_temperature
-  schedule_a_days: !input schedule_a_days
-  schedule_a_preheat_start: !input schedule_a_preheat_start
-  schedule_a_comfort_start: !input schedule_a_comfort_start
-  schedule_a_comfort_end: !input schedule_a_comfort_end
-  schedule_a_comfort_temp: !input schedule_a_comfort_temp
-  schedule_a_standby_temp: !input schedule_a_standby_temp
-  schedule_b_enabled: !input schedule_b_enabled
-  schedule_b_days: !input schedule_b_days
-  schedule_b_preheat_start: !input schedule_b_preheat_start
-  schedule_b_comfort_start: !input schedule_b_comfort_start
-  schedule_b_comfort_end: !input schedule_b_comfort_end
-  schedule_b_comfort_temp: !input schedule_b_comfort_temp
-  schedule_b_standby_temp: !input schedule_b_standby_temp
+  schedules: !input schedules
   vacation_calendar: !input vacation_calendar
   vacation_keyword: !input vacation_keyword
   vacation_mode: !input vacation_mode
@@ -425,31 +276,61 @@ variables:
   room_temp: "{{ states(temperature_sensor) | float(0) }}"
   today: "{{ now().strftime('%a') | lower }}"
 
+  # Find whether today matches any schedule entry ('active' or 'none')
   active_schedule: >
-    {% if today in schedule_a_days %}
-      a
-    {% elif schedule_b_enabled and today in schedule_b_days %}
-      b
-    {% else %}
-      none
-    {% endif %}
+    {% set ns = namespace(result='none') %}
+    {% for s in schedules %}
+      {% if today in s.get('days', []) %}
+        {% set ns.result = 'active' %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.result }}
 
+  # Extract schedule fields for today — fall back to safe defaults if no match
   active_preheat_start: >
-    {{ schedule_a_preheat_start if active_schedule == 'a' else schedule_b_preheat_start }}
+    {% set ns = namespace(result='05:00:00') %}
+    {% for s in schedules %}
+      {% if today in s.get('days', []) %}
+        {% set ns.result = s.get('preheat_start', '05:00:00') %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.result }}
 
   active_comfort_start: >
-    {{ schedule_a_comfort_start if active_schedule == 'a' else schedule_b_comfort_start }}
+    {% set ns = namespace(result='06:30:00') %}
+    {% for s in schedules %}
+      {% if today in s.get('days', []) %}
+        {% set ns.result = s.get('comfort_start', '06:30:00') %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.result }}
 
   active_comfort_end: >
-    {{ schedule_a_comfort_end if active_schedule == 'a' else schedule_b_comfort_end }}
+    {% set ns = namespace(result='08:30:00') %}
+    {% for s in schedules %}
+      {% if today in s.get('days', []) %}
+        {% set ns.result = s.get('comfort_end', '08:30:00') %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.result }}
 
   active_comfort_temp: >
-    {{ (schedule_a_comfort_temp | float) if active_schedule == 'a'
-       else (schedule_b_comfort_temp | float) }}
+    {% set ns = namespace(result=18) %}
+    {% for s in schedules %}
+      {% if today in s.get('days', []) %}
+        {% set ns.result = s.get('comfort_temp', 18) %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.result | float }}
 
   active_standby_temp: >
-    {{ (schedule_a_standby_temp | float) if active_schedule == 'a'
-       else (schedule_b_standby_temp | float) }}
+    {% set ns = namespace(result=16) %}
+    {% for s in schedules %}
+      {% if today in s.get('days', []) %}
+        {% set ns.result = s.get('standby_temp', 16) %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.result | float }}
 
   windows_open: >
     {{ expand(window_sensors)
@@ -469,8 +350,8 @@ variables:
       {{ false }}
     {% else %}
       {% set now_t = now() %}
-      {% set start = today_at(active_preheat_start) %}
-      {% set comfort = today_at(active_comfort_start) %}
+      {% set start = today_at(active_preheat_start | trim) %}
+      {% set comfort = today_at(active_comfort_start | trim) %}
       {{ now_t >= start and now_t < comfort }}
     {% endif %}
 
@@ -479,8 +360,8 @@ variables:
       {{ false }}
     {% else %}
       {% set now_t = now() %}
-      {% set start = today_at(active_comfort_start) %}
-      {% set stop = today_at(active_comfort_end) %}
+      {% set start = today_at(active_comfort_start | trim) %}
+      {% set stop = today_at(active_comfort_end | trim) %}
       {{ now_t >= start and now_t < stop }}
     {% endif %}
 
@@ -492,7 +373,7 @@ variables:
     {% elif active_schedule != 'none' %}
       {{ active_standby_temp }}
     {% else %}
-      {{ schedule_a_standby_temp | float }}
+      16
     {% endif %}
 
   target_mode: >

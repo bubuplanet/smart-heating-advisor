@@ -1,0 +1,46 @@
+# ============================================================
+# SHA - Override Activated
+# ============================================================
+# Replace ROOM with your room prefix.
+# ============================================================
+
+alias: "ROOM - Override Activated"
+description: Any TRV change pauses smart heating for configured duration
+triggers:
+  - trigger: state
+    entity_id:
+      - climate.ROOM_radiator
+      - climate.ROOM_heated_towel_rail
+    attribute: temperature
+  - trigger: state
+    entity_id:
+      - climate.ROOM_radiator
+      - climate.ROOM_heated_towel_rail
+    attribute: hvac_mode
+conditions:
+  - condition: state
+    entity_id: input_boolean.ROOM_automation_running
+    state: "off"
+  - condition: template
+    value_template: >
+      {{ is_state('binary_sensor.ROOM_window', 'off') and
+         is_state('binary_sensor.ROOM_window_2', 'off') }}
+  - condition: state
+    entity_id: input_boolean.ROOM_heating_override
+    state: "off"
+actions:
+  - action: input_boolean.turn_on
+    target:
+      entity_id: input_boolean.ROOM_heating_override
+  - action: input_datetime.set_datetime
+    target:
+      entity_id: input_datetime.ROOM_override_until
+    data:
+      datetime: "{{ (now() + timedelta(hours=2)).strftime('%Y-%m-%d %H:%M:%S') }}"
+  - action: notify.notify
+    data:
+      title: "🖐️ Heating Override Active"
+      message: >
+        Manual change detected on {{ trigger.to_state.attributes.friendly_name }}.
+        Smart heating paused until {{ (now() + timedelta(hours=2)).strftime('%H:%M') }}.
+mode: single

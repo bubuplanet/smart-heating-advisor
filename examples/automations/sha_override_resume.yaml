@@ -1,0 +1,29 @@
+# ============================================================
+# SHA - Override Resume
+# ============================================================
+# Replace ROOM with your room prefix.
+# ============================================================
+
+alias: "ROOM - Override Resume"
+description: Resumes smart heating after override expires
+triggers:
+  - trigger: time_pattern
+    minutes: /5
+conditions:
+  - condition: state
+    entity_id: input_boolean.ROOM_heating_override
+    state: "on"
+  - condition: template
+    value_template: >
+      {{ now() > as_datetime(states('input_datetime.ROOM_override_until')).replace(tzinfo=now().tzinfo) }}
+actions:
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.ROOM_heating_override
+  - action: notify.notify
+    data:
+      title: "🔄 Heating Resumed"
+      message: >
+        Override ended. Smart heating resumed.
+        Current room: {{ states('sensor.ROOM_thermostat_temperature') }}°C.
+mode: single

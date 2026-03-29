@@ -1,0 +1,27 @@
+# ============================================================
+# SHA - Daily Reset
+# ============================================================
+# Replace ROOM with your room prefix.
+# Runs every day including weekends.
+# ============================================================
+
+alias: "ROOM - Daily Reset"
+description: Resets all heating flags at midnight and pre-heat start
+triggers:
+  - trigger: time
+    at: "00:00:00"
+  - trigger: time
+    at: "03:00:00"
+actions:
+  - action: input_boolean.turn_off
+    target:
+      entity_id:
+        - input_boolean.ROOM_room_target_notified
+        - input_boolean.ROOM_towel_target_notified
+        - input_boolean.ROOM_mode_preheat
+        - input_boolean.ROOM_mode_maintain
+        - input_boolean.ROOM_mode_standby
+        - input_boolean.ROOM_heating_override
+        - input_boolean.ROOM_window_notified
+        - input_boolean.ROOM_automation_running
+mode: single

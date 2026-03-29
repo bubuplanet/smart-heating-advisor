@@ -1,0 +1,66 @@
+blueprint:
+  name: "Smart Heating Advisor - End of Day Notification"
+  description: >
+    Sends a notification when the heating automation stops
+    running for the night. Runs on workdays only.
+  domain: automation
+  input:
+    temp_sensor:
+      name: Room Temperature Sensor
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+
+    notification_time:
+      name: Notification Time
+      description: Time to send the end of day notification
+      default: "23:00:00"
+      selector:
+        time:
+
+    active_weekdays:
+      name: Active Weekdays
+      description: Days on which to send the notification
+      default:
+        - mon
+        - tue
+        - wed
+        - thu
+        - fri
+      selector:
+        select:
+          multiple: true
+          options:
+            - label: Monday
+              value: mon
+            - label: Tuesday
+              value: tue
+            - label: Wednesday
+              value: wed
+            - label: Thursday
+              value: thu
+            - label: Friday
+              value: fri
+            - label: Saturday
+              value: sat
+            - label: Sunday
+              value: sun
+
+triggers:
+  - trigger: time
+    at: !input notification_time
+
+conditions:
+  - condition: time
+    weekday: !input active_weekdays
+
+actions:
+  - action: notify.notify
+    data:
+      title: "🌙 Heating Off for the Night"
+      message: >
+        Heating stopped for the night.
+        Current room: {{ states(!input temp_sensor) }}°C.
+
+mode: single

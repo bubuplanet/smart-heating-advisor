@@ -1,12 +1,11 @@
 # ============================================================
-# Bathroom - Heating Stopped 11PM
+# SHA - End of Day Notification
 # ============================================================
-# Sends a notification when the heating automation stops
-# running for the night at 11PM on workdays.
+# Replace ROOM with your room prefix.
 # ============================================================
 
-alias: Bathroom - Heating Stopped 11PM
-description: Notifies when bathroom heating stops for the night
+alias: "ROOM - Heating Off for the Night"
+description: Notifies when heating stops for the night
 triggers:
   - trigger: time
     at: "23:00:00"
@@ -21,8 +20,8 @@ conditions:
 actions:
   - action: notify.notify
     data:
-      title: "🌙 Bathroom Heating Off for the Night"
+      title: "🌙 Heating Off for the Night"
       message: >
         Heating stopped for the night.
-        Current room: {{ states('sensor.bathroom_thermostat_temperature') }}°C.
+        Current room: {{ states('sensor.ROOM_thermostat_temperature') }}°C.
 mode: single

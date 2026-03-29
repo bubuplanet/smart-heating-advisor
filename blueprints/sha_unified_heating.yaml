@@ -1,0 +1,427 @@
+blueprint:
+  name: "Smart Heating Advisor - Unified Room Heating"
+  author: bubuplanet
+  description: >
+    🌡️ Unified room heating control in one blueprint.
+
+    ✨ Features
+    - 📅 Weekday scheduling (pre-heat, comfort window, standby)
+    - 🏖️ Vacation handling via calendar keyword (for example: VACATION)
+    - 🪟 Window-open pause logic
+    - ✋ Manual override with automatic resume
+
+    🛠️ During setup, this blueprint asks for:
+    - 🏷️ Room name
+    - 🌡️ Room temperature sensor
+    - 🔥 One or more TRVs / climate entities
+    - 📆 Active weekdays and schedule times
+    - 🪟 Optional window sensors
+    - 🗓️ Vacation calendar + keyword
+    - ⏱️ Override duration (max 2 hours)
+
+    📝 Notes
+    - Create one automation instance per room.
+    - Manual TRV changes pause automation for the override duration.
+    - When override ends, schedule control resumes automatically.
+  source_url: https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_unified_heating.yaml
+  domain: automation
+  input:
+    basics_section:
+      name: Room Basics
+      icon: mdi:radiator
+      input:
+        room_name:
+          name: Room Name
+          description: Example: Bathroom, Parents, Office
+          default: Room
+          selector:
+            text:
+
+        temperature_sensor:
+          name: Room Temperature Sensor
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: temperature
+
+        trvs:
+          name: TRVs / Climate Entities
+          description: Select one or more thermostats for this room.
+          selector:
+            entity:
+              filter:
+                - domain: climate
+              multiple: true
+
+    schedule_section:
+      name: Schedule
+      icon: mdi:clock-outline
+      input:
+        active_weekdays:
+          name: Active Weekdays
+          description: Days where this room follows the comfort schedule.
+          default:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+          selector:
+            select:
+              multiple: true
+              options:
+                - label: Monday
+                  value: mon
+                - label: Tuesday
+                  value: tue
+                - label: Wednesday
+                  value: wed
+                - label: Thursday
+                  value: thu
+                - label: Friday
+                  value: fri
+                - label: Saturday
+                  value: sat
+                - label: Sunday
+                  value: sun
+
+        preheat_start_time:
+          name: Pre-Heat Start Time
+          description: Earliest time pre-heat can begin.
+          default: "05:00:00"
+          selector:
+            time:
+
+        comfort_start_time:
+          name: Comfort Start Time
+          description: Room should be warm by this time.
+          default: "06:30:00"
+          selector:
+            time:
+
+        comfort_end_time:
+          name: Comfort End Time
+          description: Switches to standby after this time.
+          default: "08:30:00"
+          selector:
+            time:
+
+        standby_temperature:
+          name: Standby Temperature
+          default: 17
+          selector:
+            number:
+              min: 8
+              max: 24
+              step: 0.5
+              unit_of_measurement: "°C"
+
+        comfort_temperature:
+          name: Comfort Temperature
+          default: 22
+          selector:
+            number:
+              min: 12
+              max: 30
+              step: 0.5
+              unit_of_measurement: "°C"
+
+    vacation_section:
+      name: Vacation
+      icon: mdi:calendar
+      collapsed: true
+      input:
+        vacation_calendar:
+          name: Vacation Calendar
+          description: Calendar entity that contains your vacation events.
+          default: calendar.home
+          selector:
+            entity:
+              filter:
+                - domain: calendar
+
+        vacation_keyword:
+          name: Vacation Keyword
+          description: Event title prefix that enables vacation mode.
+          default: VACATION
+          selector:
+            text:
+
+        vacation_mode:
+          name: Vacation Behavior
+          description: Off disables heating. Frost keeps a low anti-freeze target.
+          default: off
+          selector:
+            select:
+              options:
+                - label: Off (no heating)
+                  value: off
+                - label: Frost protection
+                  value: frost
+
+        vacation_temperature:
+          name: Vacation Frost Temperature
+          description: Used only when Vacation Behavior = Frost protection.
+          default: 8
+          selector:
+            number:
+              min: 5
+              max: 16
+              step: 0.5
+              unit_of_measurement: "°C"
+
+    windows_section:
+      name: Windows
+      icon: mdi:window-open-variant
+      collapsed: true
+      input:
+        window_sensors:
+          name: Window Sensors
+          description: Optional. If any window opens, heating is paused.
+          default: []
+          selector:
+            entity:
+              filter:
+                - domain: binary_sensor
+                  device_class: window
+              multiple: true
+
+    override_section:
+      name: Manual Override
+      icon: mdi:hand-back-right
+      collapsed: true
+      input:
+        override_timer:
+          name: Override Timer Helper
+          description: Timer used to block automation after manual TRV changes.
+          selector:
+            entity:
+              filter:
+                - domain: timer
+
+        override_minutes:
+          name: Override Duration
+          description: Maximum 2 hours.
+          default: 120
+          selector:
+            number:
+              min: 5
+              max: 120
+              step: 5
+              unit_of_measurement: min
+
+        automation_guard_boolean:
+          name: Automation Guard Boolean
+          description: Set by automation to ignore its own TRV writes.
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
+
+    notifications_section:
+      name: Notifications
+      icon: mdi:message-text
+      collapsed: true
+      input:
+        send_notifications:
+          name: Send Notifications
+          default: true
+          selector:
+            boolean:
+
+trigger:
+  - trigger: time_pattern
+    minutes: "/5"
+    id: control_loop
+
+  - trigger: time
+    at: !input preheat_start_time
+    id: boundary_preheat
+
+  - trigger: time
+    at: !input comfort_start_time
+    id: boundary_comfort_start
+
+  - trigger: time
+    at: !input comfort_end_time
+    id: boundary_comfort_end
+
+  - trigger: state
+    entity_id: !input window_sensors
+    id: windows_changed
+
+  - trigger: state
+    entity_id: !input vacation_calendar
+    id: vacation_changed
+
+  - trigger: state
+    entity_id: !input trvs
+    attribute: temperature
+    id: manual_override
+
+  - trigger: state
+    entity_id: !input trvs
+    attribute: hvac_mode
+    id: manual_override
+
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input override_timer
+    id: override_ended
+
+variables:
+  room_name: !input room_name
+  temperature_sensor: !input temperature_sensor
+  trvs: !input trvs
+  active_weekdays: !input active_weekdays
+  preheat_start_time: !input preheat_start_time
+  comfort_start_time: !input comfort_start_time
+  comfort_end_time: !input comfort_end_time
+  comfort_temperature: !input comfort_temperature
+  standby_temperature: !input standby_temperature
+  vacation_calendar: !input vacation_calendar
+  vacation_keyword: !input vacation_keyword
+  vacation_mode: !input vacation_mode
+  vacation_temperature: !input vacation_temperature
+  window_sensors: !input window_sensors
+  override_timer: !input override_timer
+  override_minutes: !input override_minutes
+  automation_guard_boolean: !input automation_guard_boolean
+  send_notifications: !input send_notifications
+
+  room_temp: "{{ states(temperature_sensor) | float(0) }}"
+
+  active_today: "{{ now().strftime('%a') | lower in active_weekdays }}"
+
+  windows_open: >
+    {{ expand(window_sensors)
+       | selectattr('state', 'in', ['on', 'open'])
+       | list
+       | count > 0 }}
+
+  vacation_active: >
+    {% set message = state_attr(vacation_calendar, 'message') | string %}
+    {% set kw = vacation_keyword | lower %}
+    {{ is_state(vacation_calendar, 'on') and message | lower | regex_search('^' ~ kw) }}
+
+  override_active: "{{ is_state(override_timer, 'active') }}"
+
+  in_preheat: >
+    {% set now_t = now() %}
+    {% set start = today_at(preheat_start_time) %}
+    {% set comfort = today_at(comfort_start_time) %}
+    {{ now_t >= start and now_t < comfort }}
+
+  in_comfort: >
+    {% set now_t = now() %}
+    {% set start = today_at(comfort_start_time) %}
+    {% set stop = today_at(comfort_end_time) %}
+    {{ now_t >= start and now_t < stop }}
+
+  target_temperature: >
+    {% if vacation_active %}
+      {{ iif(vacation_mode == 'frost', vacation_temperature, 0) }}
+    {% elif active_today and (in_preheat or in_comfort) %}
+      {{ comfort_temperature }}
+    {% else %}
+      {{ standby_temperature }}
+    {% endif %}
+
+  target_mode: >
+    {% if windows_open %}
+      off
+    {% elif vacation_active and vacation_mode == 'off' %}
+      off
+    {% else %}
+      heat
+    {% endif %}
+
+condition: []
+
+action:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'manual_override' }}"
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ is_state(automation_guard_boolean, 'off') }}"
+              - condition: template
+                value_template: "{{ not windows_open }}"
+            then:
+              - action: timer.start
+                target:
+                  entity_id: !input override_timer
+                data:
+                  duration: >
+                    {% set m = override_minutes | int(120) %}
+                    {{ '%02d:%02d:00' | format((m // 60), (m % 60)) }}
+              - if:
+                  - condition: template
+                    value_template: "{{ send_notifications }}"
+                then:
+                  - action: notify.notify
+                    data:
+                      title: "Manual Override: {{ room_name }}"
+                      message: >
+                        Manual TRV change detected in {{ room_name }}.
+                        Automation paused for {{ override_minutes }} minutes.
+
+      - conditions:
+          - condition: template
+            value_template: "{{ override_active and trigger.id != 'override_ended' and trigger.id != 'manual_override' }}"
+        sequence:
+          - stop: "Override timer active; skip automation changes."
+
+    default:
+      - action: input_boolean.turn_on
+        target:
+          entity_id: !input automation_guard_boolean
+
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ target_mode == 'off' }}"
+            sequence:
+              - action: climate.set_hvac_mode
+                target:
+                  entity_id: !input trvs
+                data:
+                  hvac_mode: "off"
+
+          - conditions:
+              - condition: template
+                value_template: "{{ target_mode == 'heat' }}"
+            sequence:
+              - action: climate.set_hvac_mode
+                target:
+                  entity_id: !input trvs
+                data:
+                  hvac_mode: heat
+              - action: climate.set_temperature
+                target:
+                  entity_id: !input trvs
+                data:
+                  temperature: "{{ target_temperature | float }}"
+
+      - action: input_boolean.turn_off
+        target:
+          entity_id: !input automation_guard_boolean
+
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id == 'override_ended' and send_notifications }}"
+        then:
+          - action: notify.notify
+            data:
+              title: "Override Ended: {{ room_name }}"
+              message: >
+                Manual override ended.
+                Room temperature is {{ room_temp | round(1) }}°C.
+                Schedule control resumed.
+
+mode: queued
+max: 10

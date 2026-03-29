@@ -42,7 +42,7 @@ Import each blueprint into Home Assistant via URL:
 https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_daily_reset.yaml
 https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_override_activated.yaml
 https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_override_resume.yaml
-https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_daily_reset.yaml
+https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_room_heating.yaml
 https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_end_of_day_notification.yaml
 ```
 

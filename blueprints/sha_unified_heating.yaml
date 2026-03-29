@@ -1,7 +1,7 @@
 blueprint:
   name: "Smart Heating Advisor - Unified Room Heating"
   author: bubuplanet
-  description: >
+  description: |
     🌡️ Unified room heating control in one blueprint.
 
     ✨ Features

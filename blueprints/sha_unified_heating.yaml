@@ -1,51 +1,61 @@
 blueprint:
-  name: "Smart Heating Advisor - Unified Room Heating"
+  name: "SHA - Unified Room Heating"
   author: bubuplanet
   description: |
-    🌡️ Unified room heating control powered by Smart Heating AI.
+    🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
+
+    AI-driven smart heating for any room. Pre-heat timing is calculated
+    dynamically from the current room temperature, the AI-calibrated
+    heating rate, and the next schedule start time — so the room is
+    always at the right temperature exactly when needed.
 
     ✨ Features
-    - 🤖 AI-driven pre-heat: timing calculated from room temp, heating rate & weather
-    - 📅 Up to 5 schedule slots — each with its own target temperature
-    - 🔥 Fixed-temperature TRVs (towel rails / floor heating) — or let AI set them
-    - 🏖️ Optional vacation handling via calendar keyword
-    - 🪟 Window & door airing detection with configurable reaction delays
-    - ✋ Manual override with automatic resume
+    - 🤖 AI-driven pre-heat: timing calculated from room temp + heating rate
+    - 📅 Unlimited schedules — add as many HA Schedule helpers as you need
+    - 🌡️ Per-schedule target temperature — encoded in the schedule name (e.g. "Morning Shower 26C")
+    - 🔥 Fixed-temperature TRVs — for towel rails, floor heating, etc.
+    - 🏖️ Vacation mode via calendar keyword
+    - 🪟 Window & door detection with configurable reaction delays
+    - ✋ Manual override with automatic resume via HA Timer
+    - 🔔 Toggleable notifications for all key events
 
-    🛠️ Before you start — create these helpers once per room:
-    1. Schedule helpers — Settings → Helpers → Schedule (one or more)
-       Each gives you a full weekly planner with unlimited time slots.
-    2. Heating Rate Number — Settings → Helpers → Number
-       Range 0.05 – 0.30, step 0.01, initial value 0.15.
-       The Smart Heating AI will calibrate this automatically over time.
-    3. Automation Guard Toggle — Settings → Helpers → Toggle
-       Used to prevent the automation from triggering its own override.
-    4. Override Timer — Settings → Helpers → Timer
-    5. (Optional) Airing Mode Toggle — Settings → Helpers → Toggle
-       Only needed if you use window/door sensors.
+    📝 Schedule naming convention
+    Name each Schedule helper with the target temperature at the end:
+      ✅ "Morning Shower 26C"
+      ✅ "Evening Bath 28C"
+      ✅ "Night Standby 16C"
+      ✅ "Weekend 20C"
+    The blueprint reads the temperature automatically from the name.
 
-    📝 Notes
-    - Create one automation instance per room.
-    - Schedule 1 is mandatory. Schedules 2–5 must be enabled individually.
-    - Each schedule has its own target comfort temperature.
-    - When no schedule is active, the configurable default mode applies.
-    - Pre-heat time is calculated dynamically — no manual pre-heat setting needed.
-  source_url: https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/sha_unified_heating.yaml
+    🛠️ Required helpers (auto-created by SHA integration if installed)
+    - Heating Rate Number:  input_number.ROOM_heating_rate
+    - Automation Guard:     input_boolean.ROOM_automation_running
+    - Override Timer:       timer.ROOM_override
+    - Airing Mode Toggle:   input_boolean.ROOM_airing_mode (only if using window sensors)
+
+  source_url: https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/automation/smart_heating_advisor/sha_unified_heating.yaml
   domain: automation
+
   input:
+
+    # ─────────────────────────────────────────────
+    # ROOM & DEVICES
+    # ─────────────────────────────────────────────
     room_section:
-      name: "Room & Thermostats"
+      name: "🏠 Room & Devices"
       icon: mdi:radiator
       input:
+
         room_name:
           name: Room Name
-          description: e.g. Bathroom, Parents, Office
+          description: Used in notifications (e.g. Bathroom, Office, Bedroom)
           default: Room
           selector:
             text:
 
         temperature_sensor:
           name: Room Temperature Sensor
+          description: The sensor measuring actual room temperature
           selector:
             entity:
               filter:
@@ -55,10 +65,10 @@ blueprint:
         heating_rate_helper:
           name: Heating Rate Helper
           description: |
-            input_number helper the Smart Heating AI writes to (°C/min).
-            Create it in Settings → Helpers → Number with:
-            Min: 0.05 — Max: 0.30 — Step: 0.01 — Initial: 0.15
-            The AI calibrates this value automatically over time.
+            input_number updated daily by the Smart Heating Advisor AI.
+            Entity ID: input_number.ROOM_heating_rate
+            Range: 0.05–0.30 °C/min — Initial: 0.15
+            The AI calibrates this automatically based on your room history.
           selector:
             entity:
               filter:
@@ -66,10 +76,10 @@ blueprint:
 
         schedule_trvs:
           name: Schedule TRVs
-          description: >-
-            TRVs that follow the calculated room target temperature.
-            These are set to the schedule target temperature during active schedules
-            and to the default temperature outside of them.
+          description: >
+            TRVs that follow the schedule target temperature.
+            These are set to each schedule's target temp during active periods
+            and to the default temperature (or off) outside schedules.
           selector:
             entity:
               filter:
@@ -77,11 +87,10 @@ blueprint:
               multiple: true
 
         fixed_trvs:
-          name: Fixed-Temperature TRVs
-          description: >-
-            Optional. TRVs that heat to a fixed setpoint regardless of the schedule
-            (e.g. towel rail, floor heating).
-            Leave empty if not needed.
+          name: Fixed-Temperature TRVs (optional)
+          description: >
+            TRVs that always heat to a fixed temperature regardless of schedule
+            (e.g. towel rail, floor heating). Leave empty if not needed.
           default: []
           selector:
             entity:
@@ -91,189 +100,71 @@ blueprint:
 
         fixed_trv_temperature:
           name: Fixed TRV Temperature
-          description: >-
+          description: >
             Temperature applied to fixed TRVs when heating is active.
-            Set to 0 to let the Smart Heating AI determine the temperature.
             Has no effect if no fixed TRVs are selected above.
-          default: 0
+          default: 30
           selector:
             number:
-              min: 0
+              min: 15
               max: 60
               step: 0.5
               unit_of_measurement: "°C"
 
-    schedule_1_section:
-      name: "📅 Schedule 1 — Primary"
+    # ─────────────────────────────────────────────
+    # SCHEDULES
+    # ─────────────────────────────────────────────
+    schedule_section:
+      name: "📅 Schedules"
       icon: mdi:clock-outline
       input:
-        schedule_1:
-          name: Schedule 1 — Schedule Helper
-          description: >-
-            Select the Schedule helper for this slot.
-            Create it in Settings → Helpers → Schedule.
+
+        schedules:
+          name: Schedule Helpers
+          description: |
+            Select one or more HA Schedule helpers.
+            Name each helper with the target temperature at the end:
+              ✅ "Morning Shower 26C"
+              ✅ "Evening Bath 28C"
+              ✅ "Weekend 20C"
+            The blueprint reads the target temperature automatically from the name.
+            Create Schedule helpers in: Settings → Helpers → Schedule
           selector:
             entity:
               filter:
                 - domain: schedule
+              multiple: true
 
-        schedule_1_temp:
-          name: Schedule 1 — Target Temperature
-          description: The room temperature to maintain during this schedule.
-          default: 21
-          selector:
-            number:
-              min: 12
-              max: 30
-              step: 0.5
-              unit_of_measurement: "°C"
-
-    schedule_2_section:
-      name: "📅 Schedule 2 — Optional"
-      icon: mdi:clock-outline
-      collapsed: true
-      input:
-        schedule_2_enabled:
-          name: Enable Schedule 2
-          default: false
-          selector:
-            boolean:
-
-        schedule_2:
-          name: Schedule 2 — Schedule Helper
-          description: Select only when Schedule 2 is enabled above.
-          default:
-          selector:
-            entity:
-              filter:
-                - domain: schedule
-
-        schedule_2_temp:
-          name: Schedule 2 — Target Temperature
-          default: 21
-          selector:
-            number:
-              min: 12
-              max: 30
-              step: 0.5
-              unit_of_measurement: "°C"
-
-    schedule_3_section:
-      name: "📅 Schedule 3 — Optional"
-      icon: mdi:clock-outline
-      collapsed: true
-      input:
-        schedule_3_enabled:
-          name: Enable Schedule 3
-          default: false
-          selector:
-            boolean:
-
-        schedule_3:
-          name: Schedule 3 — Schedule Helper
-          description: Select only when Schedule 3 is enabled above.
-          default:
-          selector:
-            entity:
-              filter:
-                - domain: schedule
-
-        schedule_3_temp:
-          name: Schedule 3 — Target Temperature
-          default: 21
-          selector:
-            number:
-              min: 12
-              max: 30
-              step: 0.5
-              unit_of_measurement: "°C"
-
-    schedule_4_section:
-      name: "📅 Schedule 4 — Optional"
-      icon: mdi:clock-outline
-      collapsed: true
-      input:
-        schedule_4_enabled:
-          name: Enable Schedule 4
-          default: false
-          selector:
-            boolean:
-
-        schedule_4:
-          name: Schedule 4 — Schedule Helper
-          description: Select only when Schedule 4 is enabled above.
-          default:
-          selector:
-            entity:
-              filter:
-                - domain: schedule
-
-        schedule_4_temp:
-          name: Schedule 4 — Target Temperature
-          default: 21
-          selector:
-            number:
-              min: 12
-              max: 30
-              step: 0.5
-              unit_of_measurement: "°C"
-
-    schedule_5_section:
-      name: "📅 Schedule 5 — Optional"
-      icon: mdi:clock-outline
-      collapsed: true
-      input:
-        schedule_5_enabled:
-          name: Enable Schedule 5
-          default: false
-          selector:
-            boolean:
-
-        schedule_5:
-          name: Schedule 5 — Schedule Helper
-          description: Select only when Schedule 5 is enabled above.
-          default:
-          selector:
-            entity:
-              filter:
-                - domain: schedule
-
-        schedule_5_temp:
-          name: Schedule 5 — Target Temperature
-          default: 21
-          selector:
-            number:
-              min: 12
-              max: 30
-              step: 0.5
-              unit_of_measurement: "°C"
-
+    # ─────────────────────────────────────────────
+    # DEFAULT (NO ACTIVE SCHEDULE)
+    # ─────────────────────────────────────────────
     default_section:
-      name: "Default (No Active Schedule)"
+      name: "🌡️ Default — No Active Schedule"
       icon: mdi:thermostat-auto
       collapsed: true
       input:
+
         default_hvac_mode:
           name: Default Heating Mode
-          description: >-
+          description: >
             What to do when no schedule is currently active.
-            Heat maintains the default temperature at all times.
-            Off disables heating completely outside of schedule windows.
-          default: heat
+            Off — disables heating completely outside schedule windows.
+            Heat — maintains the default temperature at all times.
+          default: "off"
           selector:
             select:
               options:
-                - label: Heat (always maintain default temperature)
-                  value: heat
-                - label: Off (no heating outside schedules)
+                - label: "Off (no heating outside schedules)"
                   value: "off"
+                - label: "Heat (maintain default temperature)"
+                  value: heat
 
         default_temp:
           name: Default Temperature
-          description: >-
-            Temperature to maintain when no schedule is active and Default
-            Heating Mode is set to Heat.
-          default: 17
+          description: >
+            Temperature to maintain when no schedule is active
+            and Default Heating Mode is set to Heat.
+          default: 16
           selector:
             number:
               min: 8
@@ -281,55 +172,57 @@ blueprint:
               step: 0.5
               unit_of_measurement: "°C"
 
+    # ─────────────────────────────────────────────
+    # WINDOW & DOOR DETECTION
+    # ─────────────────────────────────────────────
     window_section:
-      name: Window & Door Detection
-      icon: mdi:door
+      name: "🪟 Window & Door Detection"
+      icon: mdi:door-open
       collapsed: true
       input:
+
         window_sensors:
           name: Window & Door Sensors
-          description: |
-            Optional. Select binary_sensor or sensor entities for windows and doors.
-            When any sensor is open for at least the reaction time below, heating is paused.
-            Leave empty if you have no window/door sensors in this room.
+          description: >
+            Optional. Select binary sensors for windows and doors.
+            When any sensor is open for at least the reaction time below,
+            heating is paused. Leave empty if not needed.
           default: []
           selector:
             entity:
               filter:
                 - domain: binary_sensor
-                - domain: sensor
               multiple: true
 
         window_airing_boolean:
-          name: Window Airing Mode Boolean
+          name: Airing Mode Toggle Helper
           description: |
             Required when using window sensors.
-            Create a Toggle helper in Settings → Helpers → Toggle (e.g. "Bedroom Airing Mode").
-            The automation uses this to track whether airing is currently active.
-            Leave empty if you have no window sensors.
+            Entity ID: input_boolean.ROOM_airing_mode
+            Auto-created by SHA integration if installed.
+            Tracks whether airing mode is currently active.
           default:
           selector:
             entity:
               filter:
                 - domain: input_boolean
-              multiple: false
 
         window_open_reaction_time:
           name: Open Reaction Time
-          description: >-
+          description: >
             How long a window must stay open before heating is paused.
-            Set to 0 seconds to pause heating immediately when any window opens.
+            Set to 0 seconds to pause immediately.
           default:
             hours: 0
-            minutes: 30
+            minutes: 5
             seconds: 0
           selector:
             duration:
 
         window_close_reaction_time:
           name: Close Reaction Time
-          description: >-
-            How long after all windows are closed before heating resumes.
+          description: >
+            How long after all windows close before heating resumes.
             Set to 0 seconds to resume immediately.
           default:
             hours: 0
@@ -340,9 +233,9 @@ blueprint:
 
         window_open_temperature:
           name: Window Open Temperature
-          description: >-
+          description: >
             Temperature to set TRVs to while a window is open.
-            Set to 0 to turn TRVs fully off (if supported) during airing.
+            Set to 0 to turn TRVs fully off during airing.
             Use a low value like 5°C for frost protection instead of fully off.
           default: 0
           selector:
@@ -352,16 +245,20 @@ blueprint:
               step: 1
               unit_of_measurement: "°C"
 
+    # ─────────────────────────────────────────────
+    # VACATION
+    # ─────────────────────────────────────────────
     vacation_section:
-      name: Vacation
-      icon: mdi:calendar
+      name: "🏖️ Vacation"
+      icon: mdi:calendar-clock
       collapsed: true
       input:
+
         vacation_enabled:
           name: Enable Vacation Mode
-          description: >-
-            When disabled, the calendar is never checked and heating follows
-            the normal schedule.
+          description: >
+            When disabled, the calendar is never checked and heating
+            follows the normal schedule at all times.
           default: false
           selector:
             boolean:
@@ -377,27 +274,31 @@ blueprint:
 
         vacation_keyword:
           name: Vacation Keyword
-          description: Event title prefix that enables vacation mode.
-          default: VACATION
+          description: >
+            Event title must start with this keyword to trigger vacation mode.
+            Case insensitive. Example: "Vacation Portugal" matches keyword "vacation".
+          default: vacation
           selector:
             text:
 
         vacation_mode:
           name: Vacation Behavior
-          description: Off disables heating. Frost keeps a low anti-freeze target.
+          description: >
+            Off — disables heating completely during vacation.
+            Frost — keeps a low anti-freeze temperature.
           default: "off"
           selector:
             select:
               options:
-                - label: Off (no heating)
+                - label: "Off (no heating)"
                   value: "off"
-                - label: Frost protection
-                  value: "frost"
+                - label: "Frost protection"
+                  value: frost
 
         vacation_temperature:
           name: Vacation Frost Temperature
-          description: Used only when Vacation Behavior = Frost protection.
-          default: 8
+          description: Used only when Vacation Behavior is set to Frost protection.
+          default: 12
           selector:
             number:
               min: 5
@@ -405,14 +306,21 @@ blueprint:
               step: 0.5
               unit_of_measurement: "°C"
 
+    # ─────────────────────────────────────────────
+    # MANUAL OVERRIDE
+    # ─────────────────────────────────────────────
     override_section:
-      name: Manual Override
+      name: "✋ Manual Override"
       icon: mdi:hand-back-right
       collapsed: true
       input:
+
         override_timer:
           name: Override Timer Helper
-          description: Timer used to block automation after manual TRV changes.
+          description: |
+            HA Timer helper used to pause automation after manual TRV changes.
+            Entity ID: timer.ROOM_override
+            Auto-created by SHA integration if installed.
           selector:
             entity:
               filter:
@@ -420,7 +328,7 @@ blueprint:
 
         override_minutes:
           name: Override Duration
-          description: How long to pause automation after a manual TRV change (up to 24 hours).
+          description: How long to pause automation after a manual TRV change.
           default: 120
           selector:
             number:
@@ -431,70 +339,58 @@ blueprint:
 
         automation_guard_boolean:
           name: Automation Guard Boolean
-          description: Set by automation to ignore its own TRV writes.
+          description: |
+            Toggle helper set by the automation while it changes TRVs.
+            Prevents the override from triggering on the automation's own changes.
+            Entity ID: input_boolean.ROOM_automation_running
+            Auto-created by SHA integration if installed.
           selector:
             entity:
               filter:
                 - domain: input_boolean
 
+    # ─────────────────────────────────────────────
+    # NOTIFICATIONS
+    # ─────────────────────────────────────────────
     notifications_section:
-      name: Notifications
-      icon: mdi:message-text
+      name: "🔔 Notifications"
+      icon: mdi:bell
       collapsed: true
       input:
-        send_notifications:
-          name: Send Notifications
+
+        notify_preheat:
+          name: Notify when pre-heat starts
           default: true
           selector:
             boolean:
 
-trigger:
-  - trigger: time_pattern
-    minutes: "/5"
-    id: control_loop
+        notify_target_reached:
+          name: Notify when target temperature reached
+          default: true
+          selector:
+            boolean:
 
-  # Immediate response when the mandatory schedule changes state
-  - trigger: state
-    entity_id: !input schedule_1
-    id: schedule_changed
+        notify_standby:
+          name: Notify when standby mode starts
+          default: true
+          selector:
+            boolean:
 
-  # Window/door reaction-time triggers
-  - trigger: state
-    entity_id: !input window_sensors
-    to:
-      - "on"
-      - "open"
-    for: !input window_open_reaction_time
-    id: window_airing_start
+        notify_window:
+          name: Notify when window opens or closes
+          default: true
+          selector:
+            boolean:
 
-  - trigger: state
-    entity_id: !input window_sensors
-    to:
-      - "off"
-      - "closed"
-    for: !input window_close_reaction_time
-    id: window_airing_end
+        notify_override:
+          name: Notify when override is activated or resumed
+          default: true
+          selector:
+            boolean:
 
-  - trigger: state
-    entity_id: !input vacation_calendar
-    id: vacation_changed
-
-  - trigger: state
-    entity_id: !input schedule_trvs
-    attribute: temperature
-    id: manual_override
-
-  - trigger: state
-    entity_id: !input schedule_trvs
-    attribute: hvac_mode
-    id: manual_override
-
-  - trigger: event
-    event_type: timer.finished
-    event_data:
-      entity_id: !input override_timer
-    id: override_ended
-
+# ─────────────────────────────────────────────────────────────────────
+# VARIABLES
+# ─────────────────────────────────────────────────────────────────────
 variables:
   room_name: !input room_name
   temperature_sensor: !input temperature_sensor
@@ -502,20 +398,7 @@ variables:
   schedule_trvs: !input schedule_trvs
   fixed_trvs: !input fixed_trvs
   fixed_trv_temperature: !input fixed_trv_temperature
-  schedule_1: !input schedule_1
-  schedule_1_temp: !input schedule_1_temp
-  schedule_2_enabled: !input schedule_2_enabled
-  schedule_2: !input schedule_2
-  schedule_2_temp: !input schedule_2_temp
-  schedule_3_enabled: !input schedule_3_enabled
-  schedule_3: !input schedule_3
-  schedule_3_temp: !input schedule_3_temp
-  schedule_4_enabled: !input schedule_4_enabled
-  schedule_4: !input schedule_4
-  schedule_4_temp: !input schedule_4_temp
-  schedule_5_enabled: !input schedule_5_enabled
-  schedule_5: !input schedule_5
-  schedule_5_temp: !input schedule_5_temp
+  schedules: !input schedules
   default_hvac_mode: !input default_hvac_mode
   default_temp: !input default_temp
   window_sensors: !input window_sensors
@@ -524,119 +407,103 @@ variables:
   override_timer: !input override_timer
   override_minutes: !input override_minutes
   automation_guard_boolean: !input automation_guard_boolean
-  send_notifications: !input send_notifications
   vacation_enabled: !input vacation_enabled
   vacation_calendar: !input vacation_calendar
   vacation_keyword: !input vacation_keyword
   vacation_mode: !input vacation_mode
   vacation_temperature: !input vacation_temperature
+  notify_preheat: !input notify_preheat
+  notify_target_reached: !input notify_target_reached
+  notify_standby: !input notify_standby
+  notify_window: !input notify_window
+  notify_override: !input notify_override
 
+  # Current room temperature
   room_temp: "{{ states(temperature_sensor) | float(18) }}"
+
+  # AI-calibrated heating rate
   heating_rate: "{{ states(heating_rate_helper) | float(0.15) }}"
 
-  # --- Comfort: which schedule is currently ON? Returns its target temp or -1 ---
-  schedule_comfort_temp: >
-    {% if is_state(schedule_1, 'on') %}
-      {{ schedule_1_temp | float }}
-    {% elif schedule_2_enabled and schedule_2 and is_state(schedule_2, 'on') %}
-      {{ schedule_2_temp | float }}
-    {% elif schedule_3_enabled and schedule_3 and is_state(schedule_3, 'on') %}
-      {{ schedule_3_temp | float }}
-    {% elif schedule_4_enabled and schedule_4 and is_state(schedule_4, 'on') %}
-      {{ schedule_4_temp | float }}
-    {% elif schedule_5_enabled and schedule_5 and is_state(schedule_5, 'on') %}
-      {{ schedule_5_temp | float }}
-    {% else %}
-      {{ -1 }}
-    {% endif %}
+  # Override active?
+  override_active: "{{ is_state(override_timer, 'active') }}"
 
-  in_comfort: "{{ schedule_comfort_temp | float(-1) >= 0 }}"
-
-  # --- Pre-heat: which schedule will turn ON soon? Returns its target temp or -1 ---
-  # Time needed = (target - current) / heating_rate minutes (AI-calibrated)
-  schedule_preheat_temp: >
-    {% if in_comfort %}
-      {{ -1 }}
-    {% else %}
-      {% set ns = namespace(result=-1) %}
-      {% if is_state(schedule_1, 'off') and ns.result < 0 %}
-        {% set nev = state_attr(schedule_1, 'next_event') %}
-        {% if nev %}
-          {% set mins = [((schedule_1_temp | float - room_temp) / heating_rate) | int(30), 1] | max %}
-          {% if 0 <= (as_datetime(nev) - now()).total_seconds() <= mins * 60 %}
-            {% set ns.result = schedule_1_temp | float %}
-          {% endif %}
-        {% endif %}
-      {% endif %}
-      {% if schedule_2_enabled and schedule_2 and is_state(schedule_2, 'off') and ns.result < 0 %}
-        {% set nev = state_attr(schedule_2, 'next_event') %}
-        {% if nev %}
-          {% set mins = [((schedule_2_temp | float - room_temp) / heating_rate) | int(30), 1] | max %}
-          {% if 0 <= (as_datetime(nev) - now()).total_seconds() <= mins * 60 %}
-            {% set ns.result = schedule_2_temp | float %}
-          {% endif %}
-        {% endif %}
-      {% endif %}
-      {% if schedule_3_enabled and schedule_3 and is_state(schedule_3, 'off') and ns.result < 0 %}
-        {% set nev = state_attr(schedule_3, 'next_event') %}
-        {% if nev %}
-          {% set mins = [((schedule_3_temp | float - room_temp) / heating_rate) | int(30), 1] | max %}
-          {% if 0 <= (as_datetime(nev) - now()).total_seconds() <= mins * 60 %}
-            {% set ns.result = schedule_3_temp | float %}
-          {% endif %}
-        {% endif %}
-      {% endif %}
-      {% if schedule_4_enabled and schedule_4 and is_state(schedule_4, 'off') and ns.result < 0 %}
-        {% set nev = state_attr(schedule_4, 'next_event') %}
-        {% if nev %}
-          {% set mins = [((schedule_4_temp | float - room_temp) / heating_rate) | int(30), 1] | max %}
-          {% if 0 <= (as_datetime(nev) - now()).total_seconds() <= mins * 60 %}
-            {% set ns.result = schedule_4_temp | float %}
-          {% endif %}
-        {% endif %}
-      {% endif %}
-      {% if schedule_5_enabled and schedule_5 and is_state(schedule_5, 'off') and ns.result < 0 %}
-        {% set nev = state_attr(schedule_5, 'next_event') %}
-        {% if nev %}
-          {% set mins = [((schedule_5_temp | float - room_temp) / heating_rate) | int(30), 1] | max %}
-          {% if 0 <= (as_datetime(nev) - now()).total_seconds() <= mins * 60 %}
-            {% set ns.result = schedule_5_temp | float %}
-          {% endif %}
-        {% endif %}
-      {% endif %}
-      {{ ns.result }}
-    {% endif %}
-
-  in_preheat: "{{ schedule_preheat_temp | float(-1) >= 0 }}"
-
-  # Airing mode driven by the input_boolean helper (set by reaction-time triggers)
+  # Airing mode active?
   windows_open: >
     {% if window_airing_boolean %}
       {{ is_state(window_airing_boolean, 'on') }}
     {% else %}
-      {{ false }}
+      false
     {% endif %}
 
+  # Vacation active?
   vacation_active: >
     {% if not vacation_enabled %}
-      {{ false }}
+      false
     {% else %}
-      {% set message = state_attr(vacation_calendar, 'message') | string %}
-      {% set kw = vacation_keyword | lower %}
-      {{ is_state(vacation_calendar, 'on') and message | lower | regex_search('^' ~ kw) }}
+      {% set message = state_attr(vacation_calendar, 'message') | default('') | string %}
+      {{ is_state(vacation_calendar, 'on') and
+         message | lower | regex_search('^' ~ vacation_keyword | lower) }}
     {% endif %}
 
-  override_active: "{{ is_state(override_timer, 'active') }}"
+  # ── Active schedule: find which schedule is currently ON
+  # Returns dict {active: bool, temp: float, name: str} or {active: false}
+  active_schedule: >
+    {% set ns = namespace(found=false, temp=0.0, name='') %}
+    {% for s in schedules %}
+      {% if not ns.found and is_state(s, 'on') %}
+        {% set fname = state_attr(s, 'friendly_name') | default('') %}
+        {% set match = fname | regex_search('(\d+(?:\.\d+)?)C$', ignorecase=True) %}
+        {% if match %}
+          {% set ns.found = true %}
+          {% set ns.temp = fname | regex_findall('(\d+(?:\.\d+)?)C$', ignorecase=True) | first | float %}
+          {% set ns.name = fname %}
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+    {{ {'active': ns.found, 'temp': ns.temp, 'name': ns.name} }}
 
+  in_comfort: "{{ active_schedule.active }}"
+  comfort_temp: "{{ active_schedule.temp | float(0) }}"
+
+  # ── Pre-heat: find which schedule will start soon and needs pre-heating now
+  # Uses AI heating rate to calculate exactly when to start
+  preheat_schedule: >
+    {% set ns = namespace(found=false, temp=0.0, name='', mins_needed=0) %}
+    {% if not in_comfort %}
+      {% for s in schedules %}
+        {% if not ns.found and is_state(s, 'off') %}
+          {% set fname = state_attr(s, 'friendly_name') | default('') %}
+          {% set nev = state_attr(s, 'next_event') %}
+          {% set match = fname | regex_search('(\d+(?:\.\d+)?)C$', ignorecase=True) %}
+          {% if match and nev %}
+            {% set target_temp = fname | regex_findall('(\d+(?:\.\d+)?)C$', ignorecase=True) | first | float %}
+            {% set mins_needed = [((target_temp - room_temp) / heating_rate) | int(10), 5] | max %}
+            {% set mins_to_start = ((as_datetime(nev) - now()).total_seconds() / 60) | int(0) %}
+            {% if 0 <= mins_to_start <= mins_needed %}
+              {% set ns.found = true %}
+              {% set ns.temp = target_temp %}
+              {% set ns.name = fname %}
+              {% set ns.mins_needed = mins_needed %}
+            {% endif %}
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+    {{ {'active': ns.found, 'temp': ns.temp, 'name': ns.name, 'mins_needed': ns.mins_needed} }}
+
+  in_preheat: "{{ preheat_schedule.active }}"
+  preheat_temp: "{{ preheat_schedule.temp | float(0) }}"
+
+  # ── Final target temperature and HVAC mode
   target_temperature: >
     {% if windows_open and window_open_temp | float > 0 %}
       {{ window_open_temp | float }}
-    {% elif vacation_active %}
-      {{ iif(vacation_mode == 'frost', vacation_temperature | float, 0) }}
+    {% elif vacation_active and vacation_mode == 'frost' %}
+      {{ vacation_temperature | float }}
     {% elif in_comfort %}
-      {{ schedule_comfort_temp | float }}
+      {{ comfort_temp }}
     {% elif in_preheat %}
-      {{ schedule_preheat_temp | float }}
+      {{ preheat_temp }}
     {% else %}
       {{ default_temp | float }}
     {% endif %}
@@ -652,24 +519,98 @@ variables:
       heat
     {% endif %}
 
-condition: []
+  # ── Target reached? (for notification — only fire once per schedule)
+  target_reached: >
+    {{ in_comfort and room_temp >= (comfort_temp - 0.3) }}
 
+# ─────────────────────────────────────────────────────────────────────
+# TRIGGERS
+# ─────────────────────────────────────────────────────────────────────
+triggers:
+  # Main control loop — every 5 minutes
+  - trigger: time_pattern
+    minutes: "/5"
+    id: control_loop
+
+  # Immediate response when any schedule changes state
+  - trigger: state
+    entity_id: !input schedules
+    id: schedule_changed
+
+  # Window opened long enough
+  - trigger: state
+    entity_id: !input window_sensors
+    to:
+      - "on"
+      - "open"
+    for: !input window_open_reaction_time
+    id: window_airing_start
+
+  # All windows closed long enough
+  - trigger: state
+    entity_id: !input window_sensors
+    to:
+      - "off"
+      - "closed"
+    for: !input window_close_reaction_time
+    id: window_airing_end
+
+  # Vacation calendar changed
+  - trigger: state
+    entity_id: !input vacation_calendar
+    id: vacation_changed
+
+  # Manual TRV temperature change
+  - trigger: state
+    entity_id: !input schedule_trvs
+    attribute: temperature
+    id: manual_override
+
+  # Manual TRV mode change
+  - trigger: state
+    entity_id: !input schedule_trvs
+    attribute: hvac_mode
+    id: manual_override
+
+  # Override timer expired
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input override_timer
+    id: override_ended
+
+conditions: []
+
+# ─────────────────────────────────────────────────────────────────────
+# ACTIONS
+# ─────────────────────────────────────────────────────────────────────
 action:
   - choose:
-      # --- Window opened long enough: activate airing mode ---
+
+      # ── Window opened: activate airing mode ──────────────────────
       - conditions:
           - condition: template
             value_template: "{{ trigger.id == 'window_airing_start' }}"
         sequence:
           - if:
               - condition: template
-                value_template: "{{ window_airing_boolean is not none and window_airing_boolean | length > 0 }}"
+                value_template: "{{ window_airing_boolean not in ['', none] }}"
             then:
               - action: input_boolean.turn_on
                 target:
                   entity_id: "{{ window_airing_boolean }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_window }}"
+                then:
+                  - action: notify.notify
+                    data:
+                      title: "🪟 {{ room_name }} — Window Open"
+                      message: >
+                        Heating paused — window open.
+                        Room: {{ room_temp | round(1) }}°C.
 
-      # --- All windows closed long enough: deactivate airing mode ---
+      # ── All windows closed: deactivate airing mode ───────────────
       - conditions:
           - condition: template
             value_template: "{{ trigger.id == 'window_airing_end' }}"
@@ -677,26 +618,35 @@ action:
           - if:
               - condition: template
                 value_template: >
-                  {{ window_airing_boolean is not none
-                     and window_airing_boolean | length > 0
-                     and expand(window_sensors)
-                         | selectattr('state', 'in', ['on', 'open'])
-                         | list | count == 0 }}
+                  {{ window_airing_boolean not in ['', none] and
+                     expand(window_sensors)
+                     | selectattr('state', 'in', ['on', 'open'])
+                     | list | count == 0 }}
             then:
               - action: input_boolean.turn_off
                 target:
                   entity_id: "{{ window_airing_boolean }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_window }}"
+                then:
+                  - action: notify.notify
+                    data:
+                      title: "🪟 {{ room_name }} — Window Closed"
+                      message: >
+                        All windows closed. Heating resumed.
+                        Room: {{ room_temp | round(1) }}°C.
 
-      # --- Manual TRV change: start override timer ---
+      # ── Manual TRV change: start override timer ──────────────────
       - conditions:
           - condition: template
             value_template: "{{ trigger.id == 'manual_override' }}"
         sequence:
           - if:
               - condition: template
-                value_template: "{{ is_state(automation_guard_boolean, 'off') }}"
-              - condition: template
-                value_template: "{{ not windows_open }}"
+                value_template: >
+                  {{ is_state(automation_guard_boolean, 'off') and
+                     not windows_open }}
             then:
               - action: timer.start
                 target:
@@ -707,28 +657,33 @@ action:
                     {{ '%02d:%02d:00' | format((m // 60), (m % 60)) }}
               - if:
                   - condition: template
-                    value_template: "{{ send_notifications }}"
+                    value_template: "{{ notify_override }}"
                 then:
                   - action: notify.notify
                     data:
-                      title: "Manual Override: {{ room_name }}"
+                      title: "✋ {{ room_name }} — Override Active"
                       message: >
-                        Manual TRV change detected in {{ room_name }}.
-                        Automation paused for {{ override_minutes }} minutes.
+                        Manual change detected on {{ trigger.to_state.attributes.friendly_name }}.
+                        Smart heating paused for {{ override_minutes }} min until
+                        {{ (now() + timedelta(minutes=override_minutes | int)).strftime('%H:%M') }}.
 
-      # --- Override timer still active: skip ---
+      # ── Override active: skip control loop ───────────────────────
       - conditions:
           - condition: template
-            value_template: "{{ override_active and trigger.id != 'override_ended' and trigger.id != 'manual_override' }}"
+            value_template: >
+              {{ override_active and
+                 trigger.id not in ['override_ended', 'manual_override'] }}
         sequence:
-          - stop: "Override timer active; skip automation changes."
+          - stop: "Override active — skipping control loop."
 
+    # ── DEFAULT: main heating control ──────────────────────────────
     default:
+      # Set automation guard ON — prevents override false trigger
       - action: input_boolean.turn_on
         target:
           entity_id: !input automation_guard_boolean
 
-      # --- Schedule TRVs: follow calculated target temperature ---
+      # ── Control schedule TRVs ──────────────────────────────────
       - choose:
           - conditions:
               - condition: template
@@ -755,7 +710,7 @@ action:
                 data:
                   temperature: "{{ target_temperature | float }}"
 
-      # --- Fixed TRVs: heat to fixed_trv_temperature, or let AI control if set to 0 ---
+      # ── Control fixed TRVs ─────────────────────────────────────
       - if:
           - condition: template
             value_template: "{{ fixed_trvs | list | count > 0 }}"
@@ -770,10 +725,9 @@ action:
                       entity_id: "{{ fixed_trvs }}"
                     data:
                       hvac_mode: "off"
-
               - conditions:
                   - condition: template
-                    value_template: "{{ target_mode == 'heat' and fixed_trv_temperature | float > 0 }}"
+                    value_template: "{{ target_mode == 'heat' }}"
                 sequence:
                   - action: climate.set_hvac_mode
                     target:
@@ -786,32 +740,87 @@ action:
                     data:
                       temperature: "{{ fixed_trv_temperature | float }}"
 
-              - conditions:
-                  - condition: template
-                    # fixed_trv_temperature == 0: AI controls temp — only ensure HVAC mode is heat
-                    value_template: "{{ target_mode == 'heat' and fixed_trv_temperature | float == 0 }}"
-                sequence:
-                  - action: climate.set_hvac_mode
-                    target:
-                      entity_id: "{{ fixed_trvs }}"
-                    data:
-                      hvac_mode: heat
-
+      # Set automation guard OFF
       - action: input_boolean.turn_off
         target:
           entity_id: !input automation_guard_boolean
 
+      # ── Notifications ──────────────────────────────────────────
+
+      # Pre-heat started
       - if:
           - condition: template
-            value_template: "{{ trigger.id == 'override_ended' and send_notifications }}"
+            value_template: "{{ notify_preheat and in_preheat }}"
         then:
           - action: notify.notify
             data:
-              title: "Override Ended: {{ room_name }}"
+              title: "🌅 {{ room_name }} — Pre-heat Started"
               message: >
-                Manual override ended.
-                Room temperature is {{ room_temp | round(1) }}°C.
-                Schedule control resumed.
+                Pre-heating for "{{ preheat_schedule.name }}".
+                Room: {{ room_temp | round(1) }}°C → target {{ preheat_temp }}°C.
+                Est. {{ preheat_schedule.mins_needed }} min to reach target.
+
+      # Target reached
+      - if:
+          - condition: template
+            value_template: "{{ notify_target_reached and target_reached }}"
+        then:
+          - action: notify.notify
+            data:
+              title: "✅ {{ room_name }} — Target Reached"
+              message: >
+                {{ room_name }} reached {{ room_temp | round(1) }}°C
+                for "{{ active_schedule.name }}" at {{ now().strftime('%H:%M') }}.
+
+      # Standby mode started (no schedule active, heating off)
+      - if:
+          - condition: template
+            value_template: >
+              {{ notify_standby and
+                 not in_comfort and
+                 not in_preheat and
+                 not vacation_active and
+                 not windows_open }}
+        then:
+          - action: notify.notify
+            data:
+              title: "🌡️ {{ room_name }} — Standby"
+              message: >
+                No active schedule. 
+                {% if default_hvac_mode == 'heat' %}
+                  Maintaining {{ default_temp }}°C standby.
+                {% else %}
+                  Heating off.
+                {% endif %}
+                Room: {{ room_temp | round(1) }}°C.
+
+      # Override ended
+      - if:
+          - condition: template
+            value_template: "{{ notify_override and trigger.id == 'override_ended' }}"
+        then:
+          - action: notify.notify
+            data:
+              title: "🔄 {{ room_name }} — Heating Resumed"
+              message: >
+                Manual override ended. Smart heating resumed.
+                Room: {{ room_temp | round(1) }}°C.
+
+      # Vacation active
+      - if:
+          - condition: template
+            value_template: "{{ vacation_active }}"
+        then:
+          - action: notify.notify
+            data:
+              title: "🏖️ {{ room_name }} — Vacation Mode"
+              message: >
+                Vacation mode active.
+                {% if vacation_mode == 'frost' %}
+                  Maintaining frost protection at {{ vacation_temperature }}°C.
+                {% else %}
+                  Heating off.
+                {% endif %}
 
 mode: queued
 max: 10

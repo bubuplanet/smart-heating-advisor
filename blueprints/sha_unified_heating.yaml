@@ -71,7 +71,7 @@ blueprint:
     If using standalone, create these in Settings → Helpers before
     creating an automation from this blueprint.
 
-  source_url: https://raw.githubusercontent.com/bubuplanet/smart-heating-advisor/main/blueprints/automation/smart_heating_advisor/sha_unified_heating.yaml
+  source_url: https://raw.githubusercontent.com/bubuplanet/smart-heating-advisor/refs/heads/master/blueprints/sha_unified_heating.yaml
   domain: automation
 
   input:

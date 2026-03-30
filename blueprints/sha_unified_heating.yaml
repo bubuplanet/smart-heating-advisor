@@ -76,9 +76,7 @@ blueprint:
 
     **Version**: 0.0.1
 
-  source_url: https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/automation/smart_heating_advisor/sha_unified_heating.yaml
-  domain: automation
-
+  source_url: https://raw.githubusercontent.com/bubuplanet/smart-heating-advisor/refs/heads/master/blueprints/sha_unified_heating.yaml
   input:
 
     # ─────────────────────────────────────────────

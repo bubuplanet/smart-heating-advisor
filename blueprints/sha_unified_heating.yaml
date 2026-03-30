@@ -29,15 +29,22 @@ blueprint:
     If no temperature is found in the name, the configured fallback temperature is used.
 
     ⚠️ Requires Smart Heating Advisor (SHA) HACS integration
-    The SHA integration automatically creates all required helpers using
-    the room_id you provide below. Make sure the SHA integration is
-    installed and configured before creating automations from this blueprint.
+    The SHA integration automatically creates all required helpers based
+    on the room name you provide. Make sure SHA is installed and configured
+    before creating automations from this blueprint.
 
-    🛠️ Helpers auto-created by SHA for each room (using room_id prefix):
-    - input_number.sha_ROOMID_heating_rate
-    - input_boolean.sha_ROOMID_automation_running
-    - input_boolean.sha_ROOMID_airing_mode
-    - timer.sha_ROOMID_override
+    🛠️ Helpers auto-created by SHA for each room:
+    Room name "Bathroom" → room_id "bathroom":
+    - input_number.sha_bathroom_heating_rate
+    - input_boolean.sha_bathroom_automation_running
+    - input_boolean.sha_bathroom_airing_mode
+    - timer.sha_bathroom_override
+
+    Room name "Alessio's Bedroom" → room_id "alessios_bedroom":
+    - input_number.sha_alessios_bedroom_heating_rate
+    - input_boolean.sha_alessios_bedroom_automation_running
+    - input_boolean.sha_alessios_bedroom_airing_mode
+    - timer.sha_alessios_bedroom_override
 
   source_url: https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/automation/smart_heating_advisor/sha_unified_heating.yaml
   domain: automation
@@ -52,24 +59,12 @@ blueprint:
       icon: mdi:radiator
       input:
 
-        room_id:
-          name: Room ID
+        room_name:
+          name: Room Name
           description: |
-            Unique identifier for this room — lowercase with underscores.
-            Examples: bathroom, bedroom_alessio, living_room, office
-            This is used to reference the SHA helpers created by the integration:
-              input_number.sha_ROOMID_heating_rate
-              input_boolean.sha_ROOMID_automation_running
-              input_boolean.sha_ROOMID_airing_mode
-              timer.sha_ROOMID_override
-          default: bathroom
-          selector:
-            text:
-
-        room_display_name:
-          name: Room Display Name
-          description: |
-            Friendly name used in notifications.
+            Friendly name of the room — used in notifications and to
+            derive the SHA helper entity IDs automatically.
+            Use the exact same name you configured in the SHA integration.
             Examples: Bathroom, Alessio's Bedroom, Living Room, Office
           default: Bathroom
           selector:
@@ -367,30 +362,39 @@ blueprint:
 # VARIABLES
 # ─────────────────────────────────────────────────────────────────────
 variables:
-  room_id: !input room_id
-  room_display_name: !input room_display_name
-  temperature_sensor: !input temperature_sensor
-  radiator_thermostats: !input radiator_thermostats
+  room_name:                  !input room_name
+  temperature_sensor:         !input temperature_sensor
+  radiator_thermostats:       !input radiator_thermostats
   fixed_radiator_thermostats: !input fixed_radiator_thermostats
   fixed_radiator_temperature: !input fixed_radiator_temperature
-  schedules: !input schedules
-  schedule_fallback_temp: !input schedule_fallback_temp
-  default_hvac_mode: !input default_hvac_mode
-  default_temp: !input default_temp
-  window_sensors: !input window_sensors
-  vacation_enabled: !input vacation_enabled
-  vacation_calendar: !input vacation_calendar
-  vacation_keyword: !input vacation_keyword
-  vacation_mode: !input vacation_mode
-  vacation_temperature: !input vacation_temperature
-  override_minutes: !input override_minutes
-  notify_preheat: !input notify_preheat
-  notify_target_reached: !input notify_target_reached
-  notify_standby: !input notify_standby
-  notify_window: !input notify_window
-  notify_override: !input notify_override
+  schedules:                  !input schedules
+  schedule_fallback_temp:     !input schedule_fallback_temp
+  default_hvac_mode:          !input default_hvac_mode
+  default_temp:               !input default_temp
+  window_sensors:             !input window_sensors
+  vacation_enabled:           !input vacation_enabled
+  vacation_calendar:          !input vacation_calendar
+  vacation_keyword:           !input vacation_keyword
+  vacation_mode:              !input vacation_mode
+  vacation_temperature:       !input vacation_temperature
+  override_minutes:           !input override_minutes
+  notify_preheat:             !input notify_preheat
+  notify_target_reached:      !input notify_target_reached
+  notify_standby:             !input notify_standby
+  notify_window:              !input notify_window
+  notify_override:            !input notify_override
 
-  # ── SHA helper entity IDs — derived from room_id ─────────────────
+  # ── Room ID derived from room name ───────────────────────────────
+  # "Alessio's Bedroom" → "alessios_bedroom"
+  # "Bathroom"          → "bathroom"
+  # "Living Room"       → "living_room"
+  room_id: >
+    {{ room_name | lower
+                 | replace("'", '')
+                 | replace(' ', '_')
+                 | replace('-', '_') }}
+
+  # ── SHA helper entity IDs — auto-derived from room_id ────────────
   sha_heating_rate:   "input_number.sha_{{ room_id }}_heating_rate"
   sha_guard:          "input_boolean.sha_{{ room_id }}_automation_running"
   sha_airing:         "input_boolean.sha_{{ room_id }}_airing_mode"
@@ -560,7 +564,7 @@ action:
             then:
               - action: notify.notify
                 data:
-                  title: "🪟 {{ room_display_name }} — Window Open"
+                  title: "🪟 {{ room_name }} — Window Open"
                   message: >
                     Heating paused — window open.
                     Room: {{ room_temp | round(1) }}°C.
@@ -586,7 +590,7 @@ action:
                 then:
                   - action: notify.notify
                     data:
-                      title: "🪟 {{ room_display_name }} — Window Closed"
+                      title: "🪟 {{ room_name }} — Window Closed"
                       message: >
                         All windows closed. Heating resumed.
                         Room: {{ room_temp | round(1) }}°C.
@@ -614,7 +618,7 @@ action:
                 then:
                   - action: notify.notify
                     data:
-                      title: "✋ {{ room_display_name }} — Override Active"
+                      title: "✋ {{ room_name }} — Override Active"
                       message: >
                         Manual change detected on {{ trigger.to_state.attributes.friendly_name }}.
                         Smart heating paused for {{ override_minutes }} min until
@@ -707,7 +711,7 @@ action:
         then:
           - action: notify.notify
             data:
-              title: "🌅 {{ room_display_name }} — Pre-heat Started"
+              title: "🌅 {{ room_name }} — Pre-heat Started"
               message: >
                 Pre-heating for "{{ preheat_schedule.name }}".
                 Room: {{ room_temp | round(1) }}°C → target {{ preheat_temp }}°C.
@@ -719,9 +723,9 @@ action:
         then:
           - action: notify.notify
             data:
-              title: "✅ {{ room_display_name }} — Target Reached"
+              title: "✅ {{ room_name }} — Target Reached"
               message: >
-                {{ room_display_name }} reached {{ room_temp | round(1) }}°C
+                {{ room_name }} reached {{ room_temp | round(1) }}°C
                 for "{{ active_schedule.name }}" at {{ now().strftime('%H:%M') }}.
 
       - if:
@@ -735,7 +739,7 @@ action:
         then:
           - action: notify.notify
             data:
-              title: "🌡️ {{ room_display_name }} — Standby"
+              title: "🌡️ {{ room_name }} — Standby"
               message: >
                 No active schedule.
                 {% if default_hvac_mode == 'heat' %}
@@ -751,7 +755,7 @@ action:
         then:
           - action: notify.notify
             data:
-              title: "🔄 {{ room_display_name }} — Heating Resumed"
+              title: "🔄 {{ room_name }} — Heating Resumed"
               message: >
                 Manual override ended. Smart heating resumed.
                 Room: {{ room_temp | round(1) }}°C.
@@ -762,7 +766,7 @@ action:
         then:
           - action: notify.notify
             data:
-              title: "🏖️ {{ room_display_name }} — Vacation Mode"
+              title: "🏖️ {{ room_name }} — Vacation Mode"
               message: >
                 Vacation mode active.
                 {% if vacation_mode == 'frost' %}

@@ -1,5 +1,5 @@
 blueprint:
-  name: "Smart Heating Room Advisor"
+  name: "Smart Heating Advisor"
   author: bubuplanet
   homeassistant:
     min_version: "2026.3.4"

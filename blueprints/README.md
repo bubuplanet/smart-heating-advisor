@@ -5,6 +5,16 @@
 [![SHA Integration](https://img.shields.io/badge/SHA-Integration-orange.svg)](https://github.com/bubuplanet/smart-heating-advisor)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+## 🔘 Import Blueprint
+
+[![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fbubuplanet%2Fsmart-heating-advisor%2Fmain%2Fblueprints%2Fautomation%2Fsmart_heating_advisor%2Fsha_unified_heating.yaml)
+
+> Click the button above to import this blueprint directly into your Home Assistant.  
+> Or copy the URL manually:  
+> `https://raw.githubusercontent.com/bubuplanet/smart-heating-advisor/main/blueprints/automation/smart_heating_advisor/sha_unified_heating.yaml`
+
+---
+
 > **This blueprint is designed to work with the [Smart Heating Advisor (SHA)](../../../README.md) HACS integration.**  
 > It can also be used standalone without SHA, but without AI calibration the heating experience will be limited to a fixed heating rate with no automatic adaptation.
 
@@ -68,6 +78,8 @@ Room temp sensor
 ## 🚀 Quick Start
 
 ### Option A — With SHA Integration (Recommended)
+
+[![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fbubuplanet%2Fsmart-heating-advisor%2Fmain%2Fblueprints%2Fautomation%2Fsmart_heating_advisor%2Fsha_unified_heating.yaml)
 
 1. Install **Smart Heating Advisor** via HACS
 2. Configure your rooms in SHA — helpers are created automatically

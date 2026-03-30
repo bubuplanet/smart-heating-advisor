@@ -1,6 +1,8 @@
 blueprint:
-  name: "SHA - Unified Room Heating"
+  name: "Smart Heating Room Advisor"
   author: bubuplanet
+  homeassistant:
+    min_version: "2026.3.4"
   description: |
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
@@ -43,6 +45,8 @@ blueprint:
     - input_boolean.sha_bathroom_standby_notified
     - input_boolean.sha_bathroom_vacation_notified
     - timer.sha_bathroom_override
+
+    **Version**: 0.0.1
 
   source_url: https://github.com/bubuplanet/smart-heating-advisor/blob/master/blueprints/automation/smart_heating_advisor/sha_unified_heating.yaml
   domain: automation

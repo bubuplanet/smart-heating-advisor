@@ -1,10 +1,7 @@
 blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
-  homeassistant:
-    min_version: "2026.3.4"
   description: |
-    description: |
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
     This blueprint is designed to work with the Smart Heating Advisor (SHA)
@@ -74,9 +71,9 @@ blueprint:
     If using standalone, create these in Settings → Helpers before
     creating an automation from this blueprint.
 
-    **Version**: 0.0.1
+  source_url: https://raw.githubusercontent.com/bubuplanet/smart-heating-advisor/main/blueprints/automation/smart_heating_advisor/sha_unified_heating.yaml
+  domain: automation
 
-  source_url: https://raw.githubusercontent.com/bubuplanet/smart-heating-advisor/refs/heads/master/blueprints/sha_unified_heating.yaml
   input:
 
     # ─────────────────────────────────────────────
@@ -416,14 +413,14 @@ variables:
                  | replace('-', '_') }}
 
   # ── SHA helper entity IDs — all derived from room_id ─────────────
-  sha_heating_rate:        "input_number.sha_{{ room_id }}_heating_rate"
-  sha_guard:               "input_boolean.sha_{{ room_id }}_automation_running"
-  sha_airing:              "input_boolean.sha_{{ room_id }}_airing_mode"
-  sha_override_timer:      "timer.sha_{{ room_id }}_override"
-  sha_preheat_notified:    "input_boolean.sha_{{ room_id }}_preheat_notified"
-  sha_target_notified:     "input_boolean.sha_{{ room_id }}_target_notified"
-  sha_standby_notified:    "input_boolean.sha_{{ room_id }}_standby_notified"
-  sha_vacation_notified:   "input_boolean.sha_{{ room_id }}_vacation_notified"
+  sha_heating_rate:      "input_number.sha_{{ room_id }}_heating_rate"
+  sha_guard:             "input_boolean.sha_{{ room_id }}_automation_running"
+  sha_airing:            "input_boolean.sha_{{ room_id }}_airing_mode"
+  sha_override_timer:    "timer.sha_{{ room_id }}_override"
+  sha_preheat_notified:  "input_boolean.sha_{{ room_id }}_preheat_notified"
+  sha_target_notified:   "input_boolean.sha_{{ room_id }}_target_notified"
+  sha_standby_notified:  "input_boolean.sha_{{ room_id }}_standby_notified"
+  sha_vacation_notified: "input_boolean.sha_{{ room_id }}_vacation_notified"
 
   # ── Sensor readings ──────────────────────────────────────────────
   room_temp:    "{{ states(temperature_sensor) | float(18) }}"
@@ -444,9 +441,6 @@ variables:
     {% endif %}
 
   # ── Active schedule ──────────────────────────────────────────────
-  # Finds which schedule is currently ON
-  # Reads target temp from name (e.g. "Morning Shower 26C")
-  # Falls back to schedule_fallback_temp if no temp found
   active_schedule: >
     {% set ns = namespace(found=false, temp=0.0, name='') %}
     {% for s in schedules %}
@@ -464,8 +458,6 @@ variables:
   comfort_temp: "{{ active_schedule.temp | float(0) }}"
 
   # ── Pre-heat schedule ────────────────────────────────────────────
-  # Finds which schedule will start soon and needs pre-heating now
-  # Uses AI heating rate to calculate exactly when to start
   preheat_schedule: >
     {% set ns = namespace(found=false, temp=0.0, name='', mins_needed=0) %}
     {% if not in_comfort %}
@@ -620,15 +612,17 @@ action:
                         All windows closed. Heating resumed.
                         Room: {{ room_temp | round(1) }}°C.
 
-      # ── Schedule changed: reset relevant notification flags ───────
-      # When a schedule turns ON  → reset preheat + standby flags
-      # When a schedule turns OFF → reset target reached flag
+      # ── Schedule changed: ALWAYS reset notification flags ────────
+      # This runs regardless of override — flags must always reset
+      # on schedule transitions so notifications fire correctly
+      # when override ends and heating resumes.
+      # Heating control is handled separately below.
       - conditions:
           - condition: template
             value_template: "{{ trigger.id == 'schedule_changed' }}"
         sequence:
           - choose:
-              # Schedule turned ON → reset preheat + standby notified flags
+              # Schedule turned ON → reset preheat + standby flags
               - conditions:
                   - condition: template
                     value_template: "{{ trigger.to_state.state == 'on' }}"
@@ -638,7 +632,7 @@ action:
                       entity_id:
                         - "{{ sha_preheat_notified }}"
                         - "{{ sha_standby_notified }}"
-              # Schedule turned OFF → reset target + preheat notified flags
+              # Schedule turned OFF → reset target + preheat flags
               - conditions:
                   - condition: template
                     value_template: "{{ trigger.to_state.state == 'off' }}"
@@ -648,6 +642,69 @@ action:
                       entity_id:
                         - "{{ sha_target_notified }}"
                         - "{{ sha_preheat_notified }}"
+          # ── Only apply heating control if override is NOT active ──
+          - if:
+              - condition: template
+                value_template: "{{ not override_active }}"
+            then:
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: "{{ sha_guard }}"
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ target_mode == 'off' }}"
+                    sequence:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: !input radiator_thermostats
+                        data:
+                          hvac_mode: "off"
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ target_mode == 'heat' }}"
+                    sequence:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: !input radiator_thermostats
+                        data:
+                          hvac_mode: heat
+                      - action: climate.set_temperature
+                        target:
+                          entity_id: !input radiator_thermostats
+                        data:
+                          temperature: "{{ target_temperature | float }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ fixed_radiator_thermostats | list | count > 0 }}"
+                then:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ target_mode == 'off' }}"
+                          sequence:
+                            - action: climate.set_hvac_mode
+                              target:
+                                entity_id: "{{ fixed_radiator_thermostats }}"
+                              data:
+                                hvac_mode: "off"
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ target_mode == 'heat' }}"
+                          sequence:
+                            - action: climate.set_hvac_mode
+                              target:
+                                entity_id: "{{ fixed_radiator_thermostats }}"
+                              data:
+                                hvac_mode: heat
+                            - action: climate.set_temperature
+                              target:
+                                entity_id: "{{ fixed_radiator_thermostats }}"
+                              data:
+                                temperature: "{{ fixed_radiator_temperature | float }}"
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: "{{ sha_guard }}"
 
       # ── Manual TRV change: start override timer ──────────────────
       - conditions:
@@ -684,8 +741,7 @@ action:
             value_template: >
               {{ override_active and
                  trigger.id not in ['override_ended', 'manual_override',
-                                    'window_airing_start', 'window_airing_end',
-                                    'schedule_changed'] }}
+                                    'window_airing_start', 'window_airing_end'] }}
         sequence:
           - stop: "Override active — skipping control loop."
 
@@ -760,7 +816,7 @@ action:
 
       # ── Notifications — each fires only once per event ────────
 
-      # Pre-heat started — once per schedule event
+      # Pre-heat started
       - if:
           - condition: template
             value_template: >
@@ -779,7 +835,7 @@ action:
             target:
               entity_id: "{{ sha_preheat_notified }}"
 
-      # Target reached — once per schedule event
+      # Target reached
       - if:
           - condition: template
             value_template: >
@@ -797,7 +853,7 @@ action:
             target:
               entity_id: "{{ sha_target_notified }}"
 
-      # Standby mode — once per transition
+      # Standby mode
       - if:
           - condition: template
             value_template: >
@@ -823,7 +879,7 @@ action:
             target:
               entity_id: "{{ sha_standby_notified }}"
 
-      # Override ended — fires on override_ended trigger
+      # Override ended
       - if:
           - condition: template
             value_template: "{{ notify_override and trigger.id == 'override_ended' }}"

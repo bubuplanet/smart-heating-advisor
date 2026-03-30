@@ -2,6 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
+    description: |
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
     This blueprint is designed to work with the Smart Heating Advisor (SHA)
@@ -51,25 +52,50 @@ blueprint:
     manual override and notifications. However without AI calibration
     the pre-heat timing will not adapt to your room's actual heating
     behaviour, seasonal changes or outside temperature. You will need
-    to tune the heating rate manually in input_number.sha_ROOM_heating_rate
-    based on your own observations.
+    to tune the heating rate manually by editing input_number.sha_ROOM_heating_rate.
 
-    🛠️ Helpers per room
+    🛠️ Standalone — Required helpers (8 per room)
     Replace ROOM with your room name in lowercase with underscores.
-    Example: "Bathroom" → "bathroom", "Alessio's Bedroom" → "alessios_bedroom"
+    Examples: Bathroom → bathroom, Alessio's Bedroom → alessios_bedroom
 
-    Required helpers (auto-created by SHA or create manually for standalone):
-    - input_number.sha_ROOM_heating_rate      (heating rate — default 0.15°C/min)
-    - input_boolean.sha_ROOM_automation_running
-    - input_boolean.sha_ROOM_airing_mode
-    - input_boolean.sha_ROOM_preheat_notified
-    - input_boolean.sha_ROOM_target_notified
-    - input_boolean.sha_ROOM_standby_notified
-    - input_boolean.sha_ROOM_vacation_notified
-    - timer.sha_ROOM_override
+    Before creating an automation from this blueprint, create these helpers
+    in Settings → Helpers for each room:
 
-    If using standalone, create these in Settings → Helpers before
-    creating an automation from this blueprint.
+    Toggle helpers (×6) — Settings → Helpers → + Create Helper → Toggle:
+      sha_ROOM_automation_running  →  input_boolean.sha_ROOM_automation_running
+      sha_ROOM_airing_mode         →  input_boolean.sha_ROOM_airing_mode
+      sha_ROOM_preheat_notified    →  input_boolean.sha_ROOM_preheat_notified
+      sha_ROOM_target_notified     →  input_boolean.sha_ROOM_target_notified
+      sha_ROOM_standby_notified    →  input_boolean.sha_ROOM_standby_notified
+      sha_ROOM_vacation_notified   →  input_boolean.sha_ROOM_vacation_notified
+
+    Number helper (×1) — Settings → Helpers → + Create Helper → Number:
+      Name:    sha_ROOM_heating_rate
+      Min:     0.05
+      Max:     0.30
+      Step:    0.01
+      Initial: 0.15
+      Mode:    Input field
+
+    Timer helper (×1) — Settings → Helpers → + Create Helper → Timer:
+      sha_ROOM_override  →  timer.sha_ROOM_override
+
+    Example for room "Bathroom":
+      sha_bathroom_automation_running  →  input_boolean.sha_bathroom_automation_running
+      sha_bathroom_airing_mode         →  input_boolean.sha_bathroom_airing_mode
+      sha_bathroom_preheat_notified    →  input_boolean.sha_bathroom_preheat_notified
+      sha_bathroom_target_notified     →  input_boolean.sha_bathroom_target_notified
+      sha_bathroom_standby_notified    →  input_boolean.sha_bathroom_standby_notified
+      sha_bathroom_vacation_notified   →  input_boolean.sha_bathroom_vacation_notified
+      sha_bathroom_heating_rate        →  input_number.sha_bathroom_heating_rate
+      sha_bathroom_override            →  timer.sha_bathroom_override
+
+    For each additional room repeat the above replacing bathroom with
+    the new room name in lowercase with underscores.
+    When using SHA the integration creates all helpers automatically —
+    no manual steps needed.
+
+    **version: 0.0.2**
 
   source_url: https://raw.githubusercontent.com/bubuplanet/smart-heating-advisor/refs/heads/master/blueprints/sha_unified_heating.yaml
   domain: automation

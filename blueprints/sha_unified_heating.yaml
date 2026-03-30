@@ -4,15 +4,22 @@ blueprint:
   homeassistant:
     min_version: "2026.3.4"
   description: |
+    description: |
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
-    AI-driven smart heating for any room. Pre-heat timing is calculated
-    dynamically from the current room temperature, the AI-calibrated
-    heating rate, and the next schedule start time — so the room is
-    always at the right temperature exactly when needed.
+    This blueprint is designed to work with the Smart Heating Advisor (SHA)
+    HACS integration, which provides AI-powered heating rate calibration
+    based on your room's historical data and outside weather conditions.
+    Together they deliver a self-improving smart heating system that gets
+    more accurate over time — pre-heating rooms exactly when needed,
+    saving energy and reducing your heating bill.
+
+    The blueprint can also be used standalone without SHA, but the heating
+    experience will be limited to a fixed heating rate with no automatic
+    calibration. All other features work fully in standalone mode.
 
     ✨ Features
-    - 🤖 AI-driven pre-heat: timing calculated from room temp + heating rate
+    - ⏱️ Smart pre-heat: timing calculated from room temp + heating rate
     - 📅 Unlimited schedules — add as many HA Schedule helpers as you need
     - 🌡️ Per-schedule target temperature — encoded in the schedule name (e.g. "Morning Shower 26C")
     - 🔥 Optional fixed-temperature radiator thermostat (towel rails, floor heating, etc.)
@@ -20,6 +27,7 @@ blueprint:
     - 🪟 Window & door detection with configurable reaction delays
     - ✋ Manual override with automatic resume via HA Timer
     - 🔔 Toggleable notifications — each fires only once per event
+    - 🤖 AI heating rate calibration — auto-adjusted daily by SHA (optional)
 
     📝 Schedule naming convention
     Name each Schedule helper with the target temperature at the end:
@@ -30,21 +38,41 @@ blueprint:
     The blueprint reads the temperature automatically from the name.
     If no temperature is found in the name, the configured fallback temperature is used.
 
-    ⚠️ Requires Smart Heating Advisor (SHA) HACS integration
-    The SHA integration automatically creates all required helpers based
-    on the room name you provide. Make sure SHA is installed and configured
-    before creating automations from this blueprint.
+    🔧 Usage modes
 
-    🛠️ Helpers auto-created by SHA for each room:
-    Room name "Bathroom" → room_id "bathroom":
-    - input_number.sha_bathroom_heating_rate
-    - input_boolean.sha_bathroom_automation_running
-    - input_boolean.sha_bathroom_airing_mode
-    - input_boolean.sha_bathroom_preheat_notified
-    - input_boolean.sha_bathroom_target_notified
-    - input_boolean.sha_bathroom_standby_notified
-    - input_boolean.sha_bathroom_vacation_notified
-    - timer.sha_bathroom_override
+    ⭐ Recommended — With SHA HACS integration
+    Install the Smart Heating Advisor integration first, configure your
+    rooms, then create automations from this blueprint using the exact
+    room name configured in SHA. The integration automatically creates
+    all required helpers and calibrates the heating rate daily using AI.
+    This delivers the full heating experience — self-improving pre-heat
+    timing, energy savings and detailed weekly performance reports.
+
+    ⚙️ Standalone — Without SHA
+    Works out of the box with a fixed heating rate of 0.15°C/min.
+    All features work — schedules, window detection, vacation mode,
+    manual override and notifications. However without AI calibration
+    the pre-heat timing will not adapt to your room's actual heating
+    behaviour, seasonal changes or outside temperature. You will need
+    to tune the heating rate manually in input_number.sha_ROOM_heating_rate
+    based on your own observations.
+
+    🛠️ Helpers per room
+    Replace ROOM with your room name in lowercase with underscores.
+    Example: "Bathroom" → "bathroom", "Alessio's Bedroom" → "alessios_bedroom"
+
+    Required helpers (auto-created by SHA or create manually for standalone):
+    - input_number.sha_ROOM_heating_rate      (heating rate — default 0.15°C/min)
+    - input_boolean.sha_ROOM_automation_running
+    - input_boolean.sha_ROOM_airing_mode
+    - input_boolean.sha_ROOM_preheat_notified
+    - input_boolean.sha_ROOM_target_notified
+    - input_boolean.sha_ROOM_standby_notified
+    - input_boolean.sha_ROOM_vacation_notified
+    - timer.sha_ROOM_override
+
+    If using standalone, create these in Settings → Helpers before
+    creating an automation from this blueprint.
 
     **Version**: 0.0.1
 

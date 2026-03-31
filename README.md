@@ -6,6 +6,9 @@
 
 > AI-powered smart heating that learns your home. Pre-heat every room to exactly the right temperature at exactly the right time — automatically improving every day.
 
+[![Install via HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=bubuplanet&repository=smart-heating-advisor&category=integration)
+[![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fbubuplanet%2Fsmart-heating-advisor%2Fmain%2Fcustom_components%2Fsmart_heating_advisor%2Fblueprints%2Fsha_unified_heating.yaml)
+
 ---
 
 ## 📋 Table of Contents
@@ -95,6 +98,11 @@ SHA Daily analysis at 02:00 AM
 
 ### Via HACS (recommended)
 
+[![Install via HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=bubuplanet&repository=smart-heating-advisor&category=integration)
+
+Click the button above to open HACS directly on the Smart Heating Advisor repository.
+
+Or add manually:
 1. Open HACS in Home Assistant
 2. Click **Integrations** → **⋮** → **Custom repositories**
 3. Add `https://github.com/bubuplanet/smart-heating-advisor` as **Integration**
@@ -162,9 +170,11 @@ Go to **Settings → Helpers → + Create Helper → Schedule** and create one s
 
 ### Step 2 — Import the blueprint
 
-[![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fbubuplanet%2Fsmart-heating-advisor%2Fmain%2Fblueprints%2Fautomation%2Fsmart_heating_advisor%2Fsha_unified_heating.yaml)
+[![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fbubuplanet%2Fsmart-heating-advisor%2Fmain%2Fcustom_components%2Fsmart_heating_advisor%2Fblueprints%2Fsha_unified_heating.yaml)
 
-Or go to **Settings → Automations → Blueprints** — the blueprint is installed automatically by SHA.
+Click the button above to import the blueprint directly into your Home Assistant.
+
+> 💡 The blueprint is also installed automatically when you install SHA via HACS — no manual import needed. Use the button above only if you want to use the blueprint standalone without the SHA integration.
 
 ### Step 3 — Create an automation from the blueprint
 

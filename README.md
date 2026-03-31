@@ -1,32 +1,33 @@
 # 🌡️ Smart Heating Advisor
 
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
-[![HA Version](https://img.shields.io/badge/Home%20Assistant-2024.1.0+-blue.svg)](https://www.home-assistant.io/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![HA Version](https://img.shields.io/badge/Home%20Assistant-2026.3.4+-blue.svg)](https://www.home-assistant.io/)
+[![License: MIT](https://img.shields.io/github/license/bubuplanet/smart-heating-advisor)](LICENSE)
 
 > AI-powered smart heating that learns your home. Pre-heat every room to exactly the right temperature at exactly the right time — automatically improving every day.
 
-[![Install via HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=bubuplanet&repository=smart-heating-advisor&category=integration)
 [![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fbubuplanet%2Fsmart-heating-advisor%2Fmain%2Fcustom_components%2Fsmart_heating_advisor%2Fblueprints%2Fsha_unified_heating.yaml)
 
 ---
 
 ## 📋 Table of Contents
 
-- [How It Works](#-how-it-works)
-- [Features](#-features)
-- [Requirements](#-requirements)
-- [Installation](#-installation)
-- [Configuration](#-configuration)
-- [Room Setup](#-room-setup)
-- [Schedule Naming Convention](#-schedule-naming-convention)
-- [Services](#-services)
-- [Sensors](#-sensors)
-- [Architecture](#-architecture)
-- [Troubleshooting](#-troubleshooting)
-- [Roadmap](#-roadmap)
+- [How It Works](#how-it-works)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Room Setup](#room-setup)
+- [Schedule Naming Convention](#schedule-naming-convention)
+- [Services](#services)
+- [Sensors](#sensors)
+- [Architecture](#architecture)
+- [Troubleshooting](#troubleshooting)
+- [Roadmap](#roadmap)
 
 ---
+
+<a id="how-it-works"></a>
 
 ## ⚙️ How It Works
 
@@ -62,6 +63,8 @@ SHA Daily analysis at 02:00 AM
 
 ---
 
+<a id="features"></a>
+
 ## ✨ Features
 
 | Feature | Description |
@@ -82,17 +85,21 @@ SHA Daily analysis at 02:00 AM
 
 ---
 
+<a id="requirements"></a>
+
 ## 📦 Requirements
 
 | Requirement | Details |
 |---|---|
-| Home Assistant | 2024.1.0 or newer |
+| Home Assistant | 2026.3.4 or newer |
 | [Ollama](https://ollama.ai) | Running locally on your network |
 | Ollama model | `phi4` recommended — any model works |
 | InfluxDB 2.x | Your HA data must be recorded to InfluxDB |
 | HA InfluxDB integration | Configured to record temperature sensors |
 
 ---
+
+<a id="installation"></a>
 
 ## 🚀 Installation
 
@@ -109,16 +116,28 @@ Or add manually:
 4. Search for **Smart Heating Advisor** and install
 5. Restart Home Assistant
 
+### Add the integration
+
+After restarting Home Assistant:
+
+1. Go to **Settings → Devices & Services**
+2. Click **+ Add Integration** in the bottom-right corner
+3. Search for **Smart Heating Advisor** and select it
+4. Complete the 3-step setup wizard — see [Configuration](#configuration) for details
+
+> 💡 A persistent notification will appear in Home Assistant after installation with a quick-start guide for the blueprint.
+
 ### Manual
 
 1. Copy `custom_components/smart_heating_advisor/` to your HA config directory
 2. Restart Home Assistant
+3. Go to **Settings → Devices & Services → + Add Integration** and search for **Smart Heating Advisor**
 
 ---
 
-## ⚙️ Configuration
+<a id="configuration"></a>
 
-After installation go to **Settings → Devices & Services → + Add Integration** and search for **Smart Heating Advisor**.
+## ⚙️ Configuration
 
 The setup wizard has 3 steps:
 
@@ -149,6 +168,8 @@ SHA tests the connection before proceeding.
 | Weather Entity | `weather.forecast_home` |
 
 ---
+
+<a id="room-setup"></a>
 
 ## 🏠 Room Setup
 
@@ -191,6 +212,8 @@ Click the button above to import the blueprint directly into your Home Assistant
 
 ---
 
+<a id="schedule-naming-convention"></a>
+
 ## 📝 Schedule Naming Convention
 
 | Name | Temp extracted | Result |
@@ -203,6 +226,8 @@ Click the button above to import the blueprint directly into your Home Assistant
 
 ---
 
+<a id="services"></a>
+
 ## 🔧 Services
 
 | Service | Description |
@@ -212,6 +237,8 @@ Click the button above to import the blueprint directly into your Home Assistant
 | `sha.run_weekly_analysis` | Manually trigger weekly report for all rooms. |
 
 ---
+
+<a id="sensors"></a>
 
 ## 📡 Sensors
 
@@ -225,6 +252,8 @@ SHA creates 4 sensors per discovered room:
 | `sensor.sha_ROOM_weekly_report` | Last weekly report summary | text |
 
 ---
+
+<a id="architecture"></a>
 
 ## 🏗️ Architecture
 
@@ -338,6 +367,8 @@ Repeats daily — system gets smarter over time
 
 ---
 
+<a id="troubleshooting"></a>
+
 ## 🔍 Troubleshooting
 
 ### SHA not finding my rooms
@@ -383,6 +414,8 @@ The blueprint is auto-installed by SHA on setup. If it's missing:
 2. Go to **Settings → Automations → Blueprints** and click **Reload blueprints**
 
 ---
+
+<a id="roadmap"></a>
 
 ## 🗺️ Roadmap
 

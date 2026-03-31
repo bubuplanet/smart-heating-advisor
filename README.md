@@ -1,12 +1,10 @@
 # 🌡️ Smart Heating Advisor
 
-
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-2026.3.4+-blue.svg)](https://www.home-assistant.io/)
-[![License: MIT](https://img.shields.io/github/license/bubuplanet/smart-heating-advisor)](LICENSE)
+[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
+[![License: MIT](https://shields.io)](LICENSE)
 
 > AI-powered smart heating that learns your home. Pre-heat every room to exactly the right temperature at exactly the right time — automatically improving every day.
-
-[![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fbubuplanet%2Fsmart-heating-advisor%2Fmain%2Fcustom_components%2Fsmart_heating_advisor%2Fblueprints%2Fsha_unified_heating.yaml)
 
 ---
 
@@ -106,7 +104,7 @@ SHA Daily analysis at 02:00 AM
 ### Via HACS (recommended)
 
 [![Install via HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=bubuplanet&repository=smart-heating-advisor&category=integration)
-[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
+
 
 Click the button above to open HACS directly on the Smart Heating Advisor repository.
 

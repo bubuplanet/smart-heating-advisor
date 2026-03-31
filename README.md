@@ -1,6 +1,6 @@
 # 🌡️ Smart Heating Advisor
 
-[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
+
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-2026.3.4+-blue.svg)](https://www.home-assistant.io/)
 [![License: MIT](https://img.shields.io/github/license/bubuplanet/smart-heating-advisor)](LICENSE)
 
@@ -106,6 +106,7 @@ SHA Daily analysis at 02:00 AM
 ### Via HACS (recommended)
 
 [![Install via HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=bubuplanet&repository=smart-heating-advisor&category=integration)
+[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
 
 Click the button above to open HACS directly on the Smart Heating Advisor repository.
 

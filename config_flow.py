@@ -1,5 +1,6 @@
 """Config flow for Smart Heating Advisor."""
 import logging
+import re
 import voluptuous as vol
 import aiohttp
 
@@ -32,8 +33,23 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _room_name_to_id(room_name: str) -> str:
+    """Convert room name to snake_case room ID.
+    
+    Examples:
+        Bathroom           → bathroom
+        Alessio's Bedroom  → alessios_bedroom
+        Living Room        → living_room
+    """
+    room_id = room_name.lower()
+    room_id = room_id.replace("'", "")
+    room_id = re.sub(r"[\s\-]+", "_", room_id)
+    room_id = re.sub(r"[^a-z0-9_]", "", room_id)
+    return room_id
+
+
 async def _test_ollama(url: str, model: str) -> bool:
-    """Test Ollama connection."""
+    """Test Ollama connection and verify model exists."""
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -71,6 +87,119 @@ async def _test_influxdb(url: str, token: str, org: str, bucket: str) -> bool:
         return False
 
 
+async def async_create_room_helpers(hass: HomeAssistant, room_name: str) -> dict:
+    """Create all required SHA helpers for a room.
+    
+    Returns dict with created entity IDs.
+    """
+    room_id = _room_name_to_id(room_name)
+    _LOGGER.info("Creating SHA helpers for room: %s (id: %s)", room_name, room_id)
+
+    created = {}
+    errors = []
+
+    # ── Toggle helpers ────────────────────────────────────────────
+    toggle_helpers = {
+        f"sha_{room_id}_automation_running": f"SHA {room_name} Automation Running",
+        f"sha_{room_id}_airing_mode":        f"SHA {room_name} Airing Mode",
+        f"sha_{room_id}_preheat_notified":   f"SHA {room_name} Preheat Notified",
+        f"sha_{room_id}_target_notified":    f"SHA {room_name} Target Notified",
+        f"sha_{room_id}_standby_notified":   f"SHA {room_name} Standby Notified",
+        f"sha_{room_id}_vacation_notified":  f"SHA {room_name} Vacation Notified",
+    }
+
+    for entity_id_suffix, name in toggle_helpers.items():
+        full_entity_id = f"input_boolean.{entity_id_suffix}"
+        # Skip if already exists
+        if hass.states.get(full_entity_id) is not None:
+            _LOGGER.debug("Helper %s already exists — skipping", full_entity_id)
+            created[entity_id_suffix] = full_entity_id
+            continue
+        try:
+            await hass.services.async_call(
+                "input_boolean",
+                "create",
+                {
+                    "name": name,
+                    "icon": "mdi:toggle-switch",
+                },
+                blocking=True,
+            )
+            created[entity_id_suffix] = full_entity_id
+            _LOGGER.debug("Created toggle helper: %s", full_entity_id)
+        except Exception as e:
+            _LOGGER.error("Failed to create toggle helper %s: %s", full_entity_id, e)
+            errors.append(full_entity_id)
+
+    # ── Number helper — heating rate ──────────────────────────────
+    heating_rate_id = f"sha_{room_id}_heating_rate"
+    heating_rate_entity = f"input_number.{heating_rate_id}"
+
+    if hass.states.get(heating_rate_entity) is None:
+        try:
+            await hass.services.async_call(
+                "input_number",
+                "create",
+                {
+                    "name": f"SHA {room_name} Heating Rate",
+                    "min": 0.05,
+                    "max": 0.30,
+                    "step": 0.01,
+                    "initial": 0.15,
+                    "unit_of_measurement": "°C/min",
+                    "icon": "mdi:thermometer-auto",
+                    "mode": "box",
+                },
+                blocking=True,
+            )
+            created[heating_rate_id] = heating_rate_entity
+            _LOGGER.debug("Created number helper: %s", heating_rate_entity)
+        except Exception as e:
+            _LOGGER.error("Failed to create number helper %s: %s", heating_rate_entity, e)
+            errors.append(heating_rate_entity)
+    else:
+        _LOGGER.debug("Helper %s already exists — skipping", heating_rate_entity)
+        created[heating_rate_id] = heating_rate_entity
+
+    # ── Timer helper — override ───────────────────────────────────
+    override_timer_id = f"sha_{room_id}_override"
+    override_timer_entity = f"timer.{override_timer_id}"
+
+    if hass.states.get(override_timer_entity) is None:
+        try:
+            await hass.services.async_call(
+                "timer",
+                "create",
+                {
+                    "name": f"SHA {room_name} Override",
+                    "icon": "mdi:hand-back-right",
+                },
+                blocking=True,
+            )
+            created[override_timer_id] = override_timer_entity
+            _LOGGER.debug("Created timer helper: %s", override_timer_entity)
+        except Exception as e:
+            _LOGGER.error("Failed to create timer helper %s: %s", override_timer_entity, e)
+            errors.append(override_timer_entity)
+    else:
+        _LOGGER.debug("Helper %s already exists — skipping", override_timer_entity)
+        created[override_timer_id] = override_timer_entity
+
+    if errors:
+        _LOGGER.warning(
+            "Some helpers could not be created for room %s: %s",
+            room_name,
+            errors
+        )
+    else:
+        _LOGGER.info(
+            "All SHA helpers created successfully for room: %s",
+            room_name
+        )
+
+    return created
+
+
 class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle config flow for Smart Heating Advisor."""
 
@@ -88,7 +217,6 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not ollama_ok:
                 errors["base"] = "ollama_connection_failed"
             else:
-                # Store and move to step 2
                 self._ollama_data = user_input
                 return await self.async_step_influxdb()
 
@@ -146,24 +274,45 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             # Validate entities exist in HA
             temp_sensor = self.hass.states.get(user_input[CONF_TEMP_SENSOR])
-            heating_helper = self.hass.states.get(user_input[CONF_HEATING_RATE_HELPER])
             weather = self.hass.states.get(user_input[CONF_WEATHER_ENTITY])
 
             if not temp_sensor:
                 errors[CONF_TEMP_SENSOR] = "entity_not_found"
-            elif not heating_helper:
-                errors[CONF_HEATING_RATE_HELPER] = "entity_not_found"
             elif not weather:
                 errors[CONF_WEATHER_ENTITY] = "entity_not_found"
             else:
-                # All good — create entry
+                # Combine all config data
                 all_data = {
                     **self._ollama_data,
                     **self._influxdb_data,
                     **user_input,
                 }
+
+                # Derive room name from temp sensor for helper creation
+                # e.g. sensor.bathroom_thermostat_temperature → Bathroom
+                room_name = (
+                    user_input[CONF_TEMP_SENSOR]
+                    .replace("sensor.", "")
+                    .replace("_thermostat_temperature", "")
+                    .replace("_temperature", "")
+                    .replace("_", " ")
+                    .title()
+                )
+
+                # Store room name in config
+                all_data["room_name"] = room_name
+
+                # Create all SHA helpers for this room
+                await async_create_room_helpers(self.hass, room_name)
+
+                # Update heating rate helper reference
+                room_id = _room_name_to_id(room_name)
+                all_data[CONF_HEATING_RATE_HELPER] = (
+                    f"input_number.sha_{room_id}_heating_rate"
+                )
+
                 return self.async_create_entry(
-                    title="Smart Heating Advisor",
+                    title=f"Smart Heating Advisor — {room_name}",
                     data=all_data,
                 )
 
@@ -171,10 +320,6 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(
                 CONF_TEMP_SENSOR,
                 default="sensor.bathroom_thermostat_temperature"
-            ): str,
-            vol.Required(
-                CONF_HEATING_RATE_HELPER,
-                default="input_number.bathroom_heating_rate"
             ): str,
             vol.Required(
                 CONF_WEATHER_ENTITY,

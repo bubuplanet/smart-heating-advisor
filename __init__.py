@@ -1,5 +1,8 @@
-"""Smart Heating Advisor - AI powered heating optimization."""
+"""Smart Heating Advisor — AI-powered multi-room heating optimization."""
 import logging
+import re
+import shutil
+from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -7,6 +10,8 @@ from homeassistant.helpers.event import async_track_time_change
 
 from .const import (
     DOMAIN,
+    BLUEPRINT_FILENAME,
+    BLUEPRINT_RELATIVE_PATH,
     DAILY_ANALYSIS_HOUR,
     DAILY_ANALYSIS_MINUTE,
     WEEKLY_ANALYSIS_WEEKDAY,
@@ -14,99 +19,213 @@ from .const import (
     WEEKLY_ANALYSIS_MINUTE,
 )
 from .coordinator import SmartHeatingCoordinator
-from .config_flow import async_create_room_helpers
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["sensor"]
 
+BLUEPRINT_SOURCE = Path(__file__).parent / BLUEPRINT_RELATIVE_PATH / BLUEPRINT_FILENAME
+BLUEPRINT_DEST_DIR = Path("/config/blueprints/automation/smart_heating_advisor")
+BLUEPRINT_DEST = BLUEPRINT_DEST_DIR / BLUEPRINT_FILENAME
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Blueprint versioning
+# ──────────────────────────────────────────────────────────────────────
+
+def _get_blueprint_version(content: str) -> tuple[int, int, int]:
+    """Extract version tuple from blueprint description.
+    Looks for: **version: 1.0.0**
+    """
+    match = re.search(r"\*\*version:\s*(\d+)\.(\d+)\.(\d+)\*\*", content)
+    if match:
+        return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    return (0, 0, 0)
+
+
+def _version_str(v: tuple[int, int, int]) -> str:
+    return ".".join(str(x) for x in v)
+
+
+def _do_blueprint_install(
+    source: Path, dest: Path, dest_dir: Path
+) -> dict:
+    """Synchronous blueprint install — runs in executor."""
+    result = {
+        "action": "error",
+        "source_version": "0.0.0",
+        "dest_version": "0.0.0",
+        "message": "",
+        "backup_path": None,
+    }
+
+    if not source.exists():
+        result["message"] = f"Blueprint source not found: {source}"
+        return result
+
+    source_content = source.read_text(encoding="utf-8")
+    source_version = _get_blueprint_version(source_content)
+    result["source_version"] = _version_str(source_version)
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    if dest.exists():
+        dest_content = dest.read_text(encoding="utf-8")
+        dest_version = _get_blueprint_version(dest_content)
+        result["dest_version"] = _version_str(dest_version)
+
+        if source_version == dest_version and source_content == dest_content:
+            result["action"] = "skipped"
+            result["message"] = (
+                f"Blueprint v{result['source_version']} already up to date"
+            )
+            return result
+
+        if dest_version > source_version:
+            result["action"] = "skipped"
+            result["message"] = (
+                f"Installed blueprint v{result['dest_version']} is newer "
+                f"than bundled v{result['source_version']} — skipping"
+            )
+            return result
+
+        backup_path = dest.with_suffix(f".v{result['dest_version']}.yaml.bak")
+        shutil.copy2(dest, backup_path)
+        result["backup_path"] = str(backup_path)
+        _LOGGER.info("Backed up blueprint v%s to %s", result["dest_version"], backup_path)
+
+        shutil.copy2(source, dest)
+        result["action"] = "updated"
+        result["message"] = (
+            f"Blueprint updated from v{result['dest_version']} "
+            f"to v{result['source_version']}"
+        )
+        return result
+
+    shutil.copy2(source, dest)
+    result["action"] = "installed"
+    result["dest_version"] = result["source_version"]
+    result["message"] = f"Blueprint v{result['source_version']} installed"
+    return result
+
+
+async def async_install_blueprint(hass: HomeAssistant) -> dict:
+    """Install or upgrade the SHA blueprint."""
+    result = await hass.async_add_executor_job(
+        _do_blueprint_install, BLUEPRINT_SOURCE, BLUEPRINT_DEST, BLUEPRINT_DEST_DIR
+    )
+    _LOGGER.info("SHA Blueprint: %s", result["message"])
+    return result
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Setup
+# ──────────────────────────────────────────────────────────────────────
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Smart Heating Advisor from a config entry."""
     _LOGGER.info("Setting up Smart Heating Advisor")
 
-    # ── Ensure all helpers exist ──────────────────────────────────
-    # Re-creates any helpers that may have been deleted since setup
-    room_name = entry.data.get("room_name", "Bathroom")
-    _LOGGER.info("Verifying SHA helpers for room: %s", room_name)
-    await async_create_room_helpers(hass, room_name)
+    # Install / upgrade blueprint
+    blueprint_result = await async_install_blueprint(hass)
 
-    # ── Create coordinator ────────────────────────────────────────
+    # Create coordinator
     coordinator = SmartHeatingCoordinator(hass, entry)
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # ── Set up sensor platform ────────────────────────────────────
+    # Set up sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # ── Register manual trigger services ─────────────────────────
+    # ── Register services ────────────────────────────────────────────
+
+    async def handle_setup_room(call):
+        """sha.setup_room — called by blueprint on first trigger per room."""
+        room_name = call.data.get("room_name", "")
+        if room_name:
+            await coordinator.async_setup_room(room_name)
+        else:
+            _LOGGER.warning("sha.setup_room called without room_name")
+
     async def handle_daily_analysis(call):
-        """Handle manual daily analysis service call."""
+        """sha.run_daily_analysis — manual trigger."""
         _LOGGER.info("Manual daily analysis triggered")
         await coordinator.async_run_daily_analysis()
 
     async def handle_weekly_analysis(call):
-        """Handle manual weekly analysis service call."""
+        """sha.run_weekly_analysis — manual trigger."""
         _LOGGER.info("Manual weekly analysis triggered")
         await coordinator.async_run_weekly_analysis()
 
-    hass.services.async_register(
-        DOMAIN, "run_daily_analysis", handle_daily_analysis
-    )
-    hass.services.async_register(
-        DOMAIN, "run_weekly_analysis", handle_weekly_analysis
-    )
+    hass.services.async_register(DOMAIN, "setup_room", handle_setup_room)
+    hass.services.async_register(DOMAIN, "run_daily_analysis", handle_daily_analysis)
+    hass.services.async_register(DOMAIN, "run_weekly_analysis", handle_weekly_analysis)
 
-    # ── Schedule daily analysis at 02:00 AM ──────────────────────
+    # ── Scheduled analysis ───────────────────────────────────────────
+
     async def run_daily_analysis(now):
-        """Run daily heating rate analysis."""
-        _LOGGER.info("Running scheduled daily bathroom heating analysis")
+        _LOGGER.info("Running scheduled daily analysis")
         await coordinator.async_run_daily_analysis()
 
-    async_track_time_change(
-        hass,
-        run_daily_analysis,
-        hour=DAILY_ANALYSIS_HOUR,
-        minute=DAILY_ANALYSIS_MINUTE,
-        second=0,
-    )
-
-    # ── Schedule weekly analysis on Sunday at 01:00 AM ───────────
     async def run_weekly_analysis(now):
-        """Run weekly heating analysis."""
         if now.weekday() == WEEKLY_ANALYSIS_WEEKDAY:
-            _LOGGER.info("Running scheduled weekly bathroom heating analysis")
+            _LOGGER.info("Running scheduled weekly analysis")
             await coordinator.async_run_weekly_analysis()
 
     async_track_time_change(
-        hass,
-        run_weekly_analysis,
-        hour=WEEKLY_ANALYSIS_HOUR,
-        minute=WEEKLY_ANALYSIS_MINUTE,
-        second=0,
+        hass, run_daily_analysis,
+        hour=DAILY_ANALYSIS_HOUR, minute=DAILY_ANALYSIS_MINUTE, second=0,
+    )
+    async_track_time_change(
+        hass, run_weekly_analysis,
+        hour=WEEKLY_ANALYSIS_HOUR, minute=WEEKLY_ANALYSIS_MINUTE, second=0,
     )
 
-    # ── Notify setup complete ─────────────────────────────────────
+    # ── Setup notification ───────────────────────────────────────────
+    action = blueprint_result["action"]
+    source_ver = blueprint_result["source_version"]
+    dest_ver = blueprint_result["dest_version"]
+    backup = blueprint_result.get("backup_path")
+
+    if action == "installed":
+        bp_msg = f"✅ Blueprint v{source_ver} installed automatically.\n\n"
+    elif action == "updated":
+        bp_msg = (
+            f"🔄 Blueprint updated from v{dest_ver} to v{source_ver}.\n"
+            f"Backup saved as `{Path(backup).name}`.\n"
+            f"Existing automations continue working — re-save to use new features.\n\n"
+        )
+    elif action == "skipped":
+        bp_msg = f"✅ Blueprint v{source_ver} already up to date.\n\n"
+    else:
+        bp_msg = (
+            "⚠️ Blueprint could not be installed automatically.\n"
+            "Import it manually using the magic link in the README.\n\n"
+        )
+
     await hass.services.async_call(
         "persistent_notification",
         "create",
         {
-            "title": f"✅ Smart Heating Advisor — {room_name}",
+            "title": "✅ Smart Heating Advisor — Ready",
             "message": (
-                f"Smart Heating Advisor is configured for **{room_name}**.\n\n"
-                f"All required helpers have been created automatically.\n\n"
+                f"Smart Heating Advisor is configured.\n\n"
+                f"{bp_msg}"
                 f"**Next steps:**\n"
-                f"1. Import the SHA blueprint in Settings → Automations → Blueprints\n"
-                f"2. Create an automation from the blueprint for this room\n"
-                f"3. Add HA Schedule helpers named with target temp (e.g. `Morning Shower 26C`)\n\n"
-                f"Daily AI analysis runs at 02:00 AM.\n"
-                f"Weekly report runs every Sunday at 01:00 AM."
+                f"1. Go to **Settings → Automations → Blueprints**\n"
+                f"2. Find **Smart Heating Advisor** blueprint\n"
+                f"3. Create an automation per room\n"
+                f"4. Name each Schedule helper with target temp at the end\n"
+                f"   e.g. `Morning Shower 26C`, `Evening Bath 28C`\n\n"
+                f"Helpers are created automatically on first automation trigger.\n\n"
+                f"Daily AI analysis: **02:00 AM**\n"
+                f"Weekly report: **Sunday 01:00 AM**"
             ),
-            "notification_id": f"sha_setup_{room_name.lower().replace(' ', '_')}",
-        }
+            "notification_id": "sha_setup_complete",
+        },
     )
 
-    _LOGGER.info("Smart Heating Advisor setup complete for room: %s", room_name)
+    _LOGGER.info("Smart Heating Advisor setup complete")
     return True
 
 
@@ -115,6 +234,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
+        hass.services.async_remove(DOMAIN, "setup_room")
         hass.services.async_remove(DOMAIN, "run_daily_analysis")
         hass.services.async_remove(DOMAIN, "run_weekly_analysis")
     return unload_ok

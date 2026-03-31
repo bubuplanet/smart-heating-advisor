@@ -1,11 +1,31 @@
+setup_room:
+  name: Setup Room
+  description: >
+    Creates all required SHA helpers for a room if they don't already exist.
+    Called automatically by the SHA blueprint on first trigger.
+    Safe to call multiple times — idempotent.
+  fields:
+    room_name:
+      name: Room Name
+      description: >
+        Friendly name of the room — must match the Room Name entered
+        in the SHA blueprint automation exactly.
+        Examples: Bathroom, Office, Alessio's Bedroom
+      required: true
+      example: "Bathroom"
+      selector:
+        text:
+
 run_daily_analysis:
   name: Run Daily Analysis
   description: >
-    Manually trigger the daily bathroom heating rate analysis
-    using the last 7 days of InfluxDB data and Ollama AI.
+    Manually trigger the daily AI heating rate analysis for all rooms.
+    Discovers rooms from SHA blueprint automations, queries InfluxDB
+    for the last 7 days, and updates heating rate helpers via Ollama AI.
 
 run_weekly_analysis:
   name: Run Weekly Analysis
   description: >
-    Manually trigger the weekly bathroom heating rate analysis
-    using the last 30 days of InfluxDB data and Ollama AI.
+    Manually trigger the weekly AI heating report for all rooms.
+    Queries InfluxDB for the last 30 days and generates a persistent
+    notification report. Does not automatically adjust heating rates.

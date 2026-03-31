@@ -1,5 +1,6 @@
 """Coordinator for Smart Heating Advisor."""
 import logging
+import re
 from datetime import datetime, timezone
 
 from homeassistant.config_entries import ConfigEntry
@@ -12,8 +13,6 @@ from .const import (
     CONF_INFLUXDB_TOKEN,
     CONF_INFLUXDB_ORG,
     CONF_INFLUXDB_BUCKET,
-    CONF_TEMP_SENSOR,
-    CONF_HEATING_RATE_HELPER,
     CONF_WEATHER_ENTITY,
     DEFAULT_HEATING_RATE,
     MIN_HEATING_RATE,
@@ -31,60 +30,225 @@ from .analyzer import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _room_name_to_id(room_name: str) -> str:
+    """Convert room name to snake_case room ID.
+
+    Examples:
+        Bathroom           → bathroom
+        Alessio's Bedroom  → alessios_bedroom
+        Living Room        → living_room
+    """
+    room_id = room_name.lower()
+    room_id = room_id.replace("'", "")
+    room_id = re.sub(r"[\s\-]+", "_", room_id)
+    room_id = re.sub(r"[^a-z0-9_]", "", room_id)
+    return room_id
+
+
+class RoomConfig:
+    """Holds configuration for a single room discovered from blueprint automations."""
+
+    def __init__(
+        self,
+        room_name: str,
+        temp_sensor: str,
+        schedules: list[str],
+    ):
+        self.room_name = room_name
+        self.room_id = _room_name_to_id(room_name)
+        self.temp_sensor = temp_sensor
+        self.schedule_entities = schedules
+
+        # HA helper entity IDs — derived from room_id
+        self.heating_rate_helper = f"input_number.sha_{self.room_id}_heating_rate"
+        self.override_timer = f"timer.sha_{self.room_id}_override"
+        self.automation_running = f"input_boolean.sha_{self.room_id}_automation_running"
+        self.airing_mode = f"input_boolean.sha_{self.room_id}_airing_mode"
+        self.preheat_notified = f"input_boolean.sha_{self.room_id}_preheat_notified"
+        self.target_notified = f"input_boolean.sha_{self.room_id}_target_notified"
+        self.standby_notified = f"input_boolean.sha_{self.room_id}_standby_notified"
+        self.vacation_notified = f"input_boolean.sha_{self.room_id}_vacation_notified"
+
+    def __repr__(self):
+        return (
+            f"RoomConfig(name={self.room_name!r}, "
+            f"sensor={self.temp_sensor!r}, "
+            f"schedules={self.schedule_entities})"
+        )
+
+
 class SmartHeatingCoordinator:
-    """Coordinates data fetching, analysis and HA state updates."""
+    """Coordinates data fetching, analysis and HA state updates for all rooms."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
-        """Initialize coordinator."""
         self.hass = hass
         self.entry = entry
         self.config = entry.data
         self._entities = []
 
-        # Current state exposed to sensors
-        self.heating_rate = DEFAULT_HEATING_RATE
-        self.last_analysis = None
-        self.confidence = "unknown"
-        self.weekly_report = "No report yet."
+        # Per-room state — keyed by room_id
+        self.room_states: dict[str, dict] = {}
 
-        # Ollama client
         self.ollama = OllamaClient(
             url=self.config[CONF_OLLAMA_URL],
             model=self.config[CONF_OLLAMA_MODEL],
             timeout=OLLAMA_TIMEOUT,
         )
 
-    def register_entities(self, entities: list):
-        """Register sensor entities for state updates."""
+    # ──────────────────────────────────────────────────────────────────
+    # Entity registration
+    # ──────────────────────────────────────────────────────────────────
+
+    def register_entities(self, entities: list) -> None:
+        """Register sensor entities for push updates."""
         self._entities = entities
 
-    async def async_update_sensors(self):
+    async def async_update_sensors(self) -> None:
         """Push updated state to all registered sensor entities."""
         for entity in self._entities:
             entity.async_write_ha_state()
 
-    # ------------------------------------------------------------------
-    # InfluxDB
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────
+    # Room discovery
+    # ──────────────────────────────────────────────────────────────────
 
-    async def async_query_influxdb(self, days: int) -> list[tuple]:
-        """Query InfluxDB for temperature readings over last N days."""
+    def discover_rooms(self) -> list[RoomConfig]:
+        """Discover all SHA rooms from blueprint automation configurations.
+
+        SHA reads the blueprint input values directly from each automation's
+        stored configuration. It looks for automations using the SHA blueprint
+        and extracts room_name, temperature_sensor and schedules from the
+        blueprint inputs.
+
+        This is the most reliable approach — no tag parsing needed, we read
+        the actual values the user entered in the blueprint UI.
+
+        Returns a list of RoomConfig objects.
+        """
+        rooms = []
+        seen_room_ids = set()
+
+        # Access HA automation configs via the automations component
+        automation_component = self.hass.data.get("automation")
+        if automation_component is None:
+            _LOGGER.warning("Automation component not available for room discovery")
+            return rooms
+
+        try:
+            # Iterate over all automation entities
+            for entity_id, entity in automation_component.entities.items():
+                try:
+                    # Check if this automation uses the SHA blueprint
+                    config = getattr(entity, "raw_config", None) or {}
+                    use_blueprint = config.get("use_blueprint", {})
+                    blueprint_path = use_blueprint.get("path", "")
+
+                    if "sha_unified_heating" not in blueprint_path:
+                        continue
+
+                    inputs = use_blueprint.get("input", {})
+                    room_name = inputs.get("room_name", "")
+                    temp_sensor = inputs.get("temperature_sensor", "")
+                    schedules = inputs.get("schedules", [])
+
+                    if not room_name or not temp_sensor:
+                        continue
+
+                    # Normalise schedules to list
+                    if isinstance(schedules, str):
+                        schedules = [schedules]
+                    elif not isinstance(schedules, list):
+                        schedules = []
+
+                    room_id = _room_name_to_id(room_name)
+                    if room_id in seen_room_ids:
+                        _LOGGER.debug(
+                            "Room %s already discovered — skipping duplicate", room_name
+                        )
+                        continue
+
+                    seen_room_ids.add(room_id)
+                    rooms.append(RoomConfig(room_name, temp_sensor, schedules))
+                    _LOGGER.debug(
+                        "Discovered SHA room: %s (sensor: %s, schedules: %s)",
+                        room_name,
+                        temp_sensor,
+                        schedules,
+                    )
+
+                except Exception as e:
+                    _LOGGER.debug("Could not read automation config for %s: %s", entity_id, e)
+                    continue
+
+        except Exception as e:
+            _LOGGER.warning("Room discovery via automation component failed: %s", e)
+            # Fallback: try reading from automation states attributes
+            rooms = self._discover_rooms_from_states()
+
+        if not rooms:
+            _LOGGER.warning(
+                "No SHA blueprint automations found. "
+                "Create automations from the SHA blueprint to enable multi-room analysis."
+            )
+
+        return rooms
+
+    def _discover_rooms_from_states(self) -> list[RoomConfig]:
+        """Fallback room discovery via automation state attributes.
+
+        Some HA versions expose blueprint inputs in automation attributes.
+        """
+        rooms = []
+        seen_room_ids = set()
+
+        for auto_state in self.hass.states.async_all("automation"):
+            attrs = auto_state.attributes
+            blueprint = attrs.get("blueprint_inputs", {})
+
+            if "sha_unified_heating" not in str(attrs.get("id", "")):
+                # Also check friendly_name pattern or blueprint path in attributes
+                if not blueprint:
+                    continue
+
+            room_name = blueprint.get("room_name", "")
+            temp_sensor = blueprint.get("temperature_sensor", "")
+            schedules = blueprint.get("schedules", [])
+
+            if not room_name or not temp_sensor:
+                continue
+
+            if isinstance(schedules, str):
+                schedules = [schedules]
+
+            room_id = _room_name_to_id(room_name)
+            if room_id not in seen_room_ids:
+                seen_room_ids.add(room_id)
+                rooms.append(RoomConfig(room_name, temp_sensor, schedules))
+
+        return rooms
+
+    # ──────────────────────────────────────────────────────────────────
+    # InfluxDB
+    # ──────────────────────────────────────────────────────────────────
+
+    async def async_query_influxdb(
+        self, entity_id: str, days: int
+    ) -> list[tuple]:
+        """Query InfluxDB for temperature readings for a specific entity."""
         import aiohttp
 
         token = self.config[CONF_INFLUXDB_TOKEN]
         url = self.config[CONF_INFLUXDB_URL]
         org = self.config[CONF_INFLUXDB_ORG]
         bucket = self.config[CONF_INFLUXDB_BUCKET]
-        sensor = self.config.get(
-            CONF_TEMP_SENSOR, "sensor.bathroom_thermostat_temperature"
-        )
 
-        entity_id = sensor.replace("sensor.", "")
+        # InfluxDB stores entity_id without domain prefix
+        influx_entity_id = entity_id.replace("sensor.", "")
 
         flux_query = f"""
 from(bucket: "{bucket}")
   |> range(start: -{days}d)
-  |> filter(fn: (r) => r["entity_id"] == "{entity_id}")
+  |> filter(fn: (r) => r["entity_id"] == "{influx_entity_id}")
   |> filter(fn: (r) => r["_field"] == "value")
   |> filter(fn: (r) => r["_measurement"] == "°C")
   |> sort(columns: ["_time"])
@@ -108,14 +272,15 @@ from(bucket: "{bucket}")
                 ) as response:
                     if response.status != 200:
                         _LOGGER.error(
-                            "InfluxDB query failed with status %s", response.status
+                            "InfluxDB query failed for %s: status %s",
+                            entity_id,
+                            response.status,
                         )
                         return []
                     csv_text = await response.text()
                     return self._parse_influxdb_csv(csv_text)
-
         except Exception as e:
-            _LOGGER.error("InfluxDB query error: %s", e)
+            _LOGGER.error("InfluxDB query error for %s: %s", entity_id, e)
             return []
 
     def _parse_influxdb_csv(self, csv_text: str) -> list[tuple]:
@@ -144,24 +309,42 @@ from(bucket: "{bucket}")
 
         return sorted(readings, key=lambda x: x[0])
 
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────
+    # Schedule helpers
+    # ──────────────────────────────────────────────────────────────────
+
+    def _get_schedule_info(self, room: RoomConfig) -> list[dict]:
+        """Read schedule helper states and return schedule info list."""
+        schedules = []
+        for entity_id in room.schedule_entities:
+            state = self.hass.states.get(entity_id)
+            if state is None:
+                _LOGGER.debug("Schedule entity %s not found", entity_id)
+                continue
+            fname = state.attributes.get("friendly_name", entity_id)
+            next_event = state.attributes.get("next_event")
+            schedules.append(
+                {
+                    "entity_id": entity_id,
+                    "name": fname,
+                    "state": state.state,
+                    "next_event": next_event,
+                }
+            )
+        return schedules
+
+    # ──────────────────────────────────────────────────────────────────
     # Weather
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────
 
     def _get_weather_data(self) -> dict:
         """Get current and forecast weather from HA weather entity."""
-        weather_entity = self.config.get(
-            CONF_WEATHER_ENTITY, "weather.forecast_home"
-        )
+        weather_entity = self.config.get(CONF_WEATHER_ENTITY, "weather.forecast_home")
         state = self.hass.states.get(weather_entity)
 
         if not state:
             _LOGGER.warning("Weather entity %s not found", weather_entity)
-            return {
-                "outside_temp": 10.0,
-                "tomorrow_min": 5.0,
-                "tomorrow_max": 15.0,
-            }
+            return {"outside_temp": 10.0, "tomorrow_min": 5.0, "tomorrow_max": 15.0}
 
         outside_temp = state.attributes.get("temperature", 10.0)
         forecast = state.attributes.get("forecast", [])
@@ -179,223 +362,303 @@ from(bucket: "{bucket}")
             "tomorrow_max": float(tomorrow_max),
         }
 
-    # ------------------------------------------------------------------
-    # Apply results to HA
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────
+    # Apply results
+    # ──────────────────────────────────────────────────────────────────
 
-    async def _async_apply_heating_rate(self, rate: float, reasoning: str):
-        """Update input_number helper and notify."""
+    async def _async_apply_heating_rate(
+        self, room: RoomConfig, rate: float, reasoning: str
+    ) -> None:
+        """Update the room's heating rate helper in HA."""
         rate = max(MIN_HEATING_RATE, min(MAX_HEATING_RATE, rate))
-        helper = self.config.get(
-            CONF_HEATING_RATE_HELPER, "input_number.bathroom_heating_rate"
-        )
 
         await self.hass.services.async_call(
             "input_number",
             "set_value",
-            {"entity_id": helper, "value": round(rate, 3)},
+            {"entity_id": room.heating_rate_helper, "value": round(rate, 3)},
         )
 
-        self.heating_rate = rate
-        self.last_analysis = datetime.now(timezone.utc).isoformat()
+        # Update in-memory state
+        if room.room_id not in self.room_states:
+            self.room_states[room.room_id] = {}
+        self.room_states[room.room_id]["heating_rate"] = rate
+        self.room_states[room.room_id]["last_analysis"] = (
+            datetime.now(timezone.utc).isoformat()
+        )
 
-        # Push updated state to sensors
         await self.async_update_sensors()
-
         _LOGGER.info(
-            "Heating rate updated to %.3f°C/min. Reason: %s", rate, reasoning
+            "[%s] Heating rate updated to %.3f°C/min. Reason: %s",
+            room.room_name,
+            rate,
+            reasoning,
         )
 
-    async def _async_notify(self, title: str, message: str):
+    async def _async_notify(self, title: str, message: str) -> None:
         """Send HA mobile notification."""
         await self.hass.services.async_call(
-            "notify",
-            "notify",
-            {"title": title, "message": message},
+            "notify", "notify", {"title": title, "message": message}
         )
 
     async def _async_persistent_notification(
         self, title: str, message: str, notification_id: str
-    ):
-        """Create or update a persistent notification in HA UI."""
+    ) -> None:
+        """Create or replace a persistent notification in HA UI."""
         await self.hass.services.async_call(
             "persistent_notification",
             "create",
-            {
-                "title": title,
-                "message": message,
-                "notification_id": notification_id,
-            },
+            {"title": title, "message": message, "notification_id": notification_id},
         )
 
-    # ------------------------------------------------------------------
-    # Daily analysis
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────
+    # Setup room — called by blueprint on first trigger
+    # ──────────────────────────────────────────────────────────────────
 
-    async def async_run_daily_analysis(self):
-        """Run daily heating rate analysis."""
+    async def async_setup_room(self, room_name: str) -> None:
+        """Create all required helpers for a room if they don't exist.
+
+        Idempotent — safe to call on every automation trigger.
+        Only creates helpers that are missing.
+        """
+        room_id = _room_name_to_id(room_name)
+        _LOGGER.debug("setup_room called for: %s (id: %s)", room_name, room_id)
+
+        toggle_helpers = {
+            f"sha_{room_id}_automation_running": f"SHA {room_name} Automation Running",
+            f"sha_{room_id}_airing_mode": f"SHA {room_name} Airing Mode",
+            f"sha_{room_id}_preheat_notified": f"SHA {room_name} Preheat Notified",
+            f"sha_{room_id}_target_notified": f"SHA {room_name} Target Notified",
+            f"sha_{room_id}_standby_notified": f"SHA {room_name} Standby Notified",
+            f"sha_{room_id}_vacation_notified": f"SHA {room_name} Vacation Notified",
+        }
+
+        for entity_id_suffix, name in toggle_helpers.items():
+            full_id = f"input_boolean.{entity_id_suffix}"
+            if self.hass.states.get(full_id) is None:
+                try:
+                    await self.hass.services.async_call(
+                        "input_boolean",
+                        "create",
+                        {"name": name, "icon": "mdi:toggle-switch"},
+                        blocking=True,
+                    )
+                    _LOGGER.info("Created helper: %s", full_id)
+                except Exception as e:
+                    _LOGGER.error("Failed to create %s: %s", full_id, e)
+
+        # Heating rate number
+        rate_id = f"input_number.sha_{room_id}_heating_rate"
+        if self.hass.states.get(rate_id) is None:
+            try:
+                await self.hass.services.async_call(
+                    "input_number",
+                    "create",
+                    {
+                        "name": f"SHA {room_name} Heating Rate",
+                        "min": 0.05,
+                        "max": 0.30,
+                        "step": 0.01,
+                        "initial": DEFAULT_HEATING_RATE,
+                        "unit_of_measurement": "°C/min",
+                        "icon": "mdi:thermometer-auto",
+                        "mode": "box",
+                    },
+                    blocking=True,
+                )
+                _LOGGER.info("Created helper: %s", rate_id)
+            except Exception as e:
+                _LOGGER.error("Failed to create %s: %s", rate_id, e)
+
+        # Override timer
+        timer_id = f"timer.sha_{room_id}_override"
+        if self.hass.states.get(timer_id) is None:
+            try:
+                await self.hass.services.async_call(
+                    "timer",
+                    "create",
+                    {
+                        "name": f"SHA {room_name} Override",
+                        "icon": "mdi:hand-back-right",
+                    },
+                    blocking=True,
+                )
+                _LOGGER.info("Created helper: %s", timer_id)
+            except Exception as e:
+                _LOGGER.error("Failed to create %s: %s", timer_id, e)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Daily analysis
+    # ──────────────────────────────────────────────────────────────────
+
+    async def async_run_daily_analysis(self) -> None:
+        """Run daily heating rate analysis for all discovered rooms."""
         _LOGGER.info("Starting daily heating analysis")
 
-        # 1. Test Ollama connection
         if not await self.ollama.async_test_connection():
             await self._async_notify(
                 "⚠️ Smart Heating Advisor",
-                "Daily analysis skipped — cannot connect to Ollama."
+                "Daily analysis skipped — cannot connect to Ollama.",
             )
             return
 
-        # 2. Fetch last 7 days from InfluxDB
-        readings = await self.async_query_influxdb(days=7)
-        if len(readings) < 5:
-            _LOGGER.warning(
-                "Not enough InfluxDB data for daily analysis (%d readings)",
-                len(readings)
-            )
-            await self._async_notify(
-                "⚠️ Smart Heating Advisor",
-                f"Daily analysis skipped — only {len(readings)} data points found."
-            )
+        rooms = self.discover_rooms()
+        if not rooms:
+            _LOGGER.warning("No rooms discovered — skipping daily analysis")
             return
 
-        # 3. Analyse heating sessions
-        analysis = analyze_heating_sessions(readings)
-        if not analysis["sessions"]:
-            _LOGGER.warning("No heating sessions detected in last 7 days")
-            await self._async_notify(
-                "⚠️ Smart Heating Advisor",
-                f"Daily analysis skipped — no heating sessions detected. "
-                f"({len(readings)} data points found)"
-            )
-            return
-
-        # 4. Get weather
         weather = self._get_weather_data()
         season = get_season(datetime.now().month)
 
-        # 5. Get current heating rate
-        helper = self.config.get(
-            CONF_HEATING_RATE_HELPER, "input_number.bathroom_heating_rate"
-        )
-        state = self.hass.states.get(helper)
+        for room in rooms:
+            _LOGGER.info("[%s] Running daily analysis", room.room_name)
+            await self._async_run_daily_analysis_for_room(
+                room, weather, season
+            )
+
+    async def _async_run_daily_analysis_for_room(
+        self, room: RoomConfig, weather: dict, season: str
+    ) -> None:
+        """Run daily analysis for a single room."""
+        readings = await self.async_query_influxdb(room.temp_sensor, days=7)
+        if len(readings) < 5:
+            _LOGGER.warning(
+                "[%s] Not enough data (%d readings) — skipping",
+                room.room_name,
+                len(readings),
+            )
+            return
+
+        schedules = self._get_schedule_info(room)
+        analysis = analyze_heating_sessions(readings, schedules)
+
+        if not analysis["sessions"]:
+            _LOGGER.warning(
+                "[%s] No heating sessions detected — skipping", room.room_name
+            )
+            return
+
+        state = self.hass.states.get(room.heating_rate_helper)
         current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
 
-        # 6. Build prompt and call Ollama
         prompt = build_daily_prompt(
+            room_name=room.room_name,
             current_rate=current_rate,
             analysis=analysis,
+            schedules=schedules,
             outside_temp=weather["outside_temp"],
             tomorrow_min=weather["tomorrow_min"],
             tomorrow_max=weather["tomorrow_max"],
             season=season,
         )
 
-        _LOGGER.debug("Sending daily prompt to Ollama")
         response = await self.ollama.async_generate(prompt)
         result = await self.ollama.async_parse_json_response(response)
 
         if not result or "heating_rate" not in result:
-            _LOGGER.error("Invalid Ollama response: %s", response)
-            await self._async_notify(
-                "⚠️ Smart Heating Advisor",
-                "Daily analysis failed — invalid response from Ollama."
-            )
+            _LOGGER.error("[%s] Invalid Ollama response: %s", room.room_name, response)
             return
 
-        # 7. Apply new rate
         new_rate = float(result["heating_rate"])
         reasoning = result.get("reasoning", "No reasoning provided")
         confidence = result.get("confidence", "unknown")
-        self.confidence = confidence
 
-        await self._async_apply_heating_rate(new_rate, reasoning)
+        if room.room_id not in self.room_states:
+            self.room_states[room.room_id] = {}
+        self.room_states[room.room_id]["confidence"] = confidence
 
-        # 8. Send mobile notification
+        await self._async_apply_heating_rate(room, new_rate, reasoning)
+
         await self._async_notify(
-            "🌡️ Bathroom Heating Rate Updated",
+            f"🌡️ {room.room_name} — Heating Rate Updated",
             f"New rate: {new_rate:.3f}°C/min (was {current_rate:.3f}°C/min)\n"
             f"Confidence: {confidence}\n"
             f"Success rate last 7 days: {analysis['success_rate']}%\n"
-            f"Reason: {reasoning}"
+            f"Reason: {reasoning}",
         )
 
-        _LOGGER.info("Daily analysis complete. New rate: %.3f", new_rate)
+        _LOGGER.info(
+            "[%s] Daily analysis complete. New rate: %.3f",
+            room.room_name,
+            new_rate,
+        )
 
-    # ------------------------------------------------------------------
-    # Weekly analysis — report only, no rate adjustment
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────
+    # Weekly analysis
+    # ──────────────────────────────────────────────────────────────────
 
-    async def async_run_weekly_analysis(self):
-        """Run weekly deep heating analysis — report only."""
+    async def async_run_weekly_analysis(self) -> None:
+        """Run weekly report analysis for all discovered rooms."""
         _LOGGER.info("Starting weekly heating analysis (report only)")
 
-        # 1. Test Ollama
         if not await self.ollama.async_test_connection():
             await self._async_notify(
                 "⚠️ Smart Heating Advisor",
-                "Weekly report skipped — cannot connect to Ollama."
+                "Weekly report skipped — cannot connect to Ollama.",
             )
             return
 
-        # 2. Fetch last 30 days
-        readings = await self.async_query_influxdb(days=30)
-        if len(readings) < 5:
-            _LOGGER.warning("Not enough data for weekly analysis")
-            await self._async_notify(
-                "⚠️ Smart Heating Advisor",
-                f"Weekly report skipped — only {len(readings)} data points found."
-            )
+        rooms = self.discover_rooms()
+        if not rooms:
+            _LOGGER.warning("No rooms discovered — skipping weekly analysis")
             return
 
-        # 3. Analyse
-        analysis = analyze_heating_sessions(readings)
         weather = self._get_weather_data()
         season = get_season(datetime.now().month)
-        avg_outside_temp = weather["outside_temp"]
 
-        # 4. Get current rate
-        helper = self.config.get(
-            CONF_HEATING_RATE_HELPER, "input_number.bathroom_heating_rate"
-        )
-        state = self.hass.states.get(helper)
+        for room in rooms:
+            _LOGGER.info("[%s] Running weekly analysis", room.room_name)
+            await self._async_run_weekly_analysis_for_room(room, weather, season)
+
+    async def _async_run_weekly_analysis_for_room(
+        self, room: RoomConfig, weather: dict, season: str
+    ) -> None:
+        """Run weekly analysis for a single room — report only."""
+        readings = await self.async_query_influxdb(room.temp_sensor, days=30)
+        if len(readings) < 5:
+            _LOGGER.warning(
+                "[%s] Not enough data for weekly analysis", room.room_name
+            )
+            return
+
+        schedules = self._get_schedule_info(room)
+        analysis = analyze_heating_sessions(readings, schedules)
+
+        state = self.hass.states.get(room.heating_rate_helper)
         current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
 
-        # 5. Build prompt and call Ollama
         prompt = build_weekly_prompt(
+            room_name=room.room_name,
             current_rate=current_rate,
             analysis=analysis,
-            avg_outside_temp=avg_outside_temp,
+            schedules=schedules,
+            avg_outside_temp=weather["outside_temp"],
             season=season,
         )
 
-        _LOGGER.debug("Sending weekly prompt to Ollama")
         response = await self.ollama.async_generate(prompt)
         result = await self.ollama.async_parse_json_response(response)
 
         if not result:
-            _LOGGER.error("Invalid weekly Ollama response: %s", response)
-            await self._async_notify(
-                "⚠️ Smart Heating Advisor",
-                "Weekly report failed — invalid response from Ollama."
+            _LOGGER.error(
+                "[%s] Invalid weekly Ollama response: %s", room.room_name, response
             )
             return
 
-        # 6. Extract report — NO rate adjustment
         confidence = result.get("confidence", "unknown")
-        weekly_report = result.get(
-            "weekly_report", "No weekly report generated."
-        )
+        weekly_report = result.get("weekly_report", "No weekly report generated.")
         suggested_rate = result.get("heating_rate", current_rate)
         reasoning = result.get("reasoning", "")
 
-        # Update sensor state only
-        self.confidence = confidence
-        self.weekly_report = weekly_report
+        if room.room_id not in self.room_states:
+            self.room_states[room.room_id] = {}
+        self.room_states[room.room_id]["confidence"] = confidence
+        self.room_states[room.room_id]["weekly_report"] = weekly_report
+
         await self.async_update_sensors()
 
-        # 7. Create persistent notification in HA UI
         report_date = datetime.now().strftime("%Y-%m-%d")
         await self._async_persistent_notification(
-            title=f"📊 Bathroom Heating Weekly Report — {report_date}",
+            title=f"📊 {room.room_name} — Weekly Heating Report {report_date}",
             message=(
                 f"## Weekly Summary\n"
                 f"{weekly_report}\n\n"
@@ -404,15 +667,19 @@ from(bucket: "{bucket}")
                 f"- Success rate: {analysis['success_rate']}%\n"
                 f"- Avg heating rate observed: {analysis.get('avg_rate', 'unknown')}°C/min\n"
                 f"- Avg pre-heat start time: {analysis.get('avg_start_time', 'unknown')}\n"
-                f"- Outside temp: {avg_outside_temp}°C ({season})\n\n"
+                f"- Outside temp: {weather['outside_temp']}°C ({season})\n\n"
                 f"## AI Suggestion\n"
                 f"Suggested rate: {suggested_rate:.3f}°C/min (current: {current_rate:.3f}°C/min)\n"
                 f"Confidence: {confidence}\n"
                 f"Reasoning: {reasoning}\n\n"
-                f"_Note: Rate is NOT automatically adjusted by weekly report. "
+                f"_Rate is NOT automatically adjusted by the weekly report. "
                 f"Apply manually if you agree with the suggestion._"
             ),
-            notification_id="sha_bathroom_weekly_report",
+            notification_id=f"sha_{room.room_id}_weekly_report",
         )
 
-        _LOGGER.info("Weekly report complete. Suggested rate: %.3f", suggested_rate)
+        _LOGGER.info(
+            "[%s] Weekly report complete. Suggested rate: %.3f",
+            room.room_name,
+            suggested_rate,
+        )

@@ -10,7 +10,6 @@ class OllamaClient:
     """Client for communicating with Ollama API."""
 
     def __init__(self, url: str, model: str, timeout: int = 120):
-        """Initialize Ollama client."""
         self.url = url.rstrip("/")
         self.model = model
         self.timeout = timeout
@@ -23,29 +22,26 @@ class OllamaClient:
             "stream": False,
             "format": "json",
             "options": {
-                "temperature": 0.1,  # Low temperature for consistent JSON output
-                "num_predict": 256,  # Limit response length
-            }
+                "temperature": 0.1,
+                "num_predict": 512,
+            },
         }
-
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{self.url}/api/generate",
                     json=payload,
-                    timeout=aiohttp.ClientTimeout(total=self.timeout)
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
                 ) as response:
                     if response.status != 200:
                         _LOGGER.error(
                             "Ollama returned status %s: %s",
                             response.status,
-                            await response.text()
+                            await response.text(),
                         )
                         return None
-
                     data = await response.json()
                     return data.get("response")
-
         except aiohttp.ClientConnectorError:
             _LOGGER.error("Cannot connect to Ollama at %s", self.url)
             return None
@@ -61,7 +57,6 @@ class OllamaClient:
         if not response:
             return None
         try:
-            # Strip any markdown code fences if present
             clean = response.strip()
             if clean.startswith("```"):
                 clean = clean.split("```")[1]
@@ -69,7 +64,9 @@ class OllamaClient:
                     clean = clean[4:]
             return json.loads(clean.strip())
         except json.JSONDecodeError as e:
-            _LOGGER.error("Failed to parse Ollama JSON response: %s\nResponse: %s", e, response)
+            _LOGGER.error(
+                "Failed to parse Ollama JSON response: %s\nResponse: %s", e, response
+            )
             return None
 
     async def async_test_connection(self) -> bool:
@@ -78,7 +75,7 @@ class OllamaClient:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{self.url}/api/tags",
-                    timeout=aiohttp.ClientTimeout(total=10)
+                    timeout=aiohttp.ClientTimeout(total=10),
                 ) as response:
                     if response.status != 200:
                         return False
@@ -89,7 +86,7 @@ class OllamaClient:
                         _LOGGER.warning(
                             "Model %s not found in Ollama. Available: %s",
                             self.model,
-                            models
+                            models,
                         )
                     return available
         except Exception as e:

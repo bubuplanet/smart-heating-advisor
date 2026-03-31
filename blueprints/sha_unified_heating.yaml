@@ -2,7 +2,8 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    description: |
+    **version: 1.0.0**
+
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
     This blueprint is designed to work with the Smart Heating Advisor (SHA)
@@ -52,52 +53,39 @@ blueprint:
     manual override and notifications. However without AI calibration
     the pre-heat timing will not adapt to your room's actual heating
     behaviour, seasonal changes or outside temperature. You will need
-    to tune the heating rate manually by editing input_number.sha_ROOM_heating_rate.
+    to tune the heating rate manually in input_number.sha_ROOM_heating_rate
+    based on your own observations.
 
-    🛠️ Standalone — Required helpers (8 per room)
+    🛠️ Helpers per room
     Replace ROOM with your room name in lowercase with underscores.
-    Examples: Bathroom → bathroom, Alessio's Bedroom → alessios_bedroom
+    Example: "Bathroom" → "bathroom", "Alessio's Bedroom" → "alessios_bedroom"
 
-    Before creating an automation from this blueprint, create these helpers
-    in Settings → Helpers for each room:
+    Required helpers (auto-created by SHA or create manually for standalone):
+    - input_number.sha_ROOM_heating_rate      (heating rate — default 0.15°C/min)
+    - input_boolean.sha_ROOM_preheat_notified
+    - input_boolean.sha_ROOM_target_notified
+    - input_boolean.sha_ROOM_standby_notified
+    - input_boolean.sha_ROOM_vacation_notified
+    - timer.sha_ROOM_override
 
-    Toggle helpers (×6) — Settings → Helpers → + Create Helper → Toggle:
-      sha_ROOM_automation_running  →  input_boolean.sha_ROOM_automation_running
-      sha_ROOM_airing_mode         →  input_boolean.sha_ROOM_airing_mode
-      sha_ROOM_preheat_notified    →  input_boolean.sha_ROOM_preheat_notified
-      sha_ROOM_target_notified     →  input_boolean.sha_ROOM_target_notified
-      sha_ROOM_standby_notified    →  input_boolean.sha_ROOM_standby_notified
-      sha_ROOM_vacation_notified   →  input_boolean.sha_ROOM_vacation_notified
+    Toggle helpers (x6) — Settings → Helpers → + Create Helper → Toggle:
+      sha_ROOM_preheat_notified   →  input_boolean.sha_ROOM_preheat_notified
+      sha_ROOM_target_notified    →  input_boolean.sha_ROOM_target_notified
+      sha_ROOM_standby_notified   →  input_boolean.sha_ROOM_standby_notified
+      sha_ROOM_vacation_notified  →  input_boolean.sha_ROOM_vacation_notified
 
-    Number helper (×1) — Settings → Helpers → + Create Helper → Number:
+    Number helper (x1) — Settings → Helpers → + Create Helper → Number:
       Name:    sha_ROOM_heating_rate
-      Min:     0.05
-      Max:     0.30
-      Step:    0.01
-      Initial: 0.15
+      Min:     0.05 — Max: 0.30 — Step: 0.01 — Initial: 0.15
       Mode:    Input field
 
-    Timer helper (×1) — Settings → Helpers → + Create Helper → Timer:
+    Timer helper (x1) — Settings → Helpers → + Create Helper → Timer:
       sha_ROOM_override  →  timer.sha_ROOM_override
 
-    Example for room "Bathroom":
-      sha_bathroom_automation_running  →  input_boolean.sha_bathroom_automation_running
-      sha_bathroom_airing_mode         →  input_boolean.sha_bathroom_airing_mode
-      sha_bathroom_preheat_notified    →  input_boolean.sha_bathroom_preheat_notified
-      sha_bathroom_target_notified     →  input_boolean.sha_bathroom_target_notified
-      sha_bathroom_standby_notified    →  input_boolean.sha_bathroom_standby_notified
-      sha_bathroom_vacation_notified   →  input_boolean.sha_bathroom_vacation_notified
-      sha_bathroom_heating_rate        →  input_number.sha_bathroom_heating_rate
-      sha_bathroom_override            →  timer.sha_bathroom_override
+    If using standalone, create these in Settings → Helpers before
+    creating an automation from this blueprint.
 
-    For each additional room repeat the above replacing bathroom with
-    the new room name in lowercase with underscores.
-    When using SHA the integration creates all helpers automatically —
-    no manual steps needed.
-
-    **version: 0.0.2**
-
-  source_url: https://raw.githubusercontent.com/bubuplanet/smart-heating-advisor/refs/heads/master/blueprints/sha_unified_heating.yaml
+  source_url: https://raw.githubusercontent.com/bubuplanet/smart-heating-advisor/main/blueprints/automation/smart_heating_advisor/sha_unified_heating.yaml
   domain: automation
 
   input:
@@ -154,7 +142,6 @@ blueprint:
           name: Fixed Radiator Temperature
           description: >
             Temperature applied to fixed radiator thermostats when heating is active.
-            Has no effect if no fixed radiator thermostats are selected above.
           default: 30
           selector:
             number:
@@ -401,8 +388,6 @@ variables:
                  | replace('-', '_') }}
 
   sha_heating_rate:      "input_number.sha_{{ room_id }}_heating_rate"
-  sha_guard:             "input_boolean.sha_{{ room_id }}_automation_running"
-  sha_airing:            "input_boolean.sha_{{ room_id }}_airing_mode"
   sha_override_timer:    "timer.sha_{{ room_id }}_override"
   sha_preheat_notified:  "input_boolean.sha_{{ room_id }}_preheat_notified"
   sha_target_notified:   "input_boolean.sha_{{ room_id }}_target_notified"
@@ -413,7 +398,7 @@ variables:
   heating_rate: "{{ states(sha_heating_rate) | float(0.15) }}"
 
   override_active: "{{ is_state(sha_override_timer, 'active') }}"
-  windows_open:    "{{ is_state(sha_airing, 'on') }}"
+  windows_open:    "{{ is_state('input_boolean.sha_' ~ room_id ~ '_airing_mode', 'on') }}"
 
   vacation_active: >
     {% if not vacation_enabled %}
@@ -539,16 +524,33 @@ triggers:
 conditions: []
 
 action:
+
+  # ── Step 1: Call sha.setup_room to ensure helpers exist ────────────
+  # Idempotent — skips helpers that already exist.
+  # On first run this creates all 6 helpers for this room.
+  # On subsequent runs this completes in milliseconds.
+  - action: smart_heating_advisor.setup_room
+    data:
+      room_name: "{{ room_name }}"
+    continue_on_error: true
+
+  # ── Step 2: Small delay to allow newly created helpers to register ──
+  - if:
+      - condition: template
+        value_template: "{{ states(sha_override_timer) == 'unavailable' }}"
+    then:
+      - delay:
+          seconds: 2
+
   - choose:
 
-      # ── Window opened ─────────────────────────────────────────────
       - conditions:
           - condition: template
             value_template: "{{ trigger.id == 'window_airing_start' }}"
         sequence:
           - action: input_boolean.turn_on
             target:
-              entity_id: "{{ sha_airing }}"
+              entity_id: "input_boolean.sha_{{ room_id }}_airing_mode"
           - if:
               - condition: template
                 value_template: "{{ notify_window }}"
@@ -560,7 +562,6 @@ action:
                     Heating paused — window open.
                     Room: {{ room_temp | round(1) }}°C.
 
-      # ── All windows closed ────────────────────────────────────────
       - conditions:
           - condition: template
             value_template: "{{ trigger.id == 'window_airing_end' }}"
@@ -574,7 +575,7 @@ action:
             then:
               - action: input_boolean.turn_off
                 target:
-                  entity_id: "{{ sha_airing }}"
+                  entity_id: "input_boolean.sha_{{ room_id }}_airing_mode"
               - if:
                   - condition: template
                     value_template: "{{ notify_window }}"
@@ -586,14 +587,10 @@ action:
                         All windows closed. Heating resumed.
                         Room: {{ room_temp | round(1) }}°C.
 
-      # ── Schedule changed ──────────────────────────────────────────
-      # Part 1: ALWAYS reset notification flags regardless of override
-      # Part 2: Apply heating control ONLY if override is not active
       - conditions:
           - condition: template
             value_template: "{{ trigger.id == 'schedule_changed' }}"
         sequence:
-          # Part 1 — always reset flags
           - choose:
               - conditions:
                   - condition: template
@@ -613,14 +610,10 @@ action:
                       entity_id:
                         - "{{ sha_target_notified }}"
                         - "{{ sha_preheat_notified }}"
-          # Part 2 — heating control only when override is not active
           - if:
               - condition: template
                 value_template: "{{ not override_active }}"
             then:
-              - action: input_boolean.turn_on
-                target:
-                  entity_id: "{{ sha_guard }}"
               - choose:
                   - conditions:
                       - condition: template
@@ -673,19 +666,14 @@ action:
                               entity_id: "{{ fixed_radiator_thermostats }}"
                             data:
                               temperature: "{{ fixed_radiator_temperature | float }}"
-              - action: input_boolean.turn_off
-                target:
-                  entity_id: "{{ sha_guard }}"
 
-      # ── Manual TRV change ─────────────────────────────────────────
       - conditions:
           - condition: template
             value_template: "{{ trigger.id == 'manual_override' }}"
         sequence:
           - if:
               - condition: template
-                value_template: >
-                  {{ is_state(sha_guard, 'off') and not windows_open }}
+                value_template: "{{ not windows_open }}"
             then:
               - action: timer.start
                 target:
@@ -706,7 +694,6 @@ action:
                         Smart heating paused for {{ override_minutes }} min until
                         {{ (now() + timedelta(minutes=override_minutes | int)).strftime('%H:%M') }}.
 
-      # ── Override active: skip control loop ───────────────────────
       - conditions:
           - condition: template
             value_template: >
@@ -716,12 +703,7 @@ action:
         sequence:
           - stop: "Override active — skipping control loop."
 
-    # ── DEFAULT: main heating control ──────────────────────────────
     default:
-
-      - action: input_boolean.turn_on
-        target:
-          entity_id: "{{ sha_guard }}"
 
       - choose:
           - conditions:
@@ -776,12 +758,6 @@ action:
                       entity_id: "{{ fixed_radiator_thermostats }}"
                     data:
                       temperature: "{{ fixed_radiator_temperature | float }}"
-
-      - action: input_boolean.turn_off
-        target:
-          entity_id: "{{ sha_guard }}"
-
-      # ── Notifications ─────────────────────────────────────────────
 
       - if:
           - condition: template

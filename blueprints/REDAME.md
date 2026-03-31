@@ -1,4 +1,4 @@
-# 🌡️ Smart Heating Advisor - Blueprint
+# 🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-2024.1.0+-blue.svg)](https://www.home-assistant.io/)
 [![Blueprint](https://img.shields.io/badge/Blueprint-Automation-green.svg)](https://www.home-assistant.io/docs/blueprint/)

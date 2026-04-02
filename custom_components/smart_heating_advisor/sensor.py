@@ -16,16 +16,9 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Smart Heating Advisor sensors.
-
-    Sensors are created dynamically per discovered room.
-    On first setup rooms may not yet exist — they are discovered
-    at analysis time. We create a global set of sensors for the
-    integration and update them when rooms are analysed.
-    """
+    """Set up Smart Heating Advisor sensors."""
     coordinator: SmartHeatingCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    # Discover rooms now to create initial sensor set
     rooms = coordinator.discover_rooms()
 
     entities = []
@@ -50,6 +43,9 @@ async def async_setup_entry(
 class SHABaseSensor(SensorEntity):
     """Base class for SHA sensors."""
 
+    _attr_should_poll = False
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         coordinator: SmartHeatingCoordinator,
@@ -61,7 +57,6 @@ class SHABaseSensor(SensorEntity):
         self.entry = entry
         self.room_id = room_id
         self.room_name = room_name
-        self._attr_should_poll = False
 
     @property
     def device_info(self):
@@ -86,7 +81,7 @@ class RoomHeatingRateSensor(SHABaseSensor):
 
     @property
     def name(self) -> str:
-        return f"SHA {self.room_name} Heating Rate"
+        return "Heating Rate"
 
     @property
     def state(self) -> float:
@@ -120,7 +115,7 @@ class RoomLastAnalysisSensor(SHABaseSensor):
 
     @property
     def name(self) -> str:
-        return f"SHA {self.room_name} Last Analysis"
+        return "Last Analysis"
 
     @property
     def state(self) -> str | None:
@@ -144,7 +139,7 @@ class RoomConfidenceSensor(SHABaseSensor):
 
     @property
     def name(self) -> str:
-        return f"SHA {self.room_name} Confidence"
+        return "Confidence"
 
     @property
     def state(self) -> str:
@@ -173,7 +168,7 @@ class RoomWeeklyReportSensor(SHABaseSensor):
 
     @property
     def name(self) -> str:
-        return f"SHA {self.room_name} Weekly Report"
+        return "Weekly Report"
 
     @property
     def state(self) -> str:

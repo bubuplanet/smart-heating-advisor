@@ -1,8 +1,5 @@
 {
   "name": "Smart Heating Advisor",
-  "content_in_root": false,
   "homeassistant": "2024.1.0",
-  "render_readme": true,
-  "domains": ["climate", "sensor", "input_number", "input_boolean", "timer"],
-  "iot_class": "local_polling"
+  "render_readme": true
 }

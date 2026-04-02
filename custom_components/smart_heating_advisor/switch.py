@@ -1,4 +1,4 @@
-"""SHA switch entities — boolean state helpers and override timer."""
+"""SHA switch entities — boolean state helpers and override switch."""
 from __future__ import annotations
 
 import logging
@@ -36,8 +36,10 @@ async def async_setup_entry(
     entities: list = []
     for room in coordinator.discover_rooms():
         for purpose, label, icon in boolean_defs:
-            entities.append(SHABooleanSwitch(room.room_name, room.room_id, purpose, label, icon))
-        override = SHAOverrideSwitch(room.room_name, room.room_id)
+            entities.append(
+                SHABooleanSwitch(room.room_name, room.room_id, entry.entry_id, purpose, label, icon)
+            )
+        override = SHAOverrideSwitch(room.room_name, room.room_id, entry.entry_id)
         entities.append(override)
         coordinator._override_switches[room.room_id] = override
 
@@ -48,24 +50,35 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
     """Persistent on/off helper — notification flags and airing-mode tracking."""
 
     _attr_should_poll = False
+    _attr_has_entity_name = True
 
     def __init__(
         self,
         room_name: str,
         room_id: str,
+        entry_id: str,
         purpose: str,
         purpose_label: str,
         icon: str,
     ) -> None:
+        self._room_name = room_name
         self._room_id = room_id
+        self._entry_id = entry_id
         self._purpose = purpose
         self._is_on = False
 
-        self._attr_name = f"SHA {room_name} {purpose_label}"
+        self._attr_name = purpose_label
         self._attr_unique_id = f"sha_{room_id}_{purpose}"
         self._attr_icon = icon
-        # Fix entity_id so it matches the blueprint's expected naming convention.
         self.entity_id = f"switch.sha_{room_id}_{purpose}"
+
+    @property
+    def device_info(self) -> dict:
+        return {
+            "identifiers": {(DOMAIN, f"{self._entry_id}_{self._room_id}")},
+            "name": f"SHA — {self._room_name}",
+            "manufacturer": "Smart Heating Advisor",
+        }
 
     @property
     def is_on(self) -> bool:
@@ -94,16 +107,27 @@ class SHAOverrideSwitch(SwitchEntity, RestoreEntity):
     """
 
     _attr_should_poll = False
+    _attr_has_entity_name = True
 
-    def __init__(self, room_name: str, room_id: str) -> None:
+    def __init__(self, room_name: str, room_id: str, entry_id: str) -> None:
+        self._room_name = room_name
         self._room_id = room_id
+        self._entry_id = entry_id
         self._is_on = False
         self._cancel_timer = None
 
-        self._attr_name = f"SHA {room_name} Override"
+        self._attr_name = "Override"
         self._attr_unique_id = f"sha_{room_id}_override"
         self._attr_icon = "mdi:hand-back-right"
         self.entity_id = f"switch.sha_{room_id}_override"
+
+    @property
+    def device_info(self) -> dict:
+        return {
+            "identifiers": {(DOMAIN, f"{self._entry_id}_{self._room_id}")},
+            "name": f"SHA — {self._room_name}",
+            "manufacturer": "Smart Heating Advisor",
+        }
 
     @property
     def is_on(self) -> bool:

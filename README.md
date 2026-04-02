@@ -1,6 +1,6 @@
 # 🌡️ Smart Heating Advisor
 
-[![HA Version](https://img.shields.io/badge/Home%20Assistant-2026.3.4+-blue.svg)](https://www.home-assistant.io/)
+[![HA Version](https://img.shields.io/badge/Home%20Assistant-2024.1.0+-blue.svg)](https://www.home-assistant.io/)
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -17,9 +17,12 @@
 - [Configuration](#configuration)
 - [Room Setup](#room-setup)
 - [Schedule Naming Convention](#schedule-naming-convention)
+- [Blueprint Configuration](#blueprint-configuration)
+- [Notification Reference](#notification-reference)
 - [Services](#services)
-- [Sensors](#sensors)
+- [Entities](#entities)
 - [Architecture](#architecture)
+- [Example: Bathroom Setup](#example-bathroom-setup)
 - [Troubleshooting](#troubleshooting)
 - [Roadmap](#roadmap)
 
@@ -31,18 +34,18 @@
 
 Smart Heating Advisor (SHA) combines three things:
 
-1. **HA Schedule helpers** — user defines when each room should be warm and at what temperature
+1. **HA Schedule helpers** — you define when each room should be warm and at what temperature
 2. **InfluxDB history** — SHA reads actual room temperature data to measure real heating performance
 3. **Ollama AI** — local AI analyses the data and calibrates the heating rate per room, per day
 
-The SHA blueprint automation controls TRVs directly — pre-heating rooms at exactly the right moment so the target temperature is reached when needed, not before and not after.
+The SHA blueprint automation controls TRVs directly — pre-heating rooms at exactly the right moment so the target temperature is reached when needed.
 
 ```
 Your Schedule helpers (e.g. "Morning Shower 26C")
          │
          ▼
 SHA Blueprint automation (per room)
-  ├── Reads AI-calibrated heating rate from input_number
+  ├── Reads AI-calibrated heating rate from number.sha_ROOM_heating_rate
   ├── Calculates: (target - current) / heating_rate = minutes needed
   ├── Starts pre-heat at exactly the right time
   └── Controls TRVs: heat → maintain → standby → off
@@ -50,11 +53,11 @@ SHA Blueprint automation (per room)
          ▼ (records to InfluxDB automatically)
          │
 SHA Daily analysis at 02:00 AM
-  ├── Discovers rooms from blueprint automations (sha: tag)
+  ├── Discovers rooms from blueprint automations
   ├── Queries InfluxDB per room (7 days history)
   ├── Reads each room's schedules and target temperatures
   ├── Sends data + weather to Ollama AI
-  └── Updates input_number.sha_ROOM_heating_rate per room
+  └── Updates number.sha_ROOM_heating_rate per room
          │
          ▼ (feedback loop — system improves daily)
 ```
@@ -72,11 +75,11 @@ SHA Daily analysis at 02:00 AM
 | 🌡️ **Per-schedule temperatures** | Target temp encoded in schedule name (e.g. `Morning Shower 26C`) |
 | 🏠 **Multi-room support** | Unlimited rooms — each with independent heating rate |
 | 🔍 **Auto room discovery** | Finds rooms from blueprint automations — zero manual config |
-| 🛠️ **Auto helper creation** | Creates all HA helpers automatically on first use per room |
+| 🛠️ **Auto helper creation** | All helper entities created automatically when SHA loads |
 | 🔥 **Fixed TRV support** | Optional fixed-temp TRVs (towel rails, floor heating) |
 | 🏖️ **Vacation mode** | Calendar-based frost protection |
 | 🪟 **Window detection** | Pauses heating when windows open |
-| ✋ **Manual override** | Auto-resume via HA Timer |
+| ✋ **Manual override** | Auto-resume after configurable duration |
 | 🔔 **Smart notifications** | Each notification fires once per event — no spam |
 | 📊 **Weekly reports** | Sunday persistent notification with 30-day analysis |
 | 🔄 **Blueprint auto-update** | New SHA versions automatically update the blueprint |
@@ -89,7 +92,7 @@ SHA Daily analysis at 02:00 AM
 
 | Requirement | Details |
 |---|---|
-| Home Assistant | 2026.3.4 or newer |
+| Home Assistant | 2024.1.0 or newer |
 | [Ollama](https://ollama.ai) | Running locally on your network |
 | Ollama model | `phi4` recommended — any model works |
 | InfluxDB 2.x | Your HA data must be recorded to InfluxDB |
@@ -104,7 +107,6 @@ SHA Daily analysis at 02:00 AM
 ### Via HACS (recommended)
 
 [![Install via HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=bubuplanet&repository=smart-heating-advisor&category=integration)
-
 
 Click the button above to open HACS directly on the Smart Heating Advisor repository.
 
@@ -124,7 +126,7 @@ After restarting Home Assistant:
 3. Search for **Smart Heating Advisor** and select it
 4. Complete the 3-step setup wizard — see [Configuration](#configuration) for details
 
-> 💡 A persistent notification will appear in Home Assistant after installation with a quick-start guide for the blueprint.
+> 💡 A persistent notification will appear after installation with a quick-start guide.
 
 ### Manual
 
@@ -172,8 +174,6 @@ SHA tests the connection before proceeding.
 
 ## 🏠 Room Setup
 
-After installing SHA, set up each room in 3 steps:
-
 ### Step 1 — Create Schedule helpers
 
 Go to **Settings → Helpers → + Create Helper → Schedule** and create one schedule per heating period:
@@ -185,29 +185,23 @@ Go to **Settings → Helpers → + Create Helper → Schedule** and create one s
 | `Office Morning 20C` | Mon–Fri | 08:00–18:00 | Heat office to 20°C by 8AM |
 
 > ⚠️ The temperature **must** be at the end of the name followed by `C` with no space.
-> ✅ `Morning Shower 26C` → reads 26°C
-> ❌ `Morning Shower 26 C` → no match, uses fallback temperature
 
-### Step 2 — Import the blueprint
+### Step 2 — Create an automation from the blueprint
 
-[![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fbubuplanet%2Fsmart-heating-advisor%2Fmain%2Fcustom_components%2Fsmart_heating_advisor%2Fblueprints%2Fsha_unified_heating.yaml)
-
-Click the button above to import the blueprint directly into your Home Assistant.
-
-> 💡 The blueprint is also installed automatically when you install SHA via HACS — no manual import needed. Use the button above only if you want to use the blueprint standalone without the SHA integration.
-
-### Step 3 — Create an automation from the blueprint
+The blueprint is installed automatically when you install SHA. To create a room automation:
 
 1. Go to **Settings → Automations → Blueprints → Smart Heating Advisor**
 2. Click **Create Automation**
 3. Fill in the form:
-   - **Room Name**: e.g. `Bathroom` (used for helpers and notifications)
+   - **Room Name**: e.g. `Bathroom` (used for entities and notifications)
    - **Room Temperature Sensor**: your temperature sensor
    - **Radiator Thermostat**: one or more TRVs
    - **Schedule Helpers**: select the schedules you created in Step 1
 4. Save
 
-**That's it.** On the first automation trigger SHA automatically creates all required helpers for this room. Repeat for each additional room.
+**That's it.** Repeat for each additional room. SHA will discover all rooms the next time it loads and create helper entities automatically.
+
+> 💡 If you add a new room after SHA is already running, reload the integration via **Settings → Devices & Services → Smart Heating Advisor → ⋮ → Reload**.
 
 ---
 
@@ -215,13 +209,98 @@ Click the button above to import the blueprint directly into your Home Assistant
 
 ## 📝 Schedule Naming Convention
 
-| Name | Temp extracted | Result |
+Name each **HA Schedule helper** with the target temperature at the end:
+
+| Schedule Name | Target Temp | Result |
 |---|---|---|
 | `Morning Shower 26C` | 26°C | ✅ |
 | `Evening Bath 28.5C` | 28.5°C | ✅ |
 | `Weekend 20C` | 20°C | ✅ |
-| `Morning Shower` | none | ⚠️ Uses fallback temp |
-| `Shower 26 C` | none | ⚠️ Uses fallback temp (space before C) |
+| `Morning Shower` | _(no temp)_ | ⚠️ Uses fallback temp |
+| `Shower 26 C` | _(no match)_ | ⚠️ Uses fallback temp (space before C) |
+
+> The temperature must be at the **end** of the name, immediately followed by `C` with no space.
+
+---
+
+<a id="blueprint-configuration"></a>
+
+## 🎛️ Blueprint Configuration
+
+### 🏠 Room Section
+
+| Field | Description | Example |
+|---|---|---|
+| **Room Name** | Friendly name — used in notifications and to derive entity IDs | `Bathroom` |
+| **Room Temperature Sensor** | Sensor measuring actual room temperature | `sensor.bathroom_thermostat_temperature` |
+| **Radiator Thermostat** | One or more TRVs following the schedule temp | `climate.bathroom_radiator` |
+| **Fixed Radiator Thermostat** | Optional TRVs always heating to a fixed temp | `climate.bathroom_heated_towel_rail` |
+| **Fixed Radiator Temperature** | Temperature for fixed TRVs when active | `30°C` |
+
+### 📅 Schedules Section
+
+| Field | Description | Example |
+|---|---|---|
+| **Schedule Helpers** | Select one or more HA Schedule helpers | `Morning Shower 26C`, `Evening Bath 28C` |
+| **Schedule Fallback Temperature** | Used when no temp found in schedule name | `21°C` |
+
+### 🌡️ Default Section _(collapsed)_
+
+| Field | Description | Default |
+|---|---|---|
+| **Default Heating Mode** | Off or Heat when no schedule is active | `Off` |
+| **Default Temperature** | Standby temp when Default Mode = Heat | `16°C` |
+
+### 🪟 Window Detection Section _(collapsed)_
+
+| Field | Description | Default |
+|---|---|---|
+| **Window & Door Sensors** | Binary sensors for windows/doors | _(empty)_ |
+| **Open Reaction Time** | Delay before pausing heating | `5 min` |
+| **Close Reaction Time** | Delay before resuming heating | `30 sec` |
+
+### 🏖️ Vacation Section _(collapsed)_
+
+| Field | Description | Default |
+|---|---|---|
+| **Enable Vacation Mode** | Toggle vacation detection on/off | `false` |
+| **Vacation Calendar** | Calendar with vacation events | `calendar.home` |
+| **Vacation Keyword** | Event title prefix to detect | `vacation` |
+| **Vacation Behavior** | Off or Frost protection | `Off` |
+| **Vacation Frost Temperature** | Temp during frost protection | `12°C` |
+
+### ✋ Override Section _(collapsed)_
+
+| Field | Description | Default |
+|---|---|---|
+| **Override Duration** | Minutes to pause after manual TRV change | `120 min` |
+
+### 🔔 Notifications Section _(collapsed)_
+
+| Notification | When | Default |
+|---|---|---|
+| **Notify pre-heat starts** | Once when pre-heat begins | `true` |
+| **Notify target reached** | Once when room hits target | `true` |
+| **Notify standby starts** | Once when no schedule active | `true` |
+| **Notify window open/close** | On window state change | `true` |
+| **Notify override active/resumed** | On manual TRV change + resume | `true` |
+
+---
+
+<a id="notification-reference"></a>
+
+## 🔔 Notification Reference
+
+| Notification | Title | When | Fires |
+|---|---|---|---|
+| Pre-heat | 🌅 Room — Pre-heat Started | Pre-heat begins | Once per schedule event |
+| Target reached | ✅ Room — Target Reached | Room hits target temp | Once per schedule event |
+| Standby | 🌡️ Room — Standby | No schedule active | Once per transition |
+| Window open | 🪟 Room — Window Open | Window opens (after delay) | Once per opening |
+| Window closed | 🪟 Room — Window Closed | All windows close | Once per closing |
+| Override active | ✋ Room — Override Active | Manual TRV change detected | On each manual change |
+| Override ended | 🔄 Room — Heating Resumed | Override expires | On each resume |
+| Vacation active | 🏖️ Room — Vacation Mode | Vacation calendar event | Once per vacation event |
 
 ---
 
@@ -231,24 +310,51 @@ Click the button above to import the blueprint directly into your Home Assistant
 
 | Service | Description |
 |---|---|
-| `sha.setup_room` | Creates helpers for a room. Called automatically by blueprint. |
-| `sha.run_daily_analysis` | Manually trigger daily AI analysis for all rooms. |
-| `sha.run_weekly_analysis` | Manually trigger weekly report for all rooms. |
+| `smart_heating_advisor.run_daily_analysis` | Manually trigger daily AI analysis for all rooms |
+| `smart_heating_advisor.run_weekly_analysis` | Manually trigger weekly report for all rooms |
+| `smart_heating_advisor.start_override` | Start a timed manual override for a room |
 
 ---
 
-<a id="sensors"></a>
+<a id="entities"></a>
 
-## 📡 Sensors
+## 📡 Entities
 
-SHA creates 4 sensors per discovered room:
+SHA creates entities per discovered room, all grouped under a device named **SHA — {Room Name}**.
 
-| Sensor | Description | Unit |
+### Sensors (read-only)
+
+| Entity | Description | Unit |
 |---|---|---|
-| `sensor.sha_ROOM_heating_rate` | AI-calibrated heating rate | °C/min |
-| `sensor.sha_ROOM_last_analysis` | Timestamp of last analysis | datetime |
+| `sensor.sha_ROOM_heating_rate` | Current AI-calibrated heating rate | °C/min |
+| `sensor.sha_ROOM_last_analysis` | Timestamp of last AI analysis | datetime |
 | `sensor.sha_ROOM_confidence` | AI confidence level | high/medium/low |
 | `sensor.sha_ROOM_weekly_report` | Last weekly report summary | text |
+
+### Number (writable)
+
+| Entity | Description | Range |
+|---|---|---|
+| `number.sha_ROOM_heating_rate` | Heating rate — updated daily by AI, adjustable manually | 0.05–0.30 °C/min |
+
+### Switches (state flags)
+
+| Entity | Description |
+|---|---|
+| `switch.sha_ROOM_airing_mode` | Window open — heating paused |
+| `switch.sha_ROOM_preheat_notified` | Pre-heat notification sent this cycle |
+| `switch.sha_ROOM_target_notified` | Target reached notification sent this cycle |
+| `switch.sha_ROOM_standby_notified` | Standby notification sent this cycle |
+| `switch.sha_ROOM_vacation_notified` | Vacation notification sent this cycle |
+| `switch.sha_ROOM_override` | Manual override active |
+
+Replace `ROOM` with your room ID — room name in lowercase with underscores:
+
+| Room Name | Room ID |
+|---|---|
+| `Bathroom` | `bathroom` |
+| `Living Room` | `living_room` |
+| `Alessio's Bedroom` | `alessios_bedroom` |
 
 ---
 
@@ -268,7 +374,7 @@ SHA copies blueprint to /config/blueprints/automation/smart_heating_advisor/
 User runs config flow (Ollama + InfluxDB + Weather)
         │
         ▼
-SHA is ready — no helpers created yet
+SHA is ready
 ```
 
 ### 2 — Room setup (per room)
@@ -279,24 +385,19 @@ User creates Schedule helpers ("Morning Shower 26C")
         ▼
 User creates automation from SHA blueprint
 Blueprint stores: room_name, temperature_sensor, schedules
-in the automation's blueprint_inputs config
         │
         ▼
-Automation first trigger (5-min loop)
+SHA loads → discovers rooms from blueprint automations
         │
         ▼
-Blueprint calls sha.setup_room("Bathroom")
-        │
-        ▼
-SHA creates 6 helpers (skips existing):
-  input_number.sha_bathroom_heating_rate
-  timer.sha_bathroom_override
-  input_boolean.sha_bathroom_automation_running
-  input_boolean.sha_bathroom_airing_mode
-  input_boolean.sha_bathroom_preheat_notified
-  input_boolean.sha_bathroom_target_notified
-  input_boolean.sha_bathroom_standby_notified
-  input_boolean.sha_bathroom_vacation_notified
+SHA creates helper entities per room:
+  number.sha_ROOM_heating_rate      (AI-calibrated, default 0.15°C/min)
+  switch.sha_ROOM_override          (manual override state)
+  switch.sha_ROOM_airing_mode       (window open tracking)
+  switch.sha_ROOM_preheat_notified  (notification flags)
+  switch.sha_ROOM_target_notified
+  switch.sha_ROOM_standby_notified
+  switch.sha_ROOM_vacation_notified
         │
         ▼
 Automation runs normally ✅
@@ -310,7 +411,7 @@ SHA coordinator wakes up
         ▼
 discover_rooms() — reads all SHA blueprint automation configs
         │
-        ├── Bathroom  → sensor.bathroom_temp + [schedule.morning_shower, schedule.evening_bath]
+        ├── Bathroom  → sensor.bathroom_temp + [schedule.morning_shower, ...]
         ├── Office    → sensor.office_temp   + [schedule.office_morning]
         └── Bedroom   → sensor.bedroom_temp  + [schedule.bedroom_evening]
         │
@@ -322,7 +423,7 @@ discover_rooms() — reads all SHA blueprint automation configs
         ├── Analyse heating sessions (was target reached? at what rate?)
         ├── Build AI prompt with room data + weather + session stats
         ├── Call Ollama → get new heating_rate + reasoning
-        └── Update input_number.sha_ROOM_heating_rate
+        └── Update number.sha_ROOM_heating_rate directly
         │
         ▼
 Mobile notification per room with new rate + reasoning
@@ -331,7 +432,7 @@ Mobile notification per room with new rate + reasoning
 ### 4 — Blueprint heating loop (every 5 min)
 
 ```
-Read heating rate from input_number.sha_ROOM_heating_rate
+Read heating rate from number.sha_ROOM_heating_rate
         │
         ▼
 Check active schedule → extract target temp from name
@@ -345,7 +446,7 @@ Calculate pre-heat start:
 Set TRV temperature + mode (heat / off)
         │
         ▼
-Send notifications (once per event via flag helpers)
+Send notifications (once per event via flag switches)
 ```
 
 ### 5 — Self-improving feedback loop
@@ -366,23 +467,81 @@ Repeats daily — system gets smarter over time
 
 ---
 
+<a id="example-bathroom-setup"></a>
+
+## 🛁 Example: Bathroom Setup
+
+### Schedules to create
+
+| Schedule Name | Days | Time | Target |
+|---|---|---|---|
+| `Morning Shower 26C` | Mon–Fri | 06:00–07:00 | 26°C |
+| `Evening Bath 28C` | Mon–Sun | 19:00–20:30 | 28°C |
+
+### Blueprint settings
+
+| Field | Value |
+|---|---|
+| Room Name | `Bathroom` |
+| Temperature Sensor | `sensor.bathroom_thermostat_temperature` |
+| Radiator Thermostat | `climate.bathroom_radiator` |
+| Fixed Radiator Thermostat | `climate.bathroom_heated_towel_rail` |
+| Fixed Radiator Temperature | `30°C` |
+| Schedules | `Morning Shower 26C`, `Evening Bath 28C` |
+| Schedule Fallback Temp | `21°C` |
+| Default Heating Mode | `Off` |
+| Window Sensors | `binary_sensor.bathroom_window` |
+| Vacation Calendar | `calendar.home` |
+| Vacation Keyword | `vacation` |
+| Override Duration | `120 min` |
+
+### Typical day timeline
+
+```
+05:10  🌅 Pre-heat starts for "Morning Shower 26C"
+       │   Room: 18°C → target 26°C, Est. 53 min
+       │   (notification fires once)
+       │
+06:00  Schedule "Morning Shower 26C" turns ON
+       │   Notification flags reset for next cycle
+       │
+06:12  ✅ Room reached 26°C
+       │   (notification fires once)
+       │
+07:00  Schedule turns OFF
+       │   🌡️ Standby — heating off
+       │   (notification fires once)
+       │
+18:10  🌅 Pre-heat starts for "Evening Bath 28C"
+       │   Room: 19°C → target 28°C, Est. 60 min
+       │
+19:00  Schedule "Evening Bath 28C" turns ON
+       │
+19:15  ✅ Room reached 28°C
+       │
+20:30  Schedule turns OFF — 🌡️ Standby
+```
+
+---
+
 <a id="troubleshooting"></a>
 
 ## 🔍 Troubleshooting
 
 ### SHA not finding my rooms
 
-SHA discovers rooms by reading the blueprint input values from all automations using the `sha_unified_heating` blueprint. It looks for `room_name`, `temperature_sensor` and `schedules` inputs.
+SHA discovers rooms by reading the blueprint input values from all automations using the `sha_unified_heating` blueprint.
 
 Check:
 1. Is the automation created from the **Smart Heating Advisor** blueprint?
 2. Does the automation have a **Room Name** and **Temperature Sensor** set?
-3. Try triggering a manual analysis via **Developer Tools → Actions → `smart_heating_advisor.run_daily_analysis`** and check the HA logs for `Discovered SHA room`.
+3. Try **Developer Tools → Actions → `smart_heating_advisor.run_daily_analysis`** and check the HA logs for `Discovered SHA room`.
+4. If you added a new room after SHA was loaded, **reload the integration** via Settings → Devices & Services → Smart Heating Advisor → ⋮ → Reload.
 
 ### Pre-heat starts too late or too early
 
-The heating rate `input_number.sha_ROOM_heating_rate` controls timing. SHA calibrates this daily but you can also adjust manually:
-- **Too late** (room not warm enough) → increase the value (e.g. `0.10` → `0.13`)
+`number.sha_ROOM_heating_rate` controls timing. SHA calibrates this daily but you can also adjust manually:
+- **Too late** (room not warm enough at schedule time) → increase the value (e.g. `0.10` → `0.13`)
 - **Too early** (room overheating before schedule) → decrease the value
 
 ### Sensors not updating
@@ -391,12 +550,9 @@ Trigger a manual analysis via **Developer Tools → Actions → `smart_heating_a
 
 ### InfluxDB query returning no data
 
-SHA queries InfluxDB with:
-- `_field == "value"`
-- `_measurement == "°C"`
-- `entity_id == "your_sensor_id"` (without `sensor.` prefix)
+SHA queries InfluxDB with `_field == "value"`, `_measurement == "°C"`, and `entity_id` without the `sensor.` prefix.
 
-Verify your data in the InfluxDB Data Explorer using this Flux query:
+Verify in the InfluxDB Data Explorer:
 ```flux
 from(bucket: "home_assistant")
   |> range(start: -7d)
@@ -412,6 +568,17 @@ The blueprint is auto-installed by SHA on setup. If it's missing:
 1. Check `/config/blueprints/automation/smart_heating_advisor/sha_unified_heating.yaml` exists
 2. Go to **Settings → Automations → Blueprints** and click **Reload blueprints**
 
+### Notifications firing every 5 minutes
+
+The notification flag switches are not being reset correctly. Check:
+- `switch.sha_ROOM_preheat_notified` and related switches are visible in HA
+- The `schedule_changed` trigger is firing when schedules turn on/off
+
+### Override not working
+
+- Verify `switch.sha_ROOM_override` exists in HA
+- Check the HA logs for `sha.start_override` calls
+
 ---
 
 <a id="roadmap"></a>
@@ -426,7 +593,7 @@ The blueprint is auto-installed by SHA on setup. If it's missing:
 | 4 | Energy consumption monitoring (prove the savings) |
 | 5 | Multiple AI engine support (Claude, Gemini, Mistral) |
 | 6 | Smart standby optimization (lower standby on mild days) |
-| 7 | Scenario-based Lovelace card |
+| 7 | Lovelace card |
 | 8 | AI-suggested schedule fallback temperatures |
 
 ---

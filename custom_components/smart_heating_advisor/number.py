@@ -7,7 +7,7 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import RestoreNumber
 
 from .const import DOMAIN, DEFAULT_HEATING_RATE, MIN_HEATING_RATE, MAX_HEATING_RATE
 
@@ -26,36 +26,46 @@ async def async_setup_entry(
 
     entities: list[SHAHeatingRateNumber] = []
     for room in coordinator.discover_rooms():
-        entity = SHAHeatingRateNumber(room.room_name, room.room_id)
+        entity = SHAHeatingRateNumber(room.room_name, room.room_id, entry.entry_id)
         entities.append(entity)
         coordinator.register_heating_rate_entity(room.room_id, entity)
 
     async_add_entities(entities)
 
 
-class SHAHeatingRateNumber(NumberEntity, RestoreEntity):
-    """Per-room heating rate — writable via ``number.set_value``.
+class SHAHeatingRateNumber(NumberEntity, RestoreNumber):
+    """Per-room heating rate — writable, restored across restarts.
 
-    Restored across HA restarts.  The AI daily analysis updates this value
-    automatically; users can also adjust it manually from the UI.
+    The AI daily analysis updates this value automatically; users can also
+    adjust it manually from the UI.
     """
 
     _attr_should_poll = False
+    _attr_has_entity_name = True
     _attr_native_min_value = MIN_HEATING_RATE
     _attr_native_max_value = MAX_HEATING_RATE
-    _attr_native_step = 0.001
+    _attr_native_step = 0.01
     _attr_native_unit_of_measurement = "°C/min"
     _attr_mode = NumberMode.BOX
     _attr_icon = "mdi:thermometer-auto"
 
-    def __init__(self, room_name: str, room_id: str) -> None:
+    def __init__(self, room_name: str, room_id: str, entry_id: str) -> None:
+        self._room_name = room_name
         self._room_id = room_id
+        self._entry_id = entry_id
         self._value = DEFAULT_HEATING_RATE
 
-        self._attr_name = f"SHA {room_name} Heating Rate"
+        self._attr_name = "Heating Rate"
         self._attr_unique_id = f"sha_{room_id}_heating_rate"
-        # Fix entity_id so it matches the blueprint's expected naming convention.
         self.entity_id = f"number.sha_{room_id}_heating_rate"
+
+    @property
+    def device_info(self) -> dict:
+        return {
+            "identifiers": {(DOMAIN, f"{self._entry_id}_{self._room_id}")},
+            "name": f"SHA — {self._room_name}",
+            "manufacturer": "Smart Heating Advisor",
+        }
 
     @property
     def native_value(self) -> float:
@@ -67,10 +77,11 @@ class SHAHeatingRateNumber(NumberEntity, RestoreEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        if (last := await self.async_get_last_state()) is not None:
-            try:
-                val = float(last.state)
-                if MIN_HEATING_RATE <= val <= MAX_HEATING_RATE:
-                    self._value = val
-            except (ValueError, TypeError):
-                pass
+        if (data := await self.async_get_last_number_data()) is not None:
+            if data.native_value is not None:
+                try:
+                    val = float(data.native_value)
+                    if MIN_HEATING_RATE <= val <= MAX_HEATING_RATE:
+                        self._value = val
+                except (ValueError, TypeError):
+                    pass

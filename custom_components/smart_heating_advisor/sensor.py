@@ -70,7 +70,7 @@ class SHABaseSensor(SensorEntity):
             "name": f"SHA — {self.room_name}",
             "manufacturer": "Smart Heating Advisor",
             "model": "AI Heating Optimizer",
-            "sw_version": "1.0.0",
+            "sw_version": "0.0.1",
         }
 
     def _room_state(self) -> dict:

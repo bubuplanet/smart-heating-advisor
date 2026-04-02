@@ -1,0 +1,155 @@
+"""SHA switch entities — boolean state helpers and override timer."""
+from __future__ import annotations
+
+import logging
+
+from homeassistant.components.switch import SwitchEntity
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.restore_state import RestoreEntity
+
+from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Discover rooms and create all boolean switch and override switch entities."""
+    from .coordinator import SmartHeatingCoordinator
+
+    coordinator: SmartHeatingCoordinator = hass.data[DOMAIN][entry.entry_id]
+
+    boolean_defs = [
+        ("airing_mode",       "Airing Mode",       "mdi:window-open"),
+        ("preheat_notified",  "Preheat Notified",  "mdi:bell"),
+        ("target_notified",   "Target Notified",   "mdi:check-circle"),
+        ("standby_notified",  "Standby Notified",  "mdi:sleep"),
+        ("vacation_notified", "Vacation Notified", "mdi:beach"),
+    ]
+
+    entities: list = []
+    for room in coordinator.discover_rooms():
+        for purpose, label, icon in boolean_defs:
+            entities.append(SHABooleanSwitch(room.room_name, room.room_id, purpose, label, icon))
+        override = SHAOverrideSwitch(room.room_name, room.room_id)
+        entities.append(override)
+        coordinator._override_switches[room.room_id] = override
+
+    async_add_entities(entities)
+
+
+class SHABooleanSwitch(SwitchEntity, RestoreEntity):
+    """Persistent on/off helper — notification flags and airing-mode tracking."""
+
+    _attr_should_poll = False
+
+    def __init__(
+        self,
+        room_name: str,
+        room_id: str,
+        purpose: str,
+        purpose_label: str,
+        icon: str,
+    ) -> None:
+        self._room_id = room_id
+        self._purpose = purpose
+        self._is_on = False
+
+        self._attr_name = f"SHA {room_name} {purpose_label}"
+        self._attr_unique_id = f"sha_{room_id}_{purpose}"
+        self._attr_icon = icon
+        # Fix entity_id so it matches the blueprint's expected naming convention.
+        self.entity_id = f"switch.sha_{room_id}_{purpose}"
+
+    @property
+    def is_on(self) -> bool:
+        return self._is_on
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._is_on = False
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._is_on = last.state == "on"
+
+
+class SHAOverrideSwitch(SwitchEntity, RestoreEntity):
+    """Override-active switch — turns on for a timed duration, then auto-turns off.
+
+    Use ``async_start(duration_seconds)`` to begin a timed override.
+    Fires ``sha_override_ended`` event when the timer expires.
+    ``switch.turn_on`` / ``switch.turn_off`` work as manual on/off without duration.
+    """
+
+    _attr_should_poll = False
+
+    def __init__(self, room_name: str, room_id: str) -> None:
+        self._room_id = room_id
+        self._is_on = False
+        self._cancel_timer = None
+
+        self._attr_name = f"SHA {room_name} Override"
+        self._attr_unique_id = f"sha_{room_id}_override"
+        self._attr_icon = "mdi:hand-back-right"
+        self.entity_id = f"switch.sha_{room_id}_override"
+
+    @property
+    def is_on(self) -> bool:
+        return self._is_on
+
+    async def async_turn_on(self, **kwargs) -> None:
+        """Turn on indefinitely (no auto-expiry)."""
+        if self._cancel_timer:
+            self._cancel_timer()
+            self._cancel_timer = None
+        self._is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        if self._cancel_timer:
+            self._cancel_timer()
+            self._cancel_timer = None
+        self._is_on = False
+        self.async_write_ha_state()
+
+    async def async_start(self, duration_seconds: int) -> None:
+        """Start override for ``duration_seconds``, then auto-expire."""
+        if self._cancel_timer:
+            self._cancel_timer()
+        self._is_on = True
+        self.async_write_ha_state()
+        self._cancel_timer = async_call_later(
+            self.hass, duration_seconds, self._async_expired
+        )
+
+    async def _async_expired(self, _now) -> None:
+        self._cancel_timer = None
+        self._is_on = False
+        self.async_write_ha_state()
+        self.hass.bus.async_fire(
+            "sha_override_ended",
+            {"entity_id": self.entity_id, "room_id": self._room_id},
+        )
+        _LOGGER.debug("Override expired for room %s", self._room_id)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        # Override does not resume after HA restart — heating resumes immediately.
+        self._is_on = False
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._cancel_timer:
+            self._cancel_timer()
+            self._cancel_timer = None

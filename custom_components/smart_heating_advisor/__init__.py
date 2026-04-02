@@ -18,11 +18,11 @@ from .const import (
     WEEKLY_ANALYSIS_HOUR,
     WEEKLY_ANALYSIS_MINUTE,
 )
-from .coordinator import SmartHeatingCoordinator
+from .coordinator import SmartHeatingCoordinator, _room_name_to_id
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor"]
+PLATFORMS = ["sensor", "switch", "number"]
 
 BLUEPRINT_SOURCE = Path(__file__).parent / BLUEPRINT_RELATIVE_PATH / BLUEPRINT_FILENAME
 BLUEPRINT_DEST_DIR = Path("/config/blueprints/automation/smart_heating_advisor")
@@ -139,14 +139,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # ── Register services ────────────────────────────────────────────
 
-    async def handle_setup_room(call):
-        """sha.setup_room — called by blueprint on first trigger per room."""
-        room_name = call.data.get("room_name", "")
-        if room_name:
-            await coordinator.async_setup_room(room_name)
-        else:
-            _LOGGER.warning("sha.setup_room called without room_name")
-
     async def handle_daily_analysis(call):
         """sha.run_daily_analysis — manual trigger."""
         _LOGGER.info("Manual daily analysis triggered")
@@ -157,9 +149,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("Manual weekly analysis triggered")
         await coordinator.async_run_weekly_analysis()
 
-    hass.services.async_register(DOMAIN, "setup_room", handle_setup_room)
+    async def handle_start_override(call):
+        """sha.start_override — starts the override switch for a room with a duration.
+
+        Called by the blueprint instead of timer.start.
+        Data:
+          room_name (str): the room name matching the blueprint input.
+          duration_minutes (int, optional): override duration in minutes (default 120).
+        """
+        room_name = call.data.get("room_name", "")
+        duration_minutes = int(call.data.get("duration_minutes", 120))
+        if not room_name:
+            _LOGGER.warning("sha.start_override called without room_name")
+            return
+        room_id = _room_name_to_id(room_name)
+        override_switch = coordinator._override_switches.get(room_id)
+        if override_switch:
+            await override_switch.async_start(duration_minutes * 60)
+        else:
+            _LOGGER.warning(
+                "sha.start_override: no override switch for room '%s' "
+                "(reload the integration after adding new blueprint automations)", room_name
+            )
+
     hass.services.async_register(DOMAIN, "run_daily_analysis", handle_daily_analysis)
     hass.services.async_register(DOMAIN, "run_weekly_analysis", handle_weekly_analysis)
+    hass.services.async_register(DOMAIN, "start_override", handle_start_override)
 
     # ── Scheduled analysis ───────────────────────────────────────────
 
@@ -217,7 +232,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 f"3. Create an automation per room\n"
                 f"4. Name each Schedule helper with target temp at the end\n"
                 f"   e.g. `Morning Shower 26C`, `Evening Bath 28C`\n\n"
-                f"Helpers are created automatically on first automation trigger.\n\n"
+                f"Switch/Number helper entities are created automatically "
+                f"when the integration loads (reload after adding new rooms).\n\n"
+                f"⚠️ **Upgrading from v1?** Re-open and re-save each room automation "
+                f"so it uses the updated blueprint (v2).\n\n"
                 f"Daily AI analysis: **02:00 AM**\n"
                 f"Weekly report: **Sunday 01:00 AM**"
             ),
@@ -234,7 +252,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
-        hass.services.async_remove(DOMAIN, "setup_room")
         hass.services.async_remove(DOMAIN, "run_daily_analysis")
         hass.services.async_remove(DOMAIN, "run_weekly_analysis")
+        hass.services.async_remove(DOMAIN, "start_override")
     return unload_ok

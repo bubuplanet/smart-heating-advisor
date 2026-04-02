@@ -1,7 +1,14 @@
 """Coordinator for Smart Heating Advisor."""
+from __future__ import annotations
+
 import logging
 import re
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .number import SHAHeatingRateNumber
+    from .switch import SHAOverrideSwitch
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -59,15 +66,14 @@ class RoomConfig:
         self.temp_sensor = temp_sensor
         self.schedule_entities = schedules
 
-        # HA helper entity IDs — derived from room_id
-        self.heating_rate_helper = f"input_number.sha_{self.room_id}_heating_rate"
-        self.override_timer = f"timer.sha_{self.room_id}_override"
-        self.automation_running = f"input_boolean.sha_{self.room_id}_automation_running"
-        self.airing_mode = f"input_boolean.sha_{self.room_id}_airing_mode"
-        self.preheat_notified = f"input_boolean.sha_{self.room_id}_preheat_notified"
-        self.target_notified = f"input_boolean.sha_{self.room_id}_target_notified"
-        self.standby_notified = f"input_boolean.sha_{self.room_id}_standby_notified"
-        self.vacation_notified = f"input_boolean.sha_{self.room_id}_vacation_notified"
+        # SHA helper entity IDs — custom switch/number entities, derived from room_id
+        self.heating_rate_helper = f"number.sha_{self.room_id}_heating_rate"
+        self.override_switch = f"switch.sha_{self.room_id}_override"
+        self.airing_mode = f"switch.sha_{self.room_id}_airing_mode"
+        self.preheat_notified = f"switch.sha_{self.room_id}_preheat_notified"
+        self.target_notified = f"switch.sha_{self.room_id}_target_notified"
+        self.standby_notified = f"switch.sha_{self.room_id}_standby_notified"
+        self.vacation_notified = f"switch.sha_{self.room_id}_vacation_notified"
 
     def __repr__(self):
         return (
@@ -89,6 +95,12 @@ class SmartHeatingCoordinator:
         # Per-room state — keyed by room_id
         self.room_states: dict[str, dict] = {}
 
+        # Override switch references — keyed by room_id, populated by switch.async_setup_entry
+        self._override_switches: dict[str, "SHAOverrideSwitch"] = {}
+
+        # Heating rate entity references — keyed by room_id, populated by number.async_setup_entry
+        self.heating_rate_entities: dict[str, "SHAHeatingRateNumber"] = {}
+
         self.ollama = OllamaClient(
             url=self.config[CONF_OLLAMA_URL],
             model=self.config[CONF_OLLAMA_MODEL],
@@ -107,6 +119,10 @@ class SmartHeatingCoordinator:
         """Push updated state to all registered sensor entities."""
         for entity in self._entities:
             entity.async_write_ha_state()
+
+    def register_heating_rate_entity(self, room_id: str, entity: "SHAHeatingRateNumber") -> None:
+        """Store a reference to a room's heating rate entity for direct updates."""
+        self.heating_rate_entities[room_id] = entity
 
     # ──────────────────────────────────────────────────────────────────
     # Room discovery
@@ -372,11 +388,19 @@ from(bucket: "{bucket}")
         """Update the room's heating rate helper in HA."""
         rate = max(MIN_HEATING_RATE, min(MAX_HEATING_RATE, rate))
 
-        await self.hass.services.async_call(
-            "input_number",
-            "set_value",
-            {"entity_id": room.heating_rate_helper, "value": round(rate, 3)},
-        )
+        entity = self.heating_rate_entities.get(room.room_id)
+        if entity:
+            await entity.async_set_native_value(round(rate, 3))
+        else:
+            _LOGGER.warning(
+                "[%s] No heating rate entity registered — falling back to service call",
+                room.room_name,
+            )
+            await self.hass.services.async_call(
+                "number",
+                "set_value",
+                {"entity_id": room.heating_rate_helper, "value": round(rate, 3)},
+            )
 
         # Update in-memory state
         if room.room_id not in self.room_states:
@@ -409,82 +433,6 @@ from(bucket: "{bucket}")
             "create",
             {"title": title, "message": message, "notification_id": notification_id},
         )
-
-    # ──────────────────────────────────────────────────────────────────
-    # Setup room — called by blueprint on first trigger
-    # ──────────────────────────────────────────────────────────────────
-
-    async def async_setup_room(self, room_name: str) -> None:
-        """Create all required helpers for a room if they don't exist.
-
-        Idempotent — safe to call on every automation trigger.
-        Only creates helpers that are missing.
-        """
-        room_id = _room_name_to_id(room_name)
-        _LOGGER.debug("setup_room called for: %s (id: %s)", room_name, room_id)
-
-        toggle_helpers = {
-            f"sha_{room_id}_automation_running": f"SHA {room_name} Automation Running",
-            f"sha_{room_id}_airing_mode": f"SHA {room_name} Airing Mode",
-            f"sha_{room_id}_preheat_notified": f"SHA {room_name} Preheat Notified",
-            f"sha_{room_id}_target_notified": f"SHA {room_name} Target Notified",
-            f"sha_{room_id}_standby_notified": f"SHA {room_name} Standby Notified",
-            f"sha_{room_id}_vacation_notified": f"SHA {room_name} Vacation Notified",
-        }
-
-        for entity_id_suffix, name in toggle_helpers.items():
-            full_id = f"input_boolean.{entity_id_suffix}"
-            if self.hass.states.get(full_id) is None:
-                try:
-                    await self.hass.services.async_call(
-                        "input_boolean",
-                        "create",
-                        {"name": name, "icon": "mdi:toggle-switch"},
-                        blocking=True,
-                    )
-                    _LOGGER.info("Created helper: %s", full_id)
-                except Exception as e:
-                    _LOGGER.error("Failed to create %s: %s", full_id, e)
-
-        # Heating rate number
-        rate_id = f"input_number.sha_{room_id}_heating_rate"
-        if self.hass.states.get(rate_id) is None:
-            try:
-                await self.hass.services.async_call(
-                    "input_number",
-                    "create",
-                    {
-                        "name": f"SHA {room_name} Heating Rate",
-                        "min": 0.05,
-                        "max": 0.30,
-                        "step": 0.01,
-                        "initial": DEFAULT_HEATING_RATE,
-                        "unit_of_measurement": "°C/min",
-                        "icon": "mdi:thermometer-auto",
-                        "mode": "box",
-                    },
-                    blocking=True,
-                )
-                _LOGGER.info("Created helper: %s", rate_id)
-            except Exception as e:
-                _LOGGER.error("Failed to create %s: %s", rate_id, e)
-
-        # Override timer
-        timer_id = f"timer.sha_{room_id}_override"
-        if self.hass.states.get(timer_id) is None:
-            try:
-                await self.hass.services.async_call(
-                    "timer",
-                    "create",
-                    {
-                        "name": f"SHA {room_name} Override",
-                        "icon": "mdi:hand-back-right",
-                    },
-                    blocking=True,
-                )
-                _LOGGER.info("Created helper: %s", timer_id)
-            except Exception as e:
-                _LOGGER.error("Failed to create %s: %s", timer_id, e)
 
     # ──────────────────────────────────────────────────────────────────
     # Daily analysis

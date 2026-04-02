@@ -1,21 +1,3 @@
-setup_room:
-  name: Setup Room
-  description: >
-    Creates all required SHA helpers for a room if they don't already exist.
-    Called automatically by the SHA blueprint on first trigger.
-    Safe to call multiple times — idempotent.
-  fields:
-    room_name:
-      name: Room Name
-      description: >
-        Friendly name of the room — must match the Room Name entered
-        in the SHA blueprint automation exactly.
-        Examples: Bathroom, Office, Alessio's Bedroom
-      required: true
-      example: "Bathroom"
-      selector:
-        text:
-
 run_daily_analysis:
   name: Run Daily Analysis
   description: >

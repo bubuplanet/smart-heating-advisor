@@ -7,7 +7,7 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import RestoreNumber
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN, DEFAULT_HEATING_RATE, MIN_HEATING_RATE, MAX_HEATING_RATE
 
@@ -33,7 +33,7 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class SHAHeatingRateNumber(NumberEntity, RestoreNumber):
+class SHAHeatingRateNumber(NumberEntity, RestoreEntity):
     """Per-room heating rate — writable, restored across restarts.
 
     The AI daily analysis updates this value automatically; users can also
@@ -77,11 +77,10 @@ class SHAHeatingRateNumber(NumberEntity, RestoreNumber):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        if (data := await self.async_get_last_number_data()) is not None:
-            if data.native_value is not None:
-                try:
-                    val = float(data.native_value)
-                    if MIN_HEATING_RATE <= val <= MAX_HEATING_RATE:
-                        self._value = val
-                except (ValueError, TypeError):
-                    pass
+        if (last := await self.async_get_last_state()) is not None:
+            try:
+                val = float(last.state)
+                if MIN_HEATING_RATE <= val <= MAX_HEATING_RATE:
+                    self._value = val
+            except (ValueError, TypeError):
+                pass

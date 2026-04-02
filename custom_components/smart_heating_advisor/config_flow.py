@@ -16,6 +16,7 @@ from .const import (
     CONF_INFLUXDB_ORG,
     CONF_INFLUXDB_BUCKET,
     CONF_WEATHER_ENTITY,
+    CONF_DEBUG_LOGGING,
     DEFAULT_OLLAMA_URL,
     DEFAULT_OLLAMA_MODEL,
     DEFAULT_INFLUXDB_URL,
@@ -72,12 +73,13 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
       1. Ollama — URL + model, connection tested
       2. InfluxDB — URL, token, org, bucket, connection tested
       3. HA entities — weather entity validated
-
-    Helpers are NOT created here — they are created lazily by the
-    sha.setup_room service which the blueprint calls on first trigger.
     """
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(config_entry):
+        return OptionsFlowHandler(config_entry)
 
     async def async_step_user(self, user_input=None) -> FlowResult:
         """Step 1 — Ollama configuration."""
@@ -160,4 +162,25 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
+        )
+
+
+class OptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle SHA options — currently just the debug logging toggle."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        self._config_entry = config_entry
+
+    async def async_step_init(self, user_input=None) -> config_entries.FlowResult:
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current = self._config_entry.options.get(CONF_DEBUG_LOGGING, False)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_DEBUG_LOGGING, default=current): bool,
+                }
+            ),
         )

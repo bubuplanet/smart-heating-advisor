@@ -12,6 +12,7 @@ from .const import (
     DOMAIN,
     BLUEPRINT_FILENAME,
     BLUEPRINT_RELATIVE_PATH,
+    CONF_DEBUG_LOGGING,
     DAILY_ANALYSIS_HOUR,
     DAILY_ANALYSIS_MINUTE,
     WEEKLY_ANALYSIS_WEEKDAY,
@@ -23,6 +24,15 @@ from .coordinator import SmartHeatingCoordinator, _room_name_to_id
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["sensor", "switch", "number"]
+
+_SHA_LOGGER = logging.getLogger(__name__.rsplit(".", 1)[0])  # custom_components.smart_heating_advisor
+
+
+def _apply_debug_logging(enabled: bool) -> None:
+    """Set the SHA package log level based on the debug toggle."""
+    level = logging.DEBUG if enabled else logging.NOTSET
+    _SHA_LOGGER.setLevel(level)
+    _LOGGER.info("SHA debug logging %s", "enabled" if enabled else "disabled")
 
 BLUEPRINT_SOURCE = Path(__file__).parent / BLUEPRINT_RELATIVE_PATH / BLUEPRINT_FILENAME
 BLUEPRINT_DEST_DIR = Path("/config/blueprints/automation/smart_heating_advisor")
@@ -126,6 +136,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Smart Heating Advisor from a config entry."""
     _LOGGER.info("Setting up Smart Heating Advisor")
 
+    # Apply debug logging preference immediately
+    _apply_debug_logging(entry.options.get(CONF_DEBUG_LOGGING, False))
+
     # Install / upgrade blueprint
     blueprint_result = await async_install_blueprint(hass)
 
@@ -159,11 +172,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """
         room_name = call.data.get("room_name", "")
         duration_minutes = int(call.data.get("duration_minutes", 120))
+        _LOGGER.debug("sha.start_override called: room='%s', duration=%d min", room_name, duration_minutes)
         if not room_name:
             _LOGGER.warning("sha.start_override called without room_name")
             return
         room_id = _room_name_to_id(room_name)
         override_switch = coordinator._override_switches.get(room_id)
+        _LOGGER.debug("sha.start_override: resolved room_id='%s', switch found=%s", room_id, override_switch is not None)
         if override_switch:
             await override_switch.async_start(duration_minutes * 60)
         else:
@@ -195,6 +210,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, run_weekly_analysis,
         hour=WEEKLY_ANALYSIS_HOUR, minute=WEEKLY_ANALYSIS_MINUTE, second=0,
     )
+
+    # React to options changes (e.g. debug toggle) without requiring a reload
+    async def _options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+        _apply_debug_logging(entry.options.get(CONF_DEBUG_LOGGING, False))
+
+    entry.async_on_unload(entry.add_update_listener(_options_updated))
 
     # ── Setup notification ───────────────────────────────────────────
     action = blueprint_result["action"]

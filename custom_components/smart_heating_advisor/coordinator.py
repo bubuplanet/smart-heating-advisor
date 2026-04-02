@@ -152,8 +152,10 @@ class SmartHeatingCoordinator:
 
         try:
             # Iterate over all automation entities
-            for entity_id, entity in automation_component.entities.items():
+            # Note: automation_component.entities is dict_values, not a dict
+            for entity in automation_component.entities:
                 try:
+                    entity_id = entity.entity_id
                     # Check if this automation uses the SHA blueprint
                     config = getattr(entity, "raw_config", None) or {}
                     use_blueprint = config.get("use_blueprint", {})
@@ -162,6 +164,7 @@ class SmartHeatingCoordinator:
                     if "sha_unified_heating" not in blueprint_path:
                         continue
 
+                    # inputs are nested under "input" key in use_blueprint
                     inputs = use_blueprint.get("input", {})
                     room_name = inputs.get("room_name", "")
                     temp_sensor = inputs.get("temperature_sensor", "")
@@ -212,34 +215,57 @@ class SmartHeatingCoordinator:
     def _discover_rooms_from_states(self) -> list[RoomConfig]:
         """Fallback room discovery via automation state attributes.
 
-        Some HA versions expose blueprint inputs in automation attributes.
+        HA exposes blueprint inputs in the automation's state attributes as
+        ``blueprint_inputs``. The structure varies by HA version:
+          - Full:  {"path": "...", "input": {"room_name": ...}}
+          - Flat:  {"room_name": ..., "temperature_sensor": ...}
         """
         rooms = []
         seen_room_ids = set()
 
         for auto_state in self.hass.states.async_all("automation"):
             attrs = auto_state.attributes
-            blueprint = attrs.get("blueprint_inputs", {})
+            blueprint_inputs = attrs.get("blueprint_inputs", {})
 
-            if "sha_unified_heating" not in str(attrs.get("id", "")):
-                # Also check friendly_name pattern or blueprint path in attributes
-                if not blueprint:
+            if not blueprint_inputs:
+                continue
+
+            _LOGGER.debug(
+                "Automation %s blueprint_inputs keys: %s",
+                auto_state.entity_id,
+                list(blueprint_inputs.keys()) if isinstance(blueprint_inputs, dict) else type(blueprint_inputs),
+            )
+
+            # Determine structure and filter to SHA automations
+            if "path" in blueprint_inputs:
+                # Full use_blueprint structure: {path: ..., input: {...}}
+                blueprint_path = blueprint_inputs.get("path", "")
+                if "sha_unified_heating" not in blueprint_path:
                     continue
+                inputs = blueprint_inputs.get("input", {})
+            else:
+                # Flat structure: blueprint path not available, rely on key presence
+                inputs = blueprint_inputs
 
-            room_name = blueprint.get("room_name", "")
-            temp_sensor = blueprint.get("temperature_sensor", "")
-            schedules = blueprint.get("schedules", [])
+            room_name = inputs.get("room_name", "")
+            temp_sensor = inputs.get("temperature_sensor", "")
+            schedules = inputs.get("schedules", [])
 
             if not room_name or not temp_sensor:
                 continue
 
             if isinstance(schedules, str):
                 schedules = [schedules]
+            elif not isinstance(schedules, list):
+                schedules = []
 
             room_id = _room_name_to_id(room_name)
             if room_id not in seen_room_ids:
                 seen_room_ids.add(room_id)
                 rooms.append(RoomConfig(room_name, temp_sensor, schedules))
+                _LOGGER.debug(
+                    "Discovered SHA room via state fallback: %s", room_name
+                )
 
         return rooms
 
@@ -277,6 +303,10 @@ from(bucket: "{bucket}")
             "Accept": "application/csv",
         }
 
+        _LOGGER.debug(
+            "InfluxDB: querying %s for entity '%s' — last %d day(s)",
+            url, entity_id, days,
+        )
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -294,7 +324,14 @@ from(bucket: "{bucket}")
                         )
                         return []
                     csv_text = await response.text()
-                    return self._parse_influxdb_csv(csv_text)
+                    readings = self._parse_influxdb_csv(csv_text)
+                    _LOGGER.debug(
+                        "InfluxDB: received %d reading(s) for '%s'%s",
+                        len(readings),
+                        entity_id,
+                        f" — first: {readings[0][0]}, last: {readings[-1][0]}" if readings else "",
+                    )
+                    return readings
         except Exception as e:
             _LOGGER.error("InfluxDB query error for %s: %s", entity_id, e)
             return []
@@ -386,10 +423,20 @@ from(bucket: "{bucket}")
         self, room: RoomConfig, rate: float, reasoning: str
     ) -> None:
         """Update the room's heating rate helper in HA."""
-        rate = max(MIN_HEATING_RATE, min(MAX_HEATING_RATE, rate))
+        clamped = max(MIN_HEATING_RATE, min(MAX_HEATING_RATE, rate))
+        if clamped != rate:
+            _LOGGER.debug(
+                "[%s] AI rate %.3f clamped to [%.3f, %.3f] → %.3f",
+                room.room_name, rate, MIN_HEATING_RATE, MAX_HEATING_RATE, clamped,
+            )
+        rate = clamped
 
         entity = self.heating_rate_entities.get(room.room_id)
         if entity:
+            _LOGGER.debug(
+                "[%s] Writing %.3f °C/min directly to entity %s",
+                room.room_name, rate, room.heating_rate_helper,
+            )
             await entity.async_set_native_value(round(rate, 3))
         else:
             _LOGGER.warning(
@@ -467,6 +514,11 @@ from(bucket: "{bucket}")
         self, room: RoomConfig, weather: dict, season: str
     ) -> None:
         """Run daily analysis for a single room."""
+        _LOGGER.debug(
+            "[%s] Daily analysis — weather: outside=%.1f°C, tomorrow min=%.1f/max=%.1f°C, season=%s",
+            room.room_name,
+            weather["outside_temp"], weather["tomorrow_min"], weather["tomorrow_max"], season,
+        )
         readings = await self.async_query_influxdb(room.temp_sensor, days=7)
         if len(readings) < 5:
             _LOGGER.warning(
@@ -477,7 +529,15 @@ from(bucket: "{bucket}")
             return
 
         schedules = self._get_schedule_info(room)
+        _LOGGER.debug("[%s] Schedules found: %d — %s", room.room_name, len(schedules), [s["name"] for s in schedules])
         analysis = analyze_heating_sessions(readings, schedules)
+        _LOGGER.debug(
+            "[%s] Analysis: %d session(s), success_rate=%s%%, avg_rate=%s",
+            room.room_name,
+            len(analysis.get("sessions", [])),
+            analysis.get("success_rate", "?"),
+            analysis.get("avg_rate", "?"),
+        )
 
         if not analysis["sessions"]:
             _LOGGER.warning(
@@ -487,6 +547,7 @@ from(bucket: "{bucket}")
 
         state = self.hass.states.get(room.heating_rate_helper)
         current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
+        _LOGGER.debug("[%s] Current heating rate: %.3f °C/min", room.room_name, current_rate)
 
         prompt = build_daily_prompt(
             room_name=room.room_name,
@@ -509,6 +570,10 @@ from(bucket: "{bucket}")
         new_rate = float(result["heating_rate"])
         reasoning = result.get("reasoning", "No reasoning provided")
         confidence = result.get("confidence", "unknown")
+        _LOGGER.debug(
+            "[%s] AI result — new_rate=%.3f, confidence=%s, reasoning=%s",
+            room.room_name, new_rate, confidence, reasoning,
+        )
 
         if room.room_id not in self.room_states:
             self.room_states[room.room_id] = {}

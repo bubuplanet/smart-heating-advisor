@@ -24,13 +24,19 @@ async def async_setup_entry(
 
     coordinator: SmartHeatingCoordinator = hass.data[DOMAIN][entry.entry_id]
 
+    _LOGGER.debug("number platform: starting entity setup")
+    rooms = coordinator.discover_rooms()
+    _LOGGER.debug("number platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms])
+
     entities: list[SHAHeatingRateNumber] = []
-    for room in coordinator.discover_rooms():
+    for room in rooms:
         entity = SHAHeatingRateNumber(room.room_name, room.room_id, entry.entry_id)
         entities.append(entity)
         coordinator.register_heating_rate_entity(room.room_id, entity)
+        _LOGGER.debug("number platform: created %s for room '%s'", entity.entity_id, room.room_name)
 
     async_add_entities(entities)
+    _LOGGER.debug("number platform: registered %d heating rate entity(ies)", len(entities))
 
 
 class SHAHeatingRateNumber(NumberEntity, RestoreEntity):
@@ -72,7 +78,12 @@ class SHAHeatingRateNumber(NumberEntity, RestoreEntity):
         return round(self._value, 3)
 
     async def async_set_native_value(self, value: float) -> None:
+        old = self._value
         self._value = round(value, 3)
+        _LOGGER.debug(
+            "[%s] Heating rate updated: %.3f → %.3f °C/min",
+            self._room_name, old, self._value,
+        )
         self.async_write_ha_state()
 
     async def async_added_to_hass(self) -> None:
@@ -82,5 +93,19 @@ class SHAHeatingRateNumber(NumberEntity, RestoreEntity):
                 val = float(last.state)
                 if MIN_HEATING_RATE <= val <= MAX_HEATING_RATE:
                     self._value = val
+                    _LOGGER.debug(
+                        "[%s] Heating rate restored: %.3f °C/min",
+                        self._room_name, self._value,
+                    )
+                else:
+                    _LOGGER.debug(
+                        "[%s] Restored value %.3f out of range [%.3f, %.3f] — using default",
+                        self._room_name, val, MIN_HEATING_RATE, MAX_HEATING_RATE,
+                    )
             except (ValueError, TypeError):
-                pass
+                _LOGGER.debug(
+                    "[%s] Could not restore heating rate from state '%s' — using default",
+                    self._room_name, last.state,
+                )
+        else:
+            _LOGGER.debug("[%s] No previous state found — using default %.3f °C/min", self._room_name, self._value)

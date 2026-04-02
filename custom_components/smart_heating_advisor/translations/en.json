@@ -35,5 +35,18 @@
     "abort": {
       "already_configured": "Smart Heating Advisor is already configured."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Smart Heating Advisor — Options",
+        "data": {
+          "debug_logging": "Enable debug logging"
+        },
+        "data_description": {
+          "debug_logging": "Writes detailed logs for entity creation, room discovery, InfluxDB queries, Ollama prompts and responses, and heating rate updates. Disable when not actively debugging."
+        }
+      }
+    }
   }
 }

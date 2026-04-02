@@ -33,17 +33,23 @@ async def async_setup_entry(
         ("vacation_notified", "Vacation Notified", "mdi:beach"),
     ]
 
+    _LOGGER.debug("switch platform: starting entity setup")
+    rooms = coordinator.discover_rooms()
+    _LOGGER.debug("switch platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms])
+
     entities: list = []
-    for room in coordinator.discover_rooms():
+    for room in rooms:
         for purpose, label, icon in boolean_defs:
-            entities.append(
-                SHABooleanSwitch(room.room_name, room.room_id, entry.entry_id, purpose, label, icon)
-            )
+            e = SHABooleanSwitch(room.room_name, room.room_id, entry.entry_id, purpose, label, icon)
+            entities.append(e)
+            _LOGGER.debug("switch platform: created %s for room '%s'", e.entity_id, room.room_name)
         override = SHAOverrideSwitch(room.room_name, room.room_id, entry.entry_id)
         entities.append(override)
         coordinator._override_switches[room.room_id] = override
+        _LOGGER.debug("switch platform: created %s for room '%s'", override.entity_id, room.room_name)
 
     async_add_entities(entities)
+    _LOGGER.debug("switch platform: registered %d switch entity(ies)", len(entities))
 
 
 class SHABooleanSwitch(SwitchEntity, RestoreEntity):
@@ -96,6 +102,7 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
         await super().async_added_to_hass()
         if (last := await self.async_get_last_state()) is not None:
             self._is_on = last.state == "on"
+            _LOGGER.debug("%s: restored state → %s", self.entity_id, last.state)
 
 
 class SHAOverrideSwitch(SwitchEntity, RestoreEntity):
@@ -157,6 +164,10 @@ class SHAOverrideSwitch(SwitchEntity, RestoreEntity):
         self._cancel_timer = async_call_later(
             self.hass, duration_seconds, self._async_expired
         )
+        _LOGGER.debug(
+            "[%s] Override started — duration %d min (%d s)",
+            self._room_name, duration_seconds // 60, duration_seconds,
+        )
 
     async def _async_expired(self, _now) -> None:
         self._cancel_timer = None
@@ -166,7 +177,7 @@ class SHAOverrideSwitch(SwitchEntity, RestoreEntity):
             "sha_override_ended",
             {"entity_id": self.entity_id, "room_id": self._room_id},
         )
-        _LOGGER.debug("Override expired for room %s", self._room_id)
+        _LOGGER.debug("[%s] Override expired — firing sha_override_ended", self._room_name)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

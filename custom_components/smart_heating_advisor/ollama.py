@@ -26,6 +26,10 @@ class OllamaClient:
                 "num_predict": 512,
             },
         }
+        _LOGGER.debug(
+            "Ollama: sending prompt to %s (model=%s, %d chars)\n--- PROMPT ---\n%s\n--- END PROMPT ---",
+            self.url, self.model, len(prompt), prompt,
+        )
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -41,7 +45,12 @@ class OllamaClient:
                         )
                         return None
                     data = await response.json()
-                    return data.get("response")
+                    raw = data.get("response")
+                    _LOGGER.debug(
+                        "Ollama: raw response received (%d chars)\n--- RESPONSE ---\n%s\n--- END RESPONSE ---",
+                        len(raw) if raw else 0, raw,
+                    )
+                    return raw
         except aiohttp.ClientConnectorError:
             _LOGGER.error("Cannot connect to Ollama at %s", self.url)
             return None
@@ -55,6 +64,7 @@ class OllamaClient:
     async def async_parse_json_response(self, response: str) -> dict | None:
         """Parse JSON from Ollama response safely."""
         if not response:
+            _LOGGER.debug("Ollama: empty response — nothing to parse")
             return None
         try:
             clean = response.strip()
@@ -62,7 +72,9 @@ class OllamaClient:
                 clean = clean.split("```")[1]
                 if clean.startswith("json"):
                     clean = clean[4:]
-            return json.loads(clean.strip())
+            result = json.loads(clean.strip())
+            _LOGGER.debug("Ollama: parsed JSON result: %s", result)
+            return result
         except json.JSONDecodeError as e:
             _LOGGER.error(
                 "Failed to parse Ollama JSON response: %s\nResponse: %s", e, response
@@ -71,6 +83,7 @@ class OllamaClient:
 
     async def async_test_connection(self) -> bool:
         """Test if Ollama is reachable and model is available."""
+        _LOGGER.debug("Ollama: testing connection to %s (model=%s)", self.url, self.model)
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -78,11 +91,14 @@ class OllamaClient:
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as response:
                     if response.status != 200:
+                        _LOGGER.debug("Ollama: /api/tags returned status %s", response.status)
                         return False
                     data = await response.json()
                     models = [m["name"] for m in data.get("models", [])]
                     available = any(self.model in m for m in models)
-                    if not available:
+                    if available:
+                        _LOGGER.debug("Ollama: connection OK — model '%s' found", self.model)
+                    else:
                         _LOGGER.warning(
                             "Model %s not found in Ollama. Available: %s",
                             self.model,

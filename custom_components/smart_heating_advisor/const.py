@@ -28,6 +28,9 @@ CONF_INFLUXDB_ORG = "influxdb_org"
 CONF_INFLUXDB_BUCKET = "influxdb_bucket"
 CONF_WEATHER_ENTITY = "weather_entity"
 
+# ── Options keys ──────────────────────────────────────────────────────
+CONF_DEBUG_LOGGING = "debug_logging"
+
 # ── Blueprint tag ─────────────────────────────────────────────────────
 # Automations created from the SHA blueprint embed this tag in their
 # description field so SHA can discover rooms automatically.

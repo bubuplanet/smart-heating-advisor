@@ -5,7 +5,8 @@ import logging
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
@@ -24,19 +25,25 @@ async def async_setup_entry(
 
     coordinator: SmartHeatingCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    _LOGGER.debug("number platform: starting entity setup")
-    rooms = coordinator.discover_rooms()
-    _LOGGER.debug("number platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms])
+    async def _create_entities(_event=None) -> None:
+        _LOGGER.debug("number platform: starting entity setup")
+        rooms = coordinator.discover_rooms()
+        _LOGGER.info("number platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms])
 
-    entities: list[SHAHeatingRateNumber] = []
-    for room in rooms:
-        entity = SHAHeatingRateNumber(room.room_name, room.room_id, entry.entry_id)
-        entities.append(entity)
-        coordinator.register_heating_rate_entity(room.room_id, entity)
-        _LOGGER.debug("number platform: created %s for room '%s'", entity.entity_id, room.room_name)
+        entities: list[SHAHeatingRateNumber] = []
+        for room in rooms:
+            entity = SHAHeatingRateNumber(room.room_name, room.room_id, entry.entry_id)
+            entities.append(entity)
+            coordinator.register_heating_rate_entity(room.room_id, entity)
+            _LOGGER.debug("number platform: created %s for room '%s'", entity.entity_id, room.room_name)
 
-    async_add_entities(entities)
-    _LOGGER.debug("number platform: registered %d heating rate entity(ies)", len(entities))
+        async_add_entities(entities)
+        _LOGGER.info("number platform: registered %d heating rate entity(ies)", len(entities))
+
+    if hass.state == CoreState.running:
+        await _create_entities()
+    else:
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _create_entities)
 
 
 class SHAHeatingRateNumber(NumberEntity, RestoreEntity):

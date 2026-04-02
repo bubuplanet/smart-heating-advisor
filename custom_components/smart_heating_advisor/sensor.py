@@ -2,7 +2,8 @@
 import logging
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
@@ -19,25 +20,32 @@ async def async_setup_entry(
     """Set up Smart Heating Advisor sensors."""
     coordinator: SmartHeatingCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    rooms = coordinator.discover_rooms()
+    async def _create_entities(_event=None) -> None:
+        rooms = coordinator.discover_rooms()
+        _LOGGER.info("sensor platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms])
 
-    entities = []
-    for room in rooms:
-        entities.extend([
-            RoomHeatingRateSensor(coordinator, entry, room.room_id, room.room_name),
-            RoomLastAnalysisSensor(coordinator, entry, room.room_id, room.room_name),
-            RoomConfidenceSensor(coordinator, entry, room.room_id, room.room_name),
-            RoomWeeklyReportSensor(coordinator, entry, room.room_id, room.room_name),
-        ])
+        entities = []
+        for room in rooms:
+            entities.extend([
+                RoomHeatingRateSensor(coordinator, entry, room.room_id, room.room_name),
+                RoomLastAnalysisSensor(coordinator, entry, room.room_id, room.room_name),
+                RoomConfidenceSensor(coordinator, entry, room.room_id, room.room_name),
+                RoomWeeklyReportSensor(coordinator, entry, room.room_id, room.room_name),
+            ])
 
-    if not entities:
-        _LOGGER.info(
-            "No SHA rooms discovered yet — sensors will be created "
-            "once blueprint automations are set up."
-        )
+        if not entities:
+            _LOGGER.warning(
+                "sensor platform: no rooms discovered — reload SHA after creating blueprint automations"
+            )
 
-    async_add_entities(entities)
-    coordinator.register_entities(entities)
+        async_add_entities(entities)
+        coordinator.register_entities(entities)
+        _LOGGER.info("sensor platform: registered %d sensor entity(ies)", len(entities))
+
+    if hass.state == CoreState.running:
+        await _create_entities()
+    else:
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _create_entities)
 
 
 class SHABaseSensor(SensorEntity):

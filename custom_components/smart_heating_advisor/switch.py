@@ -5,7 +5,8 @@ import logging
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -33,23 +34,29 @@ async def async_setup_entry(
         ("vacation_notified", "Vacation Notified", "mdi:beach"),
     ]
 
-    _LOGGER.debug("switch platform: starting entity setup")
-    rooms = coordinator.discover_rooms()
-    _LOGGER.debug("switch platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms])
+    async def _create_entities(_event=None) -> None:
+        _LOGGER.debug("switch platform: starting entity setup")
+        rooms = coordinator.discover_rooms()
+        _LOGGER.info("switch platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms])
 
-    entities: list = []
-    for room in rooms:
-        for purpose, label, icon in boolean_defs:
-            e = SHABooleanSwitch(room.room_name, room.room_id, entry.entry_id, purpose, label, icon)
-            entities.append(e)
-            _LOGGER.debug("switch platform: created %s for room '%s'", e.entity_id, room.room_name)
-        override = SHAOverrideSwitch(room.room_name, room.room_id, entry.entry_id)
-        entities.append(override)
-        coordinator._override_switches[room.room_id] = override
-        _LOGGER.debug("switch platform: created %s for room '%s'", override.entity_id, room.room_name)
+        entities: list = []
+        for room in rooms:
+            for purpose, label, icon in boolean_defs:
+                e = SHABooleanSwitch(room.room_name, room.room_id, entry.entry_id, purpose, label, icon)
+                entities.append(e)
+                _LOGGER.debug("switch platform: created %s for room '%s'", e.entity_id, room.room_name)
+            override = SHAOverrideSwitch(room.room_name, room.room_id, entry.entry_id)
+            entities.append(override)
+            coordinator._override_switches[room.room_id] = override
+            _LOGGER.debug("switch platform: created %s for room '%s'", override.entity_id, room.room_name)
 
-    async_add_entities(entities)
-    _LOGGER.debug("switch platform: registered %d switch entity(ies)", len(entities))
+        async_add_entities(entities)
+        _LOGGER.info("switch platform: registered %d switch entity(ies)", len(entities))
+
+    if hass.state == CoreState.running:
+        await _create_entities()
+    else:
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _create_entities)
 
 
 class SHABooleanSwitch(SwitchEntity, RestoreEntity):

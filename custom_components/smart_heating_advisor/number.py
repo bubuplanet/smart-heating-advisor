@@ -7,7 +7,7 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN, DEFAULT_HEATING_RATE, MIN_HEATING_RATE, MAX_HEATING_RATE
@@ -18,7 +18,7 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Discover rooms and create all heating rate number entities."""
     from .coordinator import SmartHeatingCoordinator
@@ -70,7 +70,6 @@ class SHAHeatingRateNumber(NumberEntity, RestoreEntity):
 
         self._attr_name = "Heating Rate"
         self._attr_unique_id = f"sha_{room_id}_heating_rate"
-        self.entity_id = f"number.sha_{room_id}_heating_rate"
 
     @property
     def device_info(self) -> dict:

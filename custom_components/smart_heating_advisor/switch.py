@@ -7,7 +7,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.restore_state import RestoreEntity
 
@@ -19,7 +19,7 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Discover rooms and create all boolean switch and override switch entities."""
     from .coordinator import SmartHeatingCoordinator
@@ -83,7 +83,6 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
         self._attr_name = purpose_label
         self._attr_unique_id = f"sha_{room_id}_{purpose}"
         self._attr_icon = icon
-        self.entity_id = f"switch.sha_{room_id}_{purpose}"
 
     @property
     def device_info(self) -> dict:
@@ -133,7 +132,6 @@ class SHAOverrideSwitch(SwitchEntity, RestoreEntity):
         self._attr_name = "Override"
         self._attr_unique_id = f"sha_{room_id}_override"
         self._attr_icon = "mdi:hand-back-right"
-        self.entity_id = f"switch.sha_{room_id}_override"
 
     @property
     def device_info(self) -> dict:

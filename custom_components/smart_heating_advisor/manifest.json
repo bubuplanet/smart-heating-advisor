@@ -2,7 +2,6 @@
   "domain": "smart_heating_advisor",
   "name": "Smart Heating Advisor",
   "version": "0.0.1",
-  "description": "AI-powered smart heating advisor that optimizes pre-heat timing per room using Ollama and InfluxDB historical data.",
   "documentation": "https://github.com/bubuplanet/smart-heating-advisor",
   "issue_tracker": "https://github.com/bubuplanet/smart-heating-advisor/issues",
   "dependencies": [],
@@ -10,5 +9,7 @@
   "codeowners": ["@bubuplanet"],
   "requirements": [],
   "iot_class": "local_polling",
-  "config_flow": true
+  "config_flow": true,
+  "integration_type": "hub",
+  "single_config_entry": true
 }

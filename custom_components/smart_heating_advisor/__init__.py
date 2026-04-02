@@ -30,13 +30,11 @@ _SHA_LOGGER = logging.getLogger(__name__.rsplit(".", 1)[0])  # custom_components
 
 def _apply_debug_logging(enabled: bool) -> None:
     """Set the SHA package log level based on the debug toggle."""
-    level = logging.DEBUG if enabled else logging.NOTSET
-    _SHA_LOGGER.setLevel(level)
     _LOGGER.info("SHA debug logging %s", "enabled" if enabled else "disabled")
+    level = logging.DEBUG if enabled else logging.WARNING
+    _SHA_LOGGER.setLevel(level)
 
 BLUEPRINT_SOURCE = Path(__file__).parent / BLUEPRINT_RELATIVE_PATH / BLUEPRINT_FILENAME
-BLUEPRINT_DEST_DIR = Path("/config/blueprints/automation/smart_heating_advisor")
-BLUEPRINT_DEST = BLUEPRINT_DEST_DIR / BLUEPRINT_FILENAME
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -121,8 +119,12 @@ def _do_blueprint_install(
 
 async def async_install_blueprint(hass: HomeAssistant) -> dict:
     """Install or upgrade the SHA blueprint."""
+    blueprint_dest_dir = (
+        Path(hass.config.config_dir) / "blueprints" / "automation" / "smart_heating_advisor"
+    )
+    blueprint_dest = blueprint_dest_dir / BLUEPRINT_FILENAME
     result = await hass.async_add_executor_job(
-        _do_blueprint_install, BLUEPRINT_SOURCE, BLUEPRINT_DEST, BLUEPRINT_DEST_DIR
+        _do_blueprint_install, BLUEPRINT_SOURCE, blueprint_dest, blueprint_dest_dir
     )
     _LOGGER.info("SHA Blueprint: %s", result["message"])
     return result

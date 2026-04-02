@@ -11,3 +11,30 @@ run_weekly_analysis:
     Manually trigger the weekly AI heating report for all rooms.
     Queries InfluxDB for the last 30 days and generates a persistent
     notification report. Does not automatically adjust heating rates.
+
+start_override:
+  name: Start Override
+  description: >
+    Start the manual override switch for a room for a given duration.
+    Called by the SHA blueprint to begin a timed heating override.
+    The override switch will automatically turn off when the duration expires
+    and fire a sha_override_ended event.
+  fields:
+    room_name:
+      name: Room Name
+      description: The room name as defined in the SHA blueprint automation.
+      required: true
+      example: "Living Room"
+      selector:
+        text:
+    duration_minutes:
+      name: Duration (minutes)
+      description: How long the override should stay active. Defaults to 120 minutes.
+      required: false
+      default: 120
+      example: 60
+      selector:
+        number:
+          min: 1
+          max: 1440
+          unit_of_measurement: min

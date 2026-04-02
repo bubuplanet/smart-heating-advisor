@@ -5,7 +5,8 @@ import voluptuous as vol
 import aiohttp
 
 from homeassistant import config_entries
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.core import callback
 
 from .const import (
     DOMAIN,
@@ -78,10 +79,11 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     @staticmethod
-    def async_get_options_flow(config_entry):
-        return OptionsFlowHandler(config_entry)
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> "OptionsFlowHandler":
+        return OptionsFlowHandler()
 
-    async def async_step_user(self, user_input=None) -> FlowResult:
+    async def async_step_user(self, user_input=None) -> ConfigFlowResult:
         """Step 1 — Ollama configuration."""
         errors = {}
 
@@ -104,7 +106,7 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_influxdb(self, user_input=None) -> FlowResult:
+    async def async_step_influxdb(self, user_input=None) -> ConfigFlowResult:
         """Step 2 — InfluxDB configuration."""
         errors = {}
 
@@ -134,7 +136,7 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_entities(self, user_input=None) -> FlowResult:
+    async def async_step_entities(self, user_input=None) -> ConfigFlowResult:
         """Step 3 — HA entity configuration."""
         errors = {}
 
@@ -168,14 +170,11 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle SHA options — currently just the debug logging toggle."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self._config_entry = config_entry
-
-    async def async_step_init(self, user_input=None) -> config_entries.FlowResult:
+    async def async_step_init(self, user_input=None) -> ConfigFlowResult:
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        current = self._config_entry.options.get(CONF_DEBUG_LOGGING, False)
+        current = self.config_entry.options.get(CONF_DEBUG_LOGGING, False)
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(

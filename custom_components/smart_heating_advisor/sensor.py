@@ -1,10 +1,11 @@
 """Sensor platform for Smart Heating Advisor."""
 import logging
-from homeassistant.components.sensor import SensorEntity
+from datetime import datetime, timezone
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import SmartHeatingCoordinator
@@ -15,7 +16,7 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Smart Heating Advisor sensors."""
     coordinator: SmartHeatingCoordinator = hass.data[DOMAIN][entry.entry_id]
@@ -83,6 +84,9 @@ class SHABaseSensor(SensorEntity):
 class RoomHeatingRateSensor(SHABaseSensor):
     """Current AI-calibrated heating rate for this room."""
 
+    _attr_native_unit_of_measurement = "°C/min"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
     @property
     def unique_id(self) -> str:
         return f"{self.entry.entry_id}_{self.room_id}_heating_rate"
@@ -92,13 +96,9 @@ class RoomHeatingRateSensor(SHABaseSensor):
         return "Heating Rate"
 
     @property
-    def state(self) -> float:
+    def native_value(self) -> float:
         rate = self._room_state().get("heating_rate", 0.15)
         return round(float(rate), 3)
-
-    @property
-    def unit_of_measurement(self) -> str:
-        return "°C/min"
 
     @property
     def icon(self) -> str:
@@ -117,6 +117,8 @@ class RoomHeatingRateSensor(SHABaseSensor):
 class RoomLastAnalysisSensor(SHABaseSensor):
     """Timestamp of last AI analysis for this room."""
 
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
     @property
     def unique_id(self) -> str:
         return f"{self.entry.entry_id}_{self.room_id}_last_analysis"
@@ -126,20 +128,22 @@ class RoomLastAnalysisSensor(SHABaseSensor):
         return "Last Analysis"
 
     @property
-    def state(self) -> str | None:
-        return self._room_state().get("last_analysis")
+    def native_value(self) -> datetime | None:
+        raw = self._room_state().get("last_analysis")
+        if not raw:
+            return None
+        return datetime.fromisoformat(raw)
 
     @property
     def icon(self) -> str:
         return "mdi:clock-check"
 
-    @property
-    def device_class(self) -> str:
-        return "timestamp"
-
 
 class RoomConfidenceSensor(SHABaseSensor):
     """AI confidence level for this room's heating rate."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["high", "medium", "low", "unknown"]
 
     @property
     def unique_id(self) -> str:
@@ -150,7 +154,7 @@ class RoomConfidenceSensor(SHABaseSensor):
         return "Confidence"
 
     @property
-    def state(self) -> str:
+    def native_value(self) -> str:
         return self._room_state().get("confidence", "unknown")
 
     @property
@@ -161,10 +165,6 @@ class RoomConfidenceSensor(SHABaseSensor):
         elif confidence == "medium":
             return "mdi:alert-circle"
         return "mdi:help-circle"
-
-    @property
-    def extra_state_attributes(self) -> dict:
-        return {"possible_values": ["high", "medium", "low", "unknown"]}
 
 
 class RoomWeeklyReportSensor(SHABaseSensor):
@@ -179,7 +179,7 @@ class RoomWeeklyReportSensor(SHABaseSensor):
         return "Weekly Report"
 
     @property
-    def state(self) -> str:
+    def native_value(self) -> str:
         report = self._room_state().get("weekly_report", "No report yet.")
         if len(report) > 255:
             return report[:252] + "..."

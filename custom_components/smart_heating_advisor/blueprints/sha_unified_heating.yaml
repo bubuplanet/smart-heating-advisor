@@ -478,8 +478,6 @@ triggers:
 
   - trigger: event
     event_type: sha_override_ended
-    event_data:
-      entity_id: "switch.sha_{{ room_id }}_override"
     id: override_ended
 
 conditions: []
@@ -487,6 +485,14 @@ conditions: []
 action:
 
   - choose:
+
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ trigger.id == 'override_ended' and
+                 trigger.event.data.get('room_id') != room_id }}
+        sequence:
+          - stop: "Override ended for a different room — ignoring."
 
       - conditions:
           - condition: template

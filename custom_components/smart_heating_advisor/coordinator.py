@@ -164,11 +164,18 @@ class SmartHeatingCoordinator:
                     if "sha_unified_heating" not in blueprint_path:
                         continue
 
-                    # inputs are nested under "input" key in use_blueprint
+                    # inputs are nested under "input" key in use_blueprint.
+                    # Blueprint sections mean values are under section keys:
+                    #   input.room_section.room_name
+                    #   input.schedule_section.schedules
+                    # Fall back to flat structure for blueprints without sections.
                     inputs = use_blueprint.get("input", {})
-                    room_name = inputs.get("room_name", "")
-                    temp_sensor = inputs.get("temperature_sensor", "")
-                    schedules = inputs.get("schedules", [])
+                    room_section = inputs.get("room_section", {})
+                    schedule_section = inputs.get("schedule_section", {})
+
+                    room_name = room_section.get("room_name") or inputs.get("room_name", "")
+                    temp_sensor = room_section.get("temperature_sensor") or inputs.get("temperature_sensor", "")
+                    schedules = schedule_section.get("schedules") or inputs.get("schedules", [])
 
                     if not room_name or not temp_sensor:
                         continue
@@ -243,13 +250,11 @@ class SmartHeatingCoordinator:
                 if "sha_unified_heating" not in blueprint_path:
                     continue
                 inputs = blueprint_inputs.get("input", {})
-            else:
-                # Flat structure: blueprint path not available, rely on key presence
-                inputs = blueprint_inputs
-
-            room_name = inputs.get("room_name", "")
-            temp_sensor = inputs.get("temperature_sensor", "")
-            schedules = inputs.get("schedules", [])
+                room_section = inputs.get("room_section", {})
+                schedule_section = inputs.get("schedule_section", {})
+                room_name = room_section.get("room_name") or inputs.get("room_name", "")
+                temp_sensor = room_section.get("temperature_sensor") or inputs.get("temperature_sensor", "")
+                schedules = schedule_section.get("schedules") or inputs.get("schedules", [])
 
             if not room_name or not temp_sensor:
                 continue

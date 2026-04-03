@@ -470,7 +470,7 @@ from(bucket: "{bucket}")
             f"**Sensor:** `{room.temp_sensor}`\n"
             f"**Rate:** {current_rate:.3f} → {new_rate:.3f}°C/min\n"
             f"**Confidence:** {confidence}\n"
-            f"**Sessions (last 7 days):** {analysis['days_analyzed']}\n"
+            f"**Sessions analyzed:** {analysis['days_analyzed']}\n"
             f"**Success rate:** {analysis['success_rate']}%\n\n"
             f"_{reasoning}_"
         )

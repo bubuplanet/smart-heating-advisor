@@ -1,9 +1,11 @@
 """Coordinator for Smart Heating Advisor."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -148,6 +150,9 @@ class SmartHeatingCoordinator:
         automation_component = self.hass.data.get("automation")
         if automation_component is None:
             _LOGGER.warning("Automation component not available for room discovery")
+            rooms = self._discover_rooms_from_storage()
+            if not rooms:
+                rooms = self._discover_rooms_from_states()
             return rooms
 
         try:
@@ -161,8 +166,20 @@ class SmartHeatingCoordinator:
                     use_blueprint = config.get("use_blueprint", {})
                     blueprint_path = use_blueprint.get("path", "")
 
+                    _LOGGER.debug(
+                        "Room discovery scan: automation=%s blueprint_path=%s",
+                        entity_id,
+                        blueprint_path or "<none>",
+                    )
+
                     if "sha_unified_heating" not in blueprint_path:
                         continue
+
+                    _LOGGER.debug(
+                        "Room discovery SHA match: automation=%s blueprint_path=%s",
+                        entity_id,
+                        blueprint_path,
+                    )
 
                     # inputs are nested under "input" key in use_blueprint.
                     # Blueprint sections mean values are under section keys:
@@ -208,8 +225,16 @@ class SmartHeatingCoordinator:
 
         except Exception as e:
             _LOGGER.warning("Room discovery via automation component failed: %s", e)
-            # Fallback: try reading from automation states attributes
-            rooms = self._discover_rooms_from_states()
+            # Fallback chain: storage first, then state attributes
+            rooms = self._discover_rooms_from_storage()
+            if not rooms:
+                rooms = self._discover_rooms_from_states()
+
+        if not rooms:
+            # If component lookup succeeded but yielded 0 rooms, still try fallbacks.
+            rooms = self._discover_rooms_from_storage()
+            if not rooms:
+                rooms = self._discover_rooms_from_states()
 
         if not rooms:
             _LOGGER.warning(
@@ -234,6 +259,12 @@ class SmartHeatingCoordinator:
             attrs = auto_state.attributes
             blueprint_inputs = attrs.get("blueprint_inputs", {})
 
+            _LOGGER.debug(
+                "Room discovery state scan: automation=%s has_blueprint_inputs=%s",
+                auto_state.entity_id,
+                bool(blueprint_inputs),
+            )
+
             if not blueprint_inputs:
                 continue
 
@@ -247,14 +278,31 @@ class SmartHeatingCoordinator:
             if "path" in blueprint_inputs:
                 # Full use_blueprint structure: {path: ..., input: {...}}
                 blueprint_path = blueprint_inputs.get("path", "")
+                _LOGGER.debug(
+                    "Room discovery state blueprint: automation=%s blueprint_path=%s",
+                    auto_state.entity_id,
+                    blueprint_path or "<none>",
+                )
                 if "sha_unified_heating" not in blueprint_path:
                     continue
+                _LOGGER.debug(
+                    "Room discovery state SHA match: automation=%s",
+                    auto_state.entity_id,
+                )
                 inputs = blueprint_inputs.get("input", {})
-                room_section = inputs.get("room_section", {})
-                schedule_section = inputs.get("schedule_section", {})
-                room_name = room_section.get("room_name") or inputs.get("room_name", "")
-                temp_sensor = room_section.get("temperature_sensor") or inputs.get("temperature_sensor", "")
-                schedules = schedule_section.get("schedules") or inputs.get("schedules", [])
+            else:
+                # Flat structure without explicit blueprint path (older HA variations)
+                _LOGGER.debug(
+                    "Room discovery state flat inputs detected: automation=%s",
+                    auto_state.entity_id,
+                )
+                inputs = blueprint_inputs
+
+            room_section = inputs.get("room_section", {}) if isinstance(inputs, dict) else {}
+            schedule_section = inputs.get("schedule_section", {}) if isinstance(inputs, dict) else {}
+            room_name = room_section.get("room_name") or inputs.get("room_name", "")
+            temp_sensor = room_section.get("temperature_sensor") or inputs.get("temperature_sensor", "")
+            schedules = schedule_section.get("schedules") or inputs.get("schedules", [])
 
             if not room_name or not temp_sensor:
                 continue
@@ -271,6 +319,84 @@ class SmartHeatingCoordinator:
                 _LOGGER.debug(
                     "Discovered SHA room via state fallback: %s", room_name
                 )
+
+        return rooms
+
+    def _discover_rooms_from_storage(self) -> list[RoomConfig]:
+        """Fallback room discovery by reading HA's .storage automations file."""
+        rooms: list[RoomConfig] = []
+        seen_room_ids: set[str] = set()
+
+        automations_path = Path(self.hass.config.path(".storage", "automations"))
+        if not automations_path.exists():
+            _LOGGER.debug("Automation storage file not found: %s", automations_path)
+            return rooms
+
+        try:
+            payload = json.loads(automations_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            _LOGGER.debug("Could not read automation storage file: %s", e)
+            return rooms
+
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        if not isinstance(data, list):
+            return rooms
+
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+
+            use_blueprint = item.get("use_blueprint", {})
+            if not isinstance(use_blueprint, dict):
+                continue
+
+            blueprint_path = use_blueprint.get("path", "")
+            alias = item.get("alias", "<no alias>")
+            _LOGGER.debug(
+                "Room discovery storage scan: alias=%s blueprint_path=%s",
+                alias,
+                blueprint_path or "<none>",
+            )
+            if "sha_unified_heating" not in blueprint_path:
+                continue
+
+            _LOGGER.debug(
+                "Room discovery storage SHA match: alias=%s blueprint_path=%s",
+                alias,
+                blueprint_path,
+            )
+
+            inputs = use_blueprint.get("input", {})
+            if not isinstance(inputs, dict):
+                continue
+
+            room_section = inputs.get("room_section", {})
+            schedule_section = inputs.get("schedule_section", {})
+
+            room_name = room_section.get("room_name") or inputs.get("room_name", "")
+            temp_sensor = room_section.get("temperature_sensor") or inputs.get("temperature_sensor", "")
+            schedules = schedule_section.get("schedules") or inputs.get("schedules", [])
+
+            if not room_name or not temp_sensor:
+                continue
+
+            if isinstance(schedules, str):
+                schedules = [schedules]
+            elif not isinstance(schedules, list):
+                schedules = []
+
+            room_id = _room_name_to_id(room_name)
+            if room_id in seen_room_ids:
+                continue
+
+            seen_room_ids.add(room_id)
+            rooms.append(RoomConfig(room_name, temp_sensor, schedules))
+
+        if rooms:
+            _LOGGER.info(
+                "Discovered %d SHA room(s) from automation storage fallback",
+                len(rooms),
+            )
 
         return rooms
 

@@ -168,6 +168,16 @@ SHA tests the connection before proceeding.
 |---|---|
 | Weather Entity | `weather.forecast_home` |
 
+### Optional: Customize setup notification text (no Python edits)
+
+SHA notification text is loaded from JSON templates:
+
+- Bundled defaults: `custom_components/smart_heating_advisor/messages.json`
+- User override file: `/config/smart_heating_advisor_messages.json`
+
+If `/config/smart_heating_advisor_messages.json` exists, SHA merges it over defaults at startup.
+This lets you customize wording without touching Python files.
+
 ---
 
 <a id="room-setup"></a>

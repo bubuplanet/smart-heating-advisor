@@ -20,6 +20,11 @@ from .const import (
     WEEKLY_ANALYSIS_MINUTE,
 )
 from .coordinator import SmartHeatingCoordinator, _room_name_to_id
+from .text_store import (
+    async_load_messages,
+    render_blueprint_status,
+    render_setup_notification,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -245,48 +250,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(_options_updated))
 
     # ── Setup notification ───────────────────────────────────────────
+    texts = await async_load_messages(hass)
+
     action = blueprint_result["action"]
     source_ver = blueprint_result["source_version"]
     dest_ver = blueprint_result["dest_version"]
     backup = blueprint_result.get("backup_path")
-
-    if action == "installed":
-        bp_msg = f"✅ Blueprint v{source_ver} installed automatically.\n\n"
-    elif action == "updated":
-        bp_msg = (
-            f"🔄 Blueprint updated from v{dest_ver} to v{source_ver}.\n"
-            f"Backup saved as `{Path(backup).name}`.\n"
-            f"Existing automations continue working — re-save to use new features.\n\n"
-        )
-    elif action == "skipped":
-        bp_msg = f"✅ Blueprint v{source_ver} already up to date.\n\n"
-    else:
-        bp_msg = (
-            "⚠️ Blueprint could not be installed automatically.\n"
-            "Import it manually using the magic link in the README.\n\n"
-        )
+    backup_name = Path(backup).name if backup else "none"
+    bp_msg = render_blueprint_status(texts, action, source_ver, dest_ver, backup_name)
+    notification_title, notification_message = render_setup_notification(texts, bp_msg)
 
     await hass.services.async_call(
         "persistent_notification",
         "create",
         {
-            "title": "✅ Smart Heating Advisor — Ready",
-            "message": (
-                f"Smart Heating Advisor is configured.\n\n"
-                f"{bp_msg}"
-                f"**Next steps:**\n"
-                f"1. Go to **Settings → Automations → Blueprints**\n"
-                f"2. Find **Smart Heating Advisor** blueprint\n"
-                f"3. Create an automation per room\n"
-                f"4. Name each Schedule helper with target temp at the end\n"
-                f"   e.g. `Morning Shower 26C`, `Evening Bath 28C`\n\n"
-                f"Each blueprint automation auto-registers its room in SHA. "
-                f"After the first automation run, reload SHA to create helper entities.\n\n"
-                f"⚠️ **Upgrading from v1?** Re-open and re-save each room automation "
-                f"so it uses the updated blueprint (v2).\n\n"
-                f"Daily AI analysis: **02:00 AM**\n"
-                f"Weekly report: **Sunday 01:00 AM**"
-            ),
+            "title": notification_title,
+            "message": notification_message,
             "notification_id": "sha_setup_complete",
         },
     )

@@ -434,6 +434,48 @@ from(bucket: "{bucket}")
             {"title": title, "message": message, "notification_id": notification_id},
         )
 
+    def _build_daily_notification_message(
+        self,
+        room: RoomConfig,
+        current_rate: float,
+        new_rate: float,
+        confidence: str,
+        reasoning: str,
+        analysis: dict,
+        run_timestamp: str,
+    ) -> tuple[str, str]:
+        """Return (title, message) for the daily analysis persistent notification.
+
+        The message is formatted as Markdown, compatible with HA persistent
+        notifications.  It surfaces the key facts a user needs at a glance:
+        sensor affected, old → new rate, one-line outcome, and run timestamp.
+        """
+        rate_changed = abs(new_rate - current_rate) >= 0.001
+        if rate_changed:
+            delta = new_rate - current_rate
+            direction = "increased" if delta > 0 else "decreased"
+            outcome = (
+                f"Heating rate {direction} by {abs(delta):.3f}°C/min"
+                f" in {room.room_name}"
+            )
+        else:
+            outcome = (
+                f"No adjustment needed — current rate is already optimal"
+                f" for {room.room_name}"
+            )
+
+        title = f"🌡️ Daily Heating Analysis — {room.room_name} ({run_timestamp})"
+        message = (
+            f"**{outcome}**\n\n"
+            f"**Sensor:** `{room.temp_sensor}`\n"
+            f"**Rate:** {current_rate:.3f} → {new_rate:.3f}°C/min\n"
+            f"**Confidence:** {confidence}\n"
+            f"**Sessions (last 7 days):** {analysis['days_analyzed']}\n"
+            f"**Success rate:** {analysis['success_rate']}%\n\n"
+            f"_{reasoning}_"
+        )
+        return title, message
+
     # ──────────────────────────────────────────────────────────────────
     # Daily analysis
     # ──────────────────────────────────────────────────────────────────
@@ -467,12 +509,25 @@ from(bucket: "{bucket}")
         self, room: RoomConfig, weather: dict, season: str
     ) -> None:
         """Run daily analysis for a single room."""
+        run_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        notification_id = f"heating_advisor_daily_{room.room_id}"
+
         readings = await self.async_query_influxdb(room.temp_sensor, days=7)
         if len(readings) < 5:
             _LOGGER.warning(
                 "[%s] Not enough data (%d readings) — skipping",
                 room.room_name,
                 len(readings),
+            )
+            await self._async_persistent_notification(
+                title=f"🌡️ Daily Heating Analysis — {room.room_name} ({run_timestamp})",
+                message=(
+                    f"**Analysis skipped — insufficient data**\n\n"
+                    f"**Sensor:** `{room.temp_sensor}`\n"
+                    f"Only {len(readings)} temperature readings available "
+                    f"(minimum 5 required). No changes were made."
+                ),
+                notification_id=notification_id,
             )
             return
 
@@ -482,6 +537,16 @@ from(bucket: "{bucket}")
         if not analysis["sessions"]:
             _LOGGER.warning(
                 "[%s] No heating sessions detected — skipping", room.room_name
+            )
+            await self._async_persistent_notification(
+                title=f"🌡️ Daily Heating Analysis — {room.room_name} ({run_timestamp})",
+                message=(
+                    f"**No changes needed — no heating sessions detected**\n\n"
+                    f"**Sensor:** `{room.temp_sensor}`\n"
+                    f"No active heating sessions were found in the last 7 days. "
+                    f"No rate adjustment was made."
+                ),
+                notification_id=notification_id,
             )
             return
 
@@ -504,6 +569,16 @@ from(bucket: "{bucket}")
 
         if not result or "heating_rate" not in result:
             _LOGGER.error("[%s] Invalid Ollama response: %s", room.room_name, response)
+            await self._async_persistent_notification(
+                title=f"🌡️ Daily Heating Analysis — {room.room_name} ({run_timestamp})",
+                message=(
+                    f"**Analysis failed — AI returned an unexpected response**\n\n"
+                    f"**Sensor:** `{room.temp_sensor}`\n"
+                    f"The AI model did not return a valid heating rate recommendation. "
+                    f"No changes were made."
+                ),
+                notification_id=notification_id,
+            )
             return
 
         new_rate = float(result["heating_rate"])
@@ -522,6 +597,21 @@ from(bucket: "{bucket}")
             f"Confidence: {confidence}\n"
             f"Success rate last 7 days: {analysis['success_rate']}%\n"
             f"Reason: {reasoning}",
+        )
+
+        title, message = self._build_daily_notification_message(
+            room=room,
+            current_rate=current_rate,
+            new_rate=new_rate,
+            confidence=confidence,
+            reasoning=reasoning,
+            analysis=analysis,
+            run_timestamp=run_timestamp,
+        )
+        await self._async_persistent_notification(
+            title=title,
+            message=message,
+            notification_id=notification_id,
         )
 
         _LOGGER.info(
@@ -561,10 +651,23 @@ from(bucket: "{bucket}")
         self, room: RoomConfig, weather: dict, season: str
     ) -> None:
         """Run weekly analysis for a single room — report only."""
+        run_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        notification_id = f"heating_advisor_weekly_{room.room_id}"
+
         readings = await self.async_query_influxdb(room.temp_sensor, days=30)
         if len(readings) < 5:
             _LOGGER.warning(
                 "[%s] Not enough data for weekly analysis", room.room_name
+            )
+            await self._async_persistent_notification(
+                title=f"📊 Weekly Heating Report — {room.room_name} ({run_timestamp})",
+                message=(
+                    f"**Analysis skipped — insufficient data**\n\n"
+                    f"**Sensor:** `{room.temp_sensor}`\n"
+                    f"Only {len(readings)} temperature readings available "
+                    f"(minimum 5 required). No changes were made."
+                ),
+                notification_id=notification_id,
             )
             return
 
@@ -590,6 +693,16 @@ from(bucket: "{bucket}")
             _LOGGER.error(
                 "[%s] Invalid weekly Ollama response: %s", room.room_name, response
             )
+            await self._async_persistent_notification(
+                title=f"📊 Weekly Heating Report — {room.room_name} ({run_timestamp})",
+                message=(
+                    f"**Report failed — AI returned an unexpected response**\n\n"
+                    f"**Sensor:** `{room.temp_sensor}`\n"
+                    f"The AI model did not return a valid weekly report. "
+                    f"No changes were made."
+                ),
+                notification_id=notification_id,
+            )
             return
 
         confidence = result.get("confidence", "unknown")
@@ -604,13 +717,13 @@ from(bucket: "{bucket}")
 
         await self.async_update_sensors()
 
-        report_date = datetime.now().strftime("%Y-%m-%d")
         await self._async_persistent_notification(
-            title=f"📊 {room.room_name} — Weekly Heating Report {report_date}",
+            title=f"📊 Weekly Heating Report — {room.room_name} ({run_timestamp})",
             message=(
                 f"## Weekly Summary\n"
                 f"{weekly_report}\n\n"
                 f"## Statistics (last 30 days)\n"
+                f"- **Sensor:** `{room.temp_sensor}`\n"
                 f"- Sessions analyzed: {analysis['days_analyzed']}\n"
                 f"- Success rate: {analysis['success_rate']}%\n"
                 f"- Avg heating rate observed: {analysis.get('avg_rate', 'unknown')}°C/min\n"
@@ -623,7 +736,7 @@ from(bucket: "{bucket}")
                 f"_Rate is NOT automatically adjusted by the weekly report. "
                 f"Apply manually if you agree with the suggestion._"
             ),
-            notification_id=f"sha_{room.room_id}_weekly_report",
+            notification_id=notification_id,
         )
 
         _LOGGER.info(

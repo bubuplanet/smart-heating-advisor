@@ -25,7 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["sensor", "switch", "number"]
 
-_SHA_LOGGER = logging.getLogger(__name__.rsplit(".", 1)[0])  # custom_components.smart_heating_advisor
+_SHA_LOGGER = logging.getLogger(__name__)  # custom_components.smart_heating_advisor — parent of all submodule loggers
 
 
 def _apply_debug_logging(enabled: bool) -> None:

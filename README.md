@@ -1,4 +1,5 @@
 # 🌡️ Smart Heating Advisor
+# THIS RELEASE IS UNSTABLE WITH SOME BUGS I AM CURRENTLY FIXING IT .. 
 
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-2024.1.0+-blue.svg)](https://www.home-assistant.io/)
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)

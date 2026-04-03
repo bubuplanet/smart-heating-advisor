@@ -35,7 +35,11 @@ async def async_setup_entry(
     ]
 
     async def _create_entities(_event=None) -> None:
-        _LOGGER.debug("switch platform: starting entity setup")
+        _LOGGER.debug(
+            "switch platform: starting entity setup (hass_state=%s, event=%s)",
+            hass.state,
+            type(_event).__name__ if _event is not None else "direct",
+        )
         rooms = coordinator.discover_rooms()
         _LOGGER.info("switch platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms])
 
@@ -44,11 +48,22 @@ async def async_setup_entry(
             for purpose, label, icon in boolean_defs:
                 e = SHABooleanSwitch(room.room_name, room.room_id, entry.entry_id, purpose, label, icon)
                 entities.append(e)
-                _LOGGER.debug("switch platform: created %s for room '%s'", e.entity_id, room.room_name)
+                _LOGGER.debug(
+                    "switch platform: prepared entity unique_id=%s expected_entity_id=switch.sha_%s_%s room='%s'",
+                    e.unique_id,
+                    room.room_id,
+                    purpose,
+                    room.room_name,
+                )
             override = SHAOverrideSwitch(room.room_name, room.room_id, entry.entry_id)
             entities.append(override)
             coordinator._override_switches[room.room_id] = override
-            _LOGGER.debug("switch platform: created %s for room '%s'", override.entity_id, room.room_name)
+            _LOGGER.debug(
+                "switch platform: prepared entity unique_id=%s expected_entity_id=switch.sha_%s_override room='%s'",
+                override.unique_id,
+                room.room_id,
+                room.room_name,
+            )
 
         async_add_entities(entities)
         _LOGGER.info("switch platform: registered %d switch entity(ies)", len(entities))

@@ -53,7 +53,7 @@ SHA Blueprint automation (per room)
          ▼ (records to InfluxDB automatically)
          │
 SHA Daily analysis at 02:00 AM
-  ├── Discovers rooms from blueprint automations
+        ├── Reads rooms from SHA internal room registry
   ├── Queries InfluxDB per room (7 days history)
   ├── Reads each room's schedules and target temperatures
   ├── Sends data + weather to Ollama AI
@@ -74,8 +74,8 @@ SHA Daily analysis at 02:00 AM
 | 📅 **Unlimited schedules** | Any number of HA Schedule helpers per room |
 | 🌡️ **Per-schedule temperatures** | Target temp encoded in schedule name (e.g. `Morning Shower 26C`) |
 | 🏠 **Multi-room support** | Unlimited rooms — each with independent heating rate |
-| 🔍 **Auto room discovery** | Finds rooms from blueprint automations — zero manual config |
-| 🛠️ **Auto helper creation** | All helper entities created automatically when SHA loads |
+| 🔍 **Registry-based room discovery** | Rooms are persisted in SHA internal registry (no automation file scanning) |
+| 🛠️ **Auto helper creation** | Helper entities are created from registered rooms on integration reload |
 | 🔥 **Fixed TRV support** | Optional fixed-temp TRVs (towel rails, floor heating) |
 | 🏖️ **Vacation mode** | Calendar-based frost protection |
 | 🪟 **Window detection** | Pauses heating when windows open |
@@ -199,9 +199,39 @@ The blueprint is installed automatically when you install SHA. To create a room 
    - **Schedule Helpers**: select the schedules you created in Step 1
 4. Save
 
-**That's it.** Repeat for each additional room. SHA will discover all rooms the next time it loads and create helper entities automatically.
+### Step 3 — Run the automation once (required)
 
-> 💡 If you add a new room after SHA is already running, reload the integration via **Settings → Devices & Services → Smart Heating Advisor → ⋮ → Reload**.
+After saving the automation, run it once manually so it can call `smart_heating_advisor.register_room` and store room data in SHA's internal registry.
+
+1. Open the created automation
+2. Click **Run**
+
+### Step 4 — Reload SHA integration
+
+After the first room registration run, reload SHA so entities are created from the registry.
+
+1. Go to **Settings → Devices & Services**
+2. Open **Smart Heating Advisor**
+3. Click **⋮ → Reload**
+
+**That's it.** Repeat for each additional room: create automation, run once, then reload SHA.
+
+> 💡 This registry-first flow is intentional and avoids scanning `automations.yaml` or HA storage files at runtime.
+
+### Changing schedules later (after automation already exists)
+
+If you need to change room timing or targets after initial setup:
+
+1. Go to **Settings → Helpers** and edit existing schedule helpers, or create new ones
+2. Go to **Settings → Automations →** open your room automation created from SHA blueprint
+3. Click **Edit in UI** and update the **Schedule Helpers** selection
+4. Save the automation
+5. Run the automation once manually
+6. Reload SHA integration from **Settings → Devices & Services → Smart Heating Advisor → ⋮ → Reload**
+
+Why this is needed:
+- The manual run re-sends room data through `smart_heating_advisor.register_room`
+- Reload makes SHA re-create/use entities from the latest registry data
 
 ---
 
@@ -313,6 +343,7 @@ Name each **HA Schedule helper** with the target temperature at the end:
 | `smart_heating_advisor.run_daily_analysis` | Manually trigger daily AI analysis for all rooms |
 | `smart_heating_advisor.run_weekly_analysis` | Manually trigger weekly report for all rooms |
 | `smart_heating_advisor.start_override` | Start a timed manual override for a room |
+| `smart_heating_advisor.register_room` | Register or update a room in SHA internal room registry (normally called by blueprint) |
 
 ---
 
@@ -384,10 +415,11 @@ User creates Schedule helpers ("Morning Shower 26C")
         │
         ▼
 User creates automation from SHA blueprint
-Blueprint stores: room_name, temperature_sensor, schedules
+Blueprint run calls: smart_heating_advisor.register_room
+SHA stores: room_name, temperature_sensor, schedules in internal registry
         │
         ▼
-SHA loads → discovers rooms from blueprint automations
+SHA reloads → discovers rooms from internal registry
         │
         ▼
 SHA creates helper entities per room:
@@ -409,7 +441,7 @@ Automation runs normally ✅
 SHA coordinator wakes up
         │
         ▼
-discover_rooms() — reads all SHA blueprint automation configs
+discover_rooms() — reads all registered rooms from SHA internal registry
         │
         ├── Bathroom  → sensor.bathroom_temp + [schedule.morning_shower, ...]
         ├── Office    → sensor.office_temp   + [schedule.office_morning]
@@ -530,13 +562,66 @@ Repeats daily — system gets smarter over time
 
 ### SHA not finding my rooms
 
-SHA discovers rooms by reading the blueprint input values from all automations using the `sha_unified_heating` blueprint.
+SHA discovers rooms from its internal room registry.
 
 Check:
 1. Is the automation created from the **Smart Heating Advisor** blueprint?
 2. Does the automation have a **Room Name** and **Temperature Sensor** set?
-3. Try **Developer Tools → Actions → `smart_heating_advisor.run_daily_analysis`** and check the HA logs for `Discovered SHA room`.
-4. If you added a new room after SHA was loaded, **reload the integration** via Settings → Devices & Services → Smart Heating Advisor → ⋮ → Reload.
+3. Run the automation once manually after creation (this registers the room).
+4. Reload SHA via **Settings → Devices & Services → Smart Heating Advisor → ⋮ → Reload**.
+5. Check logs for registry lines:
+        - `sha.register_room payload`
+        - `Room registry updated`
+        - `Room discovery (registry)`
+
+### How to enable verbose debug mode
+
+1. Go to **Settings → Devices & Services → Smart Heating Advisor → Configure**
+2. Enable **Debug logging** in options
+3. Reload SHA integration
+4. Re-run one room automation
+5. Review logs for detailed traces (registry load/register/discovery, platform entity preparation, service payloads)
+
+### Understanding HA automation trace lines
+
+Example log line:
+
+`[homeassistant.components.automation.testroom_smart_heating_advisor] Testroom - Smart Heating Advisor: Choose at step 2: default: Choose at step 1: choice 1: Executing step call service`
+
+This is Home Assistant's built-in automation trace path, not an error. It means:
+
+1. `Choose at step 2: default`: The outer `choose` block did not match earlier branches, so default branch is running
+2. `Choose at step 1: choice 1`: Inside that default branch, a nested `choose` selected its first matching option
+3. `Executing step call service`: The selected branch is currently calling a service (for example `climate.set_temperature` or `smart_heating_advisor.register_room`)
+
+How to inspect it clearly:
+
+1. Open **Settings → Automations & Scenes →** your room automation
+2. Click **Traces**
+3. Open the latest run and expand the `choose` nodes to see exactly which conditions were true/false
+
+### Debug: verify created states in Developer Tools
+
+If setup appears correct but behavior is wrong, verify entity states directly:
+
+1. Go to **Developer Tools → States**
+2. Check room helper entities exist:
+        - `number.sha_ROOM_heating_rate`
+        - `switch.sha_ROOM_override`
+        - `switch.sha_ROOM_airing_mode`
+        - `switch.sha_ROOM_preheat_notified`
+        - `switch.sha_ROOM_target_notified`
+        - `switch.sha_ROOM_standby_notified`
+        - `switch.sha_ROOM_vacation_notified`
+3. Check sensor entities exist:
+        - `sensor.sha_ROOM_heating_rate`
+        - `sensor.sha_ROOM_last_analysis`
+        - `sensor.sha_ROOM_confidence`
+        - `sensor.sha_ROOM_weekly_report`
+4. If entities are missing:
+        - Run room automation once
+        - Reload SHA integration
+        - Re-check states
 
 ### Pre-heat starts too late or too early
 

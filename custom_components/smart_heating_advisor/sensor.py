@@ -22,11 +22,21 @@ async def async_setup_entry(
     coordinator: SmartHeatingCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     async def _create_entities(_event=None) -> None:
+        _LOGGER.debug(
+            "sensor platform: starting entity setup (hass_state=%s, event=%s)",
+            hass.state,
+            type(_event).__name__ if _event is not None else "direct",
+        )
         rooms = coordinator.discover_rooms()
         _LOGGER.info("sensor platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms])
 
         entities = []
         for room in rooms:
+            _LOGGER.debug(
+                "sensor platform: preparing sensor entities for room='%s' room_id='%s'",
+                room.room_name,
+                room.room_id,
+            )
             entities.extend([
                 RoomHeatingRateSensor(coordinator, entry, room.room_id, room.room_name),
                 RoomLastAnalysisSensor(coordinator, entry, room.room_id, room.room_name),

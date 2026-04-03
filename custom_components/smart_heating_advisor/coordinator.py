@@ -143,6 +143,13 @@ class SmartHeatingCoordinator:
         rooms = data.get("rooms", {}) if isinstance(data, dict) else {}
         self._room_registry = rooms if isinstance(rooms, dict) else {}
 
+        _LOGGER.debug(
+            "Room registry load: entry_id=%s payload_type=%s room_keys=%s",
+            self.entry.entry_id,
+            type(data).__name__,
+            sorted(self._room_registry.keys()),
+        )
+
         if self._room_registry:
             _LOGGER.info(
                 "Loaded %d room(s) from SHA room registry",
@@ -164,7 +171,15 @@ class SmartHeatingCoordinator:
         room_name = (room_name or "").strip()
         temp_sensor = (temp_sensor or "").strip()
 
+        _LOGGER.debug(
+            "Room registry register request: room_name='%s' temp_sensor='%s' schedules_raw=%s",
+            room_name,
+            temp_sensor,
+            schedules,
+        )
+
         if not room_name or not temp_sensor:
+            _LOGGER.debug("Room registry register skipped: missing room_name or temp_sensor")
             return False
 
         if isinstance(schedules, str):
@@ -183,6 +198,7 @@ class SmartHeatingCoordinator:
 
         old_data = self._room_registry.get(room_id)
         if old_data == new_data:
+            _LOGGER.debug("Room registry unchanged for room_id='%s'", room_id)
             return False
 
         self._room_registry[room_id] = new_data
@@ -220,6 +236,15 @@ class SmartHeatingCoordinator:
             len(rooms),
             [r.room_name for r in rooms],
         )
+
+        for room in rooms:
+            _LOGGER.debug(
+                "Room discovery (registry) detail: room='%s' room_id='%s' sensor='%s' schedules=%s",
+                room.room_name,
+                room.room_id,
+                room.temp_sensor,
+                room.schedule_entities,
+            )
 
         if not rooms:
             _LOGGER.warning(

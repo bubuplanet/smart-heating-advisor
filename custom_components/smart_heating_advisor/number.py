@@ -26,7 +26,11 @@ async def async_setup_entry(
     coordinator: SmartHeatingCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     async def _create_entities(_event=None) -> None:
-        _LOGGER.debug("number platform: starting entity setup")
+        _LOGGER.debug(
+            "number platform: starting entity setup (hass_state=%s, event=%s)",
+            hass.state,
+            type(_event).__name__ if _event is not None else "direct",
+        )
         rooms = coordinator.discover_rooms()
         _LOGGER.info("number platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms])
 
@@ -35,7 +39,12 @@ async def async_setup_entry(
             entity = SHAHeatingRateNumber(room.room_name, room.room_id, entry.entry_id)
             entities.append(entity)
             coordinator.register_heating_rate_entity(room.room_id, entity)
-            _LOGGER.debug("number platform: created %s for room '%s'", entity.entity_id, room.room_name)
+            _LOGGER.debug(
+                "number platform: prepared entity unique_id=%s expected_entity_id=number.sha_%s_heating_rate room='%s'",
+                entity.unique_id,
+                room.room_id,
+                room.room_name,
+            )
 
         async_add_entities(entities)
         _LOGGER.info("number platform: registered %d heating rate entity(ies)", len(entities))

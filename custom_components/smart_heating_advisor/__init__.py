@@ -137,6 +137,12 @@ async def async_install_blueprint(hass: HomeAssistant) -> dict:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Smart Heating Advisor from a config entry."""
     _LOGGER.info("Setting up Smart Heating Advisor")
+    _LOGGER.debug(
+        "SHA setup entry context: entry_id=%s hass_state=%s options=%s",
+        entry.entry_id,
+        hass.state,
+        dict(entry.options),
+    )
 
     # Apply debug logging preference immediately
     _apply_debug_logging(entry.options.get(CONF_DEBUG_LOGGING, False))
@@ -195,6 +201,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         room_name = str(call.data.get("room_name", "")).strip()
         temp_sensor = str(call.data.get("temperature_sensor", "")).strip()
         schedules = call.data.get("schedules", [])
+
+        _LOGGER.debug("sha.register_room payload: %s", dict(call.data))
 
         updated = await coordinator.async_register_room(room_name, temp_sensor, schedules)
         _LOGGER.debug(

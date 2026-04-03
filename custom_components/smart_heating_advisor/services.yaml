@@ -38,3 +38,38 @@ start_override:
           min: 1
           max: 1440
           unit_of_measurement: min
+
+register_room:
+  name: Register Room
+  description: >
+    Register or update a room in SHA's internal room registry.
+    Called by the SHA blueprint automation to avoid scanning automation files.
+  fields:
+    room_name:
+      name: Room Name
+      description: The room name configured in the blueprint.
+      required: true
+      example: "Living Room"
+      selector:
+        text:
+    temperature_sensor:
+      name: Temperature Sensor
+      description: Entity ID of the room temperature sensor.
+      required: true
+      example: "sensor.living_room_temperature"
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+    schedules:
+      name: Schedules
+      description: One or more schedule helper entity IDs for this room.
+      required: false
+      example:
+        - "schedule.morning_shower_26c"
+        - "schedule.evening_bath_28c"
+      selector:
+        entity:
+          filter:
+            - domain: schedule
+          multiple: true

@@ -34,8 +34,8 @@ blueprint:
     🛠️ Setup
     Install the SHA integration first, then create one automation per room
     from this blueprint. Use the exact room name you configured in SHA.
-    All required helper entities are created automatically when SHA loads.
-    Reload SHA after adding new blueprint automations.
+    On first run, each room is auto-registered in SHA's internal registry.
+    Reload SHA once after first run to create helper entities for new rooms.
 
     Required entities (auto-created by SHA):
     - number.sha_ROOM_heating_rate
@@ -483,6 +483,12 @@ triggers:
 conditions: []
 
 action:
+
+  - action: smart_heating_advisor.register_room
+    data:
+      room_name: !input room_name
+      temperature_sensor: !input temperature_sensor
+      schedules: !input schedules
 
   - choose:
 

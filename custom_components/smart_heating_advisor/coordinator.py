@@ -1,14 +1,10 @@
 """Coordinator for Smart Heating Advisor."""
 from __future__ import annotations
 
-import json
 import logging
 import re
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING
-
-import yaml
 
 if TYPE_CHECKING:
     from .number import SHAHeatingRateNumber
@@ -16,6 +12,7 @@ if TYPE_CHECKING:
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
 
 from .const import (
     CONF_OLLAMA_URL,
@@ -105,6 +102,14 @@ class SmartHeatingCoordinator:
         # Heating rate entity references — keyed by room_id, populated by number.async_setup_entry
         self.heating_rate_entities: dict[str, "SHAHeatingRateNumber"] = {}
 
+        # Room registry — persisted per config entry via HA storage
+        self._room_registry_store: Store = Store(
+            hass,
+            1,
+            f"{self.entry.domain}.{self.entry.entry_id}_rooms",
+        )
+        self._room_registry: dict[str, dict] = {}
+
         self.ollama = OllamaClient(
             url=self.config[CONF_OLLAMA_URL],
             model=self.config[CONF_OLLAMA_MODEL],
@@ -129,356 +134,97 @@ class SmartHeatingCoordinator:
         self.heating_rate_entities[room_id] = entity
 
     # ──────────────────────────────────────────────────────────────────
-    # Room discovery
+    # Room registry / discovery
     # ──────────────────────────────────────────────────────────────────
 
-    def discover_rooms(self) -> list[RoomConfig]:
-        """Discover all SHA rooms from blueprint automation configurations.
+    async def async_load_room_registry(self) -> None:
+        """Load persisted room registry for this config entry."""
+        data = await self._room_registry_store.async_load()
+        rooms = data.get("rooms", {}) if isinstance(data, dict) else {}
+        self._room_registry = rooms if isinstance(rooms, dict) else {}
 
-        SHA reads the blueprint input values directly from each automation's
-        stored configuration. It looks for automations using the SHA blueprint
-        and extracts room_name, temperature_sensor and schedules from the
-        blueprint inputs.
+        if self._room_registry:
+            _LOGGER.info(
+                "Loaded %d room(s) from SHA room registry",
+                len(self._room_registry),
+            )
+        else:
+            _LOGGER.info("SHA room registry is empty")
 
-        This is the most reliable approach — no tag parsing needed, we read
-        the actual values the user entered in the blueprint UI.
+    async def async_register_room(
+        self,
+        room_name: str,
+        temp_sensor: str,
+        schedules: list[str] | str | None,
+    ) -> bool:
+        """Register or update one room in the persistent registry.
 
-        Returns a list of RoomConfig objects.
+        Returns True when registry content changed.
         """
-        rooms = []
-        seen_room_ids = set()
+        room_name = (room_name or "").strip()
+        temp_sensor = (temp_sensor or "").strip()
 
-        # Access HA automation configs via the automations component
-        automation_component = self.hass.data.get("automation")
-        if automation_component is None:
-            _LOGGER.warning("Automation component not available for room discovery")
-            rooms = self._discover_rooms_from_storage()
-            if not rooms:
-                rooms = self._discover_rooms_from_automations_yaml()
-            if not rooms:
-                rooms = self._discover_rooms_from_states()
-            return rooms
+        if not room_name or not temp_sensor:
+            return False
 
-        try:
-            # Iterate over all automation entities
-            # Note: automation_component.entities is dict_values, not a dict
-            for entity in automation_component.entities:
-                try:
-                    entity_id = entity.entity_id
-                    # Check if this automation uses the SHA blueprint
-                    config = getattr(entity, "raw_config", None) or {}
-                    use_blueprint = config.get("use_blueprint") or config.get("blueprint") or {}
-                    blueprint_path = use_blueprint.get("path", "")
+        if isinstance(schedules, str):
+            normalized_schedules = [schedules]
+        elif isinstance(schedules, list):
+            normalized_schedules = [str(s).strip() for s in schedules if str(s).strip()]
+        else:
+            normalized_schedules = []
 
-                    _LOGGER.debug(
-                        "Room discovery scan: automation=%s blueprint_path=%s",
-                        entity_id,
-                        blueprint_path or "<none>",
-                    )
+        room_id = _room_name_to_id(room_name)
+        new_data = {
+            "room_name": room_name,
+            "temp_sensor": temp_sensor,
+            "schedules": normalized_schedules,
+        }
 
-                    if "sha_unified_heating" not in blueprint_path:
-                        continue
+        old_data = self._room_registry.get(room_id)
+        if old_data == new_data:
+            return False
 
-                    _LOGGER.debug(
-                        "Room discovery SHA match: automation=%s blueprint_path=%s",
-                        entity_id,
-                        blueprint_path,
-                    )
+        self._room_registry[room_id] = new_data
+        await self._room_registry_store.async_save({"rooms": self._room_registry})
+        _LOGGER.info(
+            "Room registry updated: %s (sensor=%s, schedules=%d)",
+            room_name,
+            temp_sensor,
+            len(normalized_schedules),
+        )
+        return True
 
-                    # inputs are nested under "input" key in use_blueprint.
-                    # Blueprint sections mean values are under section keys:
-                    #   input.room_section.room_name
-                    #   input.schedule_section.schedules
-                    # Fall back to flat structure for blueprints without sections.
-                    inputs = use_blueprint.get("input", {})
-                    room_section = inputs.get("room_section", {})
-                    schedule_section = inputs.get("schedule_section", {})
+    def discover_rooms(self) -> list[RoomConfig]:
+        """Build RoomConfig list from persistent SHA room registry."""
+        rooms: list[RoomConfig] = []
 
-                    room_name = room_section.get("room_name") or inputs.get("room_name", "")
-                    temp_sensor = room_section.get("temperature_sensor") or inputs.get("temperature_sensor", "")
-                    schedules = schedule_section.get("schedules") or inputs.get("schedules", [])
+        for room_id in sorted(self._room_registry.keys()):
+            room_data = self._room_registry.get(room_id, {})
+            room_name = str(room_data.get("room_name", "")).strip()
+            temp_sensor = str(room_data.get("temp_sensor", "")).strip()
+            schedules = room_data.get("schedules", [])
 
-                    if not room_name or not temp_sensor:
-                        continue
+            if not room_name or not temp_sensor:
+                continue
 
-                    # Normalise schedules to list
-                    if isinstance(schedules, str):
-                        schedules = [schedules]
-                    elif not isinstance(schedules, list):
-                        schedules = []
+            if isinstance(schedules, str):
+                schedules = [schedules]
+            elif not isinstance(schedules, list):
+                schedules = []
 
-                    room_id = _room_name_to_id(room_name)
-                    if room_id in seen_room_ids:
-                        _LOGGER.debug(
-                            "Room %s already discovered — skipping duplicate", room_name
-                        )
-                        continue
+            rooms.append(RoomConfig(room_name, temp_sensor, schedules))
 
-                    seen_room_ids.add(room_id)
-                    rooms.append(RoomConfig(room_name, temp_sensor, schedules))
-                    _LOGGER.debug(
-                        "Discovered SHA room: %s (sensor: %s, schedules: %s)",
-                        room_name,
-                        temp_sensor,
-                        schedules,
-                    )
-
-                except Exception as e:
-                    _LOGGER.debug("Could not read automation config for %s: %s", entity_id, e)
-                    continue
-
-        except Exception as e:
-            _LOGGER.warning("Room discovery via automation component failed: %s", e)
-            # Fallback chain: storage first, then state attributes
-            rooms = self._discover_rooms_from_storage()
-            if not rooms:
-                rooms = self._discover_rooms_from_automations_yaml()
-            if not rooms:
-                rooms = self._discover_rooms_from_states()
-
-        if not rooms:
-            # If component lookup succeeded but yielded 0 rooms, still try fallbacks.
-            rooms = self._discover_rooms_from_storage()
-            if not rooms:
-                rooms = self._discover_rooms_from_automations_yaml()
-            if not rooms:
-                rooms = self._discover_rooms_from_states()
+        _LOGGER.debug(
+            "Room discovery (registry): %d room(s): %s",
+            len(rooms),
+            [r.room_name for r in rooms],
+        )
 
         if not rooms:
             _LOGGER.warning(
-                "No SHA blueprint automations found. "
-                "Create automations from the SHA blueprint to enable multi-room analysis."
-            )
-
-        return rooms
-
-    def _discover_rooms_from_states(self) -> list[RoomConfig]:
-        """Fallback room discovery via automation state attributes.
-
-        HA exposes blueprint inputs in the automation's state attributes as
-        ``blueprint_inputs``. The structure varies by HA version:
-          - Full:  {"path": "...", "input": {"room_name": ...}}
-          - Flat:  {"room_name": ..., "temperature_sensor": ...}
-        """
-        rooms = []
-        seen_room_ids = set()
-
-        for auto_state in self.hass.states.async_all("automation"):
-            attrs = auto_state.attributes
-            blueprint_inputs = attrs.get("blueprint_inputs", {})
-
-            _LOGGER.debug(
-                "Room discovery state scan: automation=%s has_blueprint_inputs=%s",
-                auto_state.entity_id,
-                bool(blueprint_inputs),
-            )
-
-            if not blueprint_inputs:
-                continue
-
-            _LOGGER.debug(
-                "Automation %s blueprint_inputs keys: %s",
-                auto_state.entity_id,
-                list(blueprint_inputs.keys()) if isinstance(blueprint_inputs, dict) else type(blueprint_inputs),
-            )
-
-            # Determine structure and filter to SHA automations
-            if "path" in blueprint_inputs:
-                # Full use_blueprint structure: {path: ..., input: {...}}
-                blueprint_path = blueprint_inputs.get("path", "")
-                _LOGGER.debug(
-                    "Room discovery state blueprint: automation=%s blueprint_path=%s",
-                    auto_state.entity_id,
-                    blueprint_path or "<none>",
-                )
-                if "sha_unified_heating" not in blueprint_path:
-                    continue
-                _LOGGER.debug(
-                    "Room discovery state SHA match: automation=%s",
-                    auto_state.entity_id,
-                )
-                inputs = blueprint_inputs.get("input", {})
-            else:
-                # Flat structure without explicit blueprint path (older HA variations)
-                _LOGGER.debug(
-                    "Room discovery state flat inputs detected: automation=%s",
-                    auto_state.entity_id,
-                )
-                inputs = blueprint_inputs
-
-            room_section = inputs.get("room_section", {}) if isinstance(inputs, dict) else {}
-            schedule_section = inputs.get("schedule_section", {}) if isinstance(inputs, dict) else {}
-            room_name = room_section.get("room_name") or inputs.get("room_name", "")
-            temp_sensor = room_section.get("temperature_sensor") or inputs.get("temperature_sensor", "")
-            schedules = schedule_section.get("schedules") or inputs.get("schedules", [])
-
-            if not room_name or not temp_sensor:
-                continue
-
-            if isinstance(schedules, str):
-                schedules = [schedules]
-            elif not isinstance(schedules, list):
-                schedules = []
-
-            room_id = _room_name_to_id(room_name)
-            if room_id not in seen_room_ids:
-                seen_room_ids.add(room_id)
-                rooms.append(RoomConfig(room_name, temp_sensor, schedules))
-                _LOGGER.debug(
-                    "Discovered SHA room via state fallback: %s", room_name
-                )
-
-        return rooms
-
-    def _discover_rooms_from_storage(self) -> list[RoomConfig]:
-        """Fallback room discovery by reading HA's .storage automations file."""
-        rooms: list[RoomConfig] = []
-        seen_room_ids: set[str] = set()
-
-        automations_path = Path(self.hass.config.path(".storage", "automations"))
-        if not automations_path.exists():
-            _LOGGER.debug("Automation storage file not found: %s", automations_path)
-            return rooms
-
-        try:
-            payload = json.loads(automations_path.read_text(encoding="utf-8"))
-        except Exception as e:
-            _LOGGER.debug("Could not read automation storage file: %s", e)
-            return rooms
-
-        data = payload.get("data", []) if isinstance(payload, dict) else []
-        if not isinstance(data, list):
-            return rooms
-
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-
-            use_blueprint = item.get("use_blueprint") or item.get("blueprint") or {}
-            if not isinstance(use_blueprint, dict):
-                continue
-
-            blueprint_path = use_blueprint.get("path", "")
-            alias = item.get("alias", "<no alias>")
-            _LOGGER.debug(
-                "Room discovery storage scan: alias=%s blueprint_path=%s",
-                alias,
-                blueprint_path or "<none>",
-            )
-            if "sha_unified_heating" not in blueprint_path:
-                continue
-
-            _LOGGER.debug(
-                "Room discovery storage SHA match: alias=%s blueprint_path=%s",
-                alias,
-                blueprint_path,
-            )
-
-            inputs = use_blueprint.get("input", {})
-            if not isinstance(inputs, dict):
-                continue
-
-            room_section = inputs.get("room_section", {})
-            schedule_section = inputs.get("schedule_section", {})
-
-            room_name = room_section.get("room_name") or inputs.get("room_name", "")
-            temp_sensor = room_section.get("temperature_sensor") or inputs.get("temperature_sensor", "")
-            schedules = schedule_section.get("schedules") or inputs.get("schedules", [])
-
-            if not room_name or not temp_sensor:
-                continue
-
-            if isinstance(schedules, str):
-                schedules = [schedules]
-            elif not isinstance(schedules, list):
-                schedules = []
-
-            room_id = _room_name_to_id(room_name)
-            if room_id in seen_room_ids:
-                continue
-
-            seen_room_ids.add(room_id)
-            rooms.append(RoomConfig(room_name, temp_sensor, schedules))
-
-        if rooms:
-            _LOGGER.info(
-                "Discovered %d SHA room(s) from automation storage fallback",
-                len(rooms),
-            )
-
-        return rooms
-
-    def _discover_rooms_from_automations_yaml(self) -> list[RoomConfig]:
-        """Fallback room discovery by reading automations.yaml (YAML mode)."""
-        rooms: list[RoomConfig] = []
-        seen_room_ids: set[str] = set()
-
-        automations_yaml_path = Path(self.hass.config.path("automations.yaml"))
-        if not automations_yaml_path.exists():
-            _LOGGER.debug("automations.yaml file not found: %s", automations_yaml_path)
-            return rooms
-
-        try:
-            payload = yaml.safe_load(automations_yaml_path.read_text(encoding="utf-8"))
-        except Exception as e:
-            _LOGGER.debug("Could not read automations.yaml file: %s", e)
-            return rooms
-
-        data = payload if isinstance(payload, list) else []
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-
-            use_blueprint = item.get("use_blueprint") or item.get("blueprint") or {}
-            if not isinstance(use_blueprint, dict):
-                continue
-
-            blueprint_path = use_blueprint.get("path", "")
-            alias = item.get("alias", "<no alias>")
-            _LOGGER.debug(
-                "Room discovery automations.yaml scan: alias=%s blueprint_path=%s",
-                alias,
-                blueprint_path or "<none>",
-            )
-            if "sha_unified_heating" not in blueprint_path:
-                continue
-
-            _LOGGER.debug(
-                "Room discovery automations.yaml SHA match: alias=%s blueprint_path=%s",
-                alias,
-                blueprint_path,
-            )
-
-            inputs = use_blueprint.get("input", {})
-            if not isinstance(inputs, dict):
-                continue
-
-            room_section = inputs.get("room_section", {})
-            schedule_section = inputs.get("schedule_section", {})
-
-            room_name = room_section.get("room_name") or inputs.get("room_name", "")
-            temp_sensor = room_section.get("temperature_sensor") or inputs.get("temperature_sensor", "")
-            schedules = schedule_section.get("schedules") or inputs.get("schedules", [])
-
-            if not room_name or not temp_sensor:
-                continue
-
-            if isinstance(schedules, str):
-                schedules = [schedules]
-            elif not isinstance(schedules, list):
-                schedules = []
-
-            room_id = _room_name_to_id(room_name)
-            if room_id in seen_room_ids:
-                continue
-
-            seen_room_ids.add(room_id)
-            rooms.append(RoomConfig(room_name, temp_sensor, schedules))
-
-        if rooms:
-            _LOGGER.info(
-                "Discovered %d SHA room(s) from automations.yaml fallback",
-                len(rooms),
+                "SHA room registry is empty. "
+                "Run a SHA blueprint automation once to auto-register the room."
             )
 
         return rooms

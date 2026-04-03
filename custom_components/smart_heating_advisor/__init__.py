@@ -146,6 +146,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Create coordinator
     coordinator = SmartHeatingCoordinator(hass, entry)
+    await coordinator.async_load_room_registry()
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
@@ -189,9 +190,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "(reload the integration after adding new blueprint automations)", room_name
             )
 
+    async def handle_register_room(call):
+        """sha.register_room — persist room config reported by blueprint automation."""
+        room_name = str(call.data.get("room_name", "")).strip()
+        temp_sensor = str(call.data.get("temperature_sensor", "")).strip()
+        schedules = call.data.get("schedules", [])
+
+        updated = await coordinator.async_register_room(room_name, temp_sensor, schedules)
+        _LOGGER.debug(
+            "sha.register_room called: room='%s', sensor='%s', schedules=%s, updated=%s",
+            room_name,
+            temp_sensor,
+            schedules,
+            updated,
+        )
+
     hass.services.async_register(DOMAIN, "run_daily_analysis", handle_daily_analysis)
     hass.services.async_register(DOMAIN, "run_weekly_analysis", handle_weekly_analysis)
     hass.services.async_register(DOMAIN, "start_override", handle_start_override)
+    hass.services.async_register(DOMAIN, "register_room", handle_register_room)
 
     # ── Scheduled analysis ───────────────────────────────────────────
 
@@ -255,8 +272,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 f"3. Create an automation per room\n"
                 f"4. Name each Schedule helper with target temp at the end\n"
                 f"   e.g. `Morning Shower 26C`, `Evening Bath 28C`\n\n"
-                f"Switch/Number helper entities are created automatically "
-                f"when the integration loads (reload after adding new rooms).\n\n"
+                f"Each blueprint automation auto-registers its room in SHA. "
+                f"After the first automation run, reload SHA to create helper entities.\n\n"
                 f"⚠️ **Upgrading from v1?** Re-open and re-save each room automation "
                 f"so it uses the updated blueprint (v2).\n\n"
                 f"Daily AI analysis: **02:00 AM**\n"

@@ -1,4 +1,4 @@
-# 🌡️ Smart Heating Advisor - Dev
+# 🌡️ Smart Heating Advisor
 
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-2024.1.0+-blue.svg)](https://www.home-assistant.io/)
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)

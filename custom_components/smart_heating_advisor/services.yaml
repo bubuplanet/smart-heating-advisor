@@ -73,3 +73,17 @@ register_room:
           filter:
             - domain: schedule
           multiple: true
+    daily_report_enabled:
+      name: Daily Report Enabled
+      description: Enable daily persistent report notifications for this room.
+      required: false
+      default: true
+      selector:
+        boolean:
+    weekly_report_enabled:
+      name: Weekly Report Enabled
+      description: Enable weekly persistent report notifications for this room.
+      required: false
+      default: true
+      selector:
+        boolean:

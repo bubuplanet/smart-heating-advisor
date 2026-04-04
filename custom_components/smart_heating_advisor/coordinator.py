@@ -61,11 +61,15 @@ class RoomConfig:
         room_name: str,
         temp_sensor: str,
         schedules: list[str],
+        daily_report_enabled: bool = True,
+        weekly_report_enabled: bool = True,
     ):
         self.room_name = room_name
         self.room_id = _room_name_to_id(room_name)
         self.temp_sensor = temp_sensor
         self.schedule_entities = schedules
+        self.daily_report_enabled = daily_report_enabled
+        self.weekly_report_enabled = weekly_report_enabled
 
         # SHA helper entity IDs — custom switch/number entities, derived from room_id
         self.heating_rate_helper = f"number.sha_{self.room_id}_heating_rate"
@@ -80,7 +84,9 @@ class RoomConfig:
         return (
             f"RoomConfig(name={self.room_name!r}, "
             f"sensor={self.temp_sensor!r}, "
-            f"schedules={self.schedule_entities})"
+            f"schedules={self.schedule_entities}, "
+            f"daily_report_enabled={self.daily_report_enabled}, "
+            f"weekly_report_enabled={self.weekly_report_enabled})"
         )
 
 
@@ -163,6 +169,8 @@ class SmartHeatingCoordinator:
         room_name: str,
         temp_sensor: str,
         schedules: list[str] | str | None,
+        daily_report_enabled: bool = True,
+        weekly_report_enabled: bool = True,
     ) -> bool:
         """Register or update one room in the persistent registry.
 
@@ -194,6 +202,8 @@ class SmartHeatingCoordinator:
             "room_name": room_name,
             "temp_sensor": temp_sensor,
             "schedules": normalized_schedules,
+            "daily_report_enabled": bool(daily_report_enabled),
+            "weekly_report_enabled": bool(weekly_report_enabled),
         }
 
         old_data = self._room_registry.get(room_id)
@@ -204,10 +214,12 @@ class SmartHeatingCoordinator:
         self._room_registry[room_id] = new_data
         await self._room_registry_store.async_save({"rooms": self._room_registry})
         _LOGGER.info(
-            "Room registry updated: %s (sensor=%s, schedules=%d)",
+            "Room registry updated: %s (sensor=%s, schedules=%d, daily_report=%s, weekly_report=%s)",
             room_name,
             temp_sensor,
             len(normalized_schedules),
+            bool(daily_report_enabled),
+            bool(weekly_report_enabled),
         )
         return True
 
@@ -220,6 +232,8 @@ class SmartHeatingCoordinator:
             room_name = str(room_data.get("room_name", "")).strip()
             temp_sensor = str(room_data.get("temp_sensor", "")).strip()
             schedules = room_data.get("schedules", [])
+            daily_report_enabled = bool(room_data.get("daily_report_enabled", True))
+            weekly_report_enabled = bool(room_data.get("weekly_report_enabled", True))
 
             if not room_name or not temp_sensor:
                 continue
@@ -229,7 +243,15 @@ class SmartHeatingCoordinator:
             elif not isinstance(schedules, list):
                 schedules = []
 
-            rooms.append(RoomConfig(room_name, temp_sensor, schedules))
+            rooms.append(
+                RoomConfig(
+                    room_name,
+                    temp_sensor,
+                    schedules,
+                    daily_report_enabled=daily_report_enabled,
+                    weekly_report_enabled=weekly_report_enabled,
+                )
+            )
 
         _LOGGER.debug(
             "Room discovery (registry): %d room(s): %s",
@@ -466,6 +488,93 @@ from(bucket: "{bucket}")
             {"title": title, "message": message, "notification_id": notification_id},
         )
 
+    def _format_daily_outcome(self, room_name: str, old_rate: float, new_rate: float) -> str:
+        """Return one-line daily outcome summary."""
+        delta = new_rate - old_rate
+        if abs(delta) < 0.0005:
+            return f"No changes needed in {room_name}."
+        if delta > 0:
+            return f"Heating increased by {delta:.3f} °C/min in {room_name}."
+        return f"Heating decreased by {abs(delta):.3f} °C/min in {room_name}."
+
+    def _format_weekly_outcome(self, room_name: str, current_rate: float, suggested_rate: float) -> str:
+        """Return one-line weekly outcome summary."""
+        delta = suggested_rate - current_rate
+        if abs(delta) < 0.0005:
+            return f"No changes suggested for {room_name}."
+        if delta > 0:
+            return f"Weekly suggestion: increase heating by {delta:.3f} °C/min in {room_name}."
+        return f"Weekly suggestion: decrease heating by {abs(delta):.3f} °C/min in {room_name}."
+
+    async def _async_notify_daily_room_result(
+        self,
+        room: RoomConfig,
+        run_ts: str,
+        old_rate: float | None,
+        new_rate: float | None,
+        success_rate: int | None,
+        outcome: str,
+        details: str,
+    ) -> None:
+        """Create daily per-room persistent notification summary."""
+        if not room.daily_report_enabled:
+            _LOGGER.debug("[%s] Daily persistent report disabled for this room", room.room_name)
+            return
+
+        old_str = f"{old_rate:.3f}" if old_rate is not None else "n/a"
+        new_str = f"{new_rate:.3f}" if new_rate is not None else "n/a"
+        success_str = f"{success_rate}%" if success_rate is not None else "n/a"
+
+        await self._async_persistent_notification(
+            title=f"📅 {room.room_name} — Daily Heating Report",
+            message=(
+                f"Run time: {run_ts}\n\n"
+                f"Outcome: {outcome}\n\n"
+                f"Affected sensor: {room.temp_sensor}\n"
+                f"Old value: {old_str} °C/min\n"
+                f"New value: {new_str} °C/min\n"
+                f"Success rate (last 7 days): {success_str}\n"
+                f"Details: {details}"
+            ),
+            notification_id=f"heating_advisor_daily_{room.room_id}",
+        )
+
+    async def _async_notify_weekly_room_result(
+        self,
+        room: RoomConfig,
+        run_ts: str,
+        current_rate: float | None,
+        suggested_rate: float | None,
+        success_rate: int | None,
+        outcome: str,
+        details: str,
+        weekly_report: str,
+    ) -> None:
+        """Create weekly per-room persistent notification summary."""
+        if not room.weekly_report_enabled:
+            _LOGGER.debug("[%s] Weekly persistent report disabled for this room", room.room_name)
+            return
+
+        current_str = f"{current_rate:.3f}" if current_rate is not None else "n/a"
+        suggested_str = f"{suggested_rate:.3f}" if suggested_rate is not None else "n/a"
+        success_str = f"{success_rate}%" if success_rate is not None else "n/a"
+        report_text = weekly_report or "No weekly report generated."
+
+        await self._async_persistent_notification(
+            title=f"📊 {room.room_name} — Weekly Heating Report",
+            message=(
+                f"Run time: {run_ts}\n\n"
+                f"Outcome: {outcome}\n\n"
+                f"Affected sensor: {room.temp_sensor}\n"
+                f"Current value: {current_str} °C/min\n"
+                f"Suggested value: {suggested_str} °C/min\n"
+                f"Success rate (last 30 days): {success_str}\n"
+                f"Details: {details}\n\n"
+                f"Weekly summary:\n{report_text}"
+            ),
+            notification_id=f"heating_advisor_weekly_{room.room_id}",
+        )
+
     # ──────────────────────────────────────────────────────────────────
     # Daily analysis
     # ──────────────────────────────────────────────────────────────────
@@ -499,6 +608,7 @@ from(bucket: "{bucket}")
         self, room: RoomConfig, weather: dict, season: str
     ) -> None:
         """Run daily analysis for a single room."""
+        run_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         _LOGGER.debug(
             "[%s] Daily analysis — weather: outside=%.1f°C, tomorrow min=%.1f/max=%.1f°C, season=%s",
             room.room_name,
@@ -510,6 +620,15 @@ from(bucket: "{bucket}")
                 "[%s] Not enough data (%d readings) — skipping",
                 room.room_name,
                 len(readings),
+            )
+            await self._async_notify_daily_room_result(
+                room=room,
+                run_ts=run_ts,
+                old_rate=None,
+                new_rate=None,
+                success_rate=None,
+                outcome=f"No changes needed in {room.room_name}.",
+                details=f"Analysis ran but not enough data ({len(readings)} readings).",
             )
             return
 
@@ -527,6 +646,15 @@ from(bucket: "{bucket}")
         if not analysis["sessions"]:
             _LOGGER.warning(
                 "[%s] No heating sessions detected — skipping", room.room_name
+            )
+            await self._async_notify_daily_room_result(
+                room=room,
+                run_ts=run_ts,
+                old_rate=None,
+                new_rate=None,
+                success_rate=analysis.get("success_rate"),
+                outcome=f"No changes needed in {room.room_name}.",
+                details="Analysis ran but no heating sessions were detected.",
             )
             return
 
@@ -550,6 +678,15 @@ from(bucket: "{bucket}")
 
         if not result or "heating_rate" not in result:
             _LOGGER.error("[%s] Invalid Ollama response: %s", room.room_name, response)
+            await self._async_notify_daily_room_result(
+                room=room,
+                run_ts=run_ts,
+                old_rate=current_rate,
+                new_rate=current_rate,
+                success_rate=analysis.get("success_rate"),
+                outcome=f"No changes needed in {room.room_name}.",
+                details="AI response was invalid, keeping previous heating rate.",
+            )
             return
 
         new_rate = float(result["heating_rate"])
@@ -565,6 +702,16 @@ from(bucket: "{bucket}")
         self.room_states[room.room_id]["confidence"] = confidence
 
         await self._async_apply_heating_rate(room, new_rate, reasoning)
+
+        await self._async_notify_daily_room_result(
+            room=room,
+            run_ts=run_ts,
+            old_rate=current_rate,
+            new_rate=new_rate,
+            success_rate=analysis.get("success_rate"),
+            outcome=self._format_daily_outcome(room.room_name, current_rate, new_rate),
+            details=reasoning,
+        )
 
         await self._async_notify(
             f"🌡️ {room.room_name} — Heating Rate Updated",
@@ -611,10 +758,21 @@ from(bucket: "{bucket}")
         self, room: RoomConfig, weather: dict, season: str
     ) -> None:
         """Run weekly analysis for a single room — report only."""
+        run_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         readings = await self.async_query_influxdb(room.temp_sensor, days=30)
         if len(readings) < 5:
             _LOGGER.warning(
                 "[%s] Not enough data for weekly analysis", room.room_name
+            )
+            await self._async_notify_weekly_room_result(
+                room=room,
+                run_ts=run_ts,
+                current_rate=None,
+                suggested_rate=None,
+                success_rate=None,
+                outcome=f"No changes suggested for {room.room_name}.",
+                details=f"Analysis ran but not enough data ({len(readings)} readings).",
+                weekly_report="No weekly report generated due to insufficient data.",
             )
             return
 
@@ -640,11 +798,24 @@ from(bucket: "{bucket}")
             _LOGGER.error(
                 "[%s] Invalid weekly Ollama response: %s", room.room_name, response
             )
+            await self._async_notify_weekly_room_result(
+                room=room,
+                run_ts=run_ts,
+                current_rate=current_rate,
+                suggested_rate=current_rate,
+                success_rate=analysis.get("success_rate"),
+                outcome=f"No changes suggested for {room.room_name}.",
+                details="AI response was invalid, keeping current value.",
+                weekly_report="No weekly report generated due to invalid AI response.",
+            )
             return
 
         confidence = result.get("confidence", "unknown")
         weekly_report = result.get("weekly_report", "No weekly report generated.")
-        suggested_rate = result.get("heating_rate", current_rate)
+        try:
+            suggested_rate = float(result.get("heating_rate", current_rate))
+        except (TypeError, ValueError):
+            suggested_rate = current_rate
         reasoning = result.get("reasoning", "")
 
         if room.room_id not in self.room_states:
@@ -654,26 +825,20 @@ from(bucket: "{bucket}")
 
         await self.async_update_sensors()
 
-        report_date = datetime.now().strftime("%Y-%m-%d")
-        await self._async_persistent_notification(
-            title=f"📊 {room.room_name} — Weekly Heating Report {report_date}",
-            message=(
-                f"## Weekly Summary\n"
-                f"{weekly_report}\n\n"
-                f"## Statistics (last 30 days)\n"
-                f"- Sessions analyzed: {analysis['days_analyzed']}\n"
-                f"- Success rate: {analysis['success_rate']}%\n"
-                f"- Avg heating rate observed: {analysis.get('avg_rate', 'unknown')}°C/min\n"
-                f"- Avg pre-heat start time: {analysis.get('avg_start_time', 'unknown')}\n"
-                f"- Outside temp: {weather['outside_temp']}°C ({season})\n\n"
-                f"## AI Suggestion\n"
-                f"Suggested rate: {suggested_rate:.3f}°C/min (current: {current_rate:.3f}°C/min)\n"
-                f"Confidence: {confidence}\n"
-                f"Reasoning: {reasoning}\n\n"
-                f"_Rate is NOT automatically adjusted by the weekly report. "
-                f"Apply manually if you agree with the suggestion._"
-            ),
-            notification_id=f"sha_{room.room_id}_weekly_report",
+        details = (
+            f"Confidence: {confidence}. "
+            f"Reasoning: {reasoning or 'No reasoning provided.'} "
+            f"Avg observed rate: {analysis.get('avg_rate', 'unknown')} °C/min."
+        )
+        await self._async_notify_weekly_room_result(
+            room=room,
+            run_ts=run_ts,
+            current_rate=current_rate,
+            suggested_rate=suggested_rate,
+            success_rate=analysis.get("success_rate"),
+            outcome=self._format_weekly_outcome(room.room_name, current_rate, suggested_rate),
+            details=details,
+            weekly_report=weekly_report,
         )
 
         _LOGGER.info(

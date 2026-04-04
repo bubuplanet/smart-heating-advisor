@@ -7,6 +7,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -27,11 +28,11 @@ async def async_setup_entry(
     coordinator: SmartHeatingCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     boolean_defs = [
-        ("airing_mode",       "Airing Mode",       "mdi:window-open"),
-        ("preheat_notified",  "Preheat Notified",  "mdi:bell"),
-        ("target_notified",   "Target Notified",   "mdi:check-circle"),
-        ("standby_notified",  "Standby Notified",  "mdi:sleep"),
-        ("vacation_notified", "Vacation Notified", "mdi:beach"),
+        ("airing_mode",       "Airing Mode (Window Pause)",       "mdi:window-open"),
+        ("preheat_notified",  "Preheat Notification Sent",         "mdi:bell"),
+        ("target_notified",   "Target Notification Sent",          "mdi:check-circle"),
+        ("standby_notified",  "Standby Notification Sent",         "mdi:sleep"),
+        ("vacation_notified", "Vacation Notification Sent",        "mdi:beach"),
     ]
 
     async def _create_entities(_event=None) -> None:
@@ -99,6 +100,9 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
         self._attr_unique_id = f"sha_{room_id}_{purpose}"
         self._attr_icon = icon
 
+        if purpose.endswith("_notified"):
+            self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
     @property
     def device_info(self) -> dict:
         return {
@@ -110,6 +114,19 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
     @property
     def is_on(self) -> bool:
         return self._is_on
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        if self._purpose == "airing_mode":
+            return {
+                "meaning": "When on, heating is paused because a window/door is considered open.",
+                "manual_use": "Advanced use only. Normally managed by the blueprint window logic.",
+            }
+
+        return {
+            "meaning": "Notification flag: on means this notification already fired for current cycle.",
+            "manual_use": "Set off to re-arm this notification manually. It may auto-reset on schedule or state changes.",
+        }
 
     async def async_turn_on(self, **kwargs) -> None:
         self._is_on = True
@@ -144,7 +161,7 @@ class SHAOverrideSwitch(SwitchEntity, RestoreEntity):
         self._is_on = False
         self._cancel_timer = None
 
-        self._attr_name = "Override"
+        self._attr_name = "Manual Override (Pause Automation)"
         self._attr_unique_id = f"sha_{room_id}_override"
         self._attr_icon = "mdi:hand-back-right"
 
@@ -159,6 +176,13 @@ class SHAOverrideSwitch(SwitchEntity, RestoreEntity):
     @property
     def is_on(self) -> bool:
         return self._is_on
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {
+            "meaning": "When on, automatic heating control is paused for this room.",
+            "manual_use": "Turning on manually keeps override active until turned off. Timed overrides should use the blueprint/service.",
+        }
 
     async def async_turn_on(self, **kwargs) -> None:
         """Turn on indefinitely (no auto-expiry)."""

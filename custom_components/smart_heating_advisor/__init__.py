@@ -206,15 +206,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         room_name = str(call.data.get("room_name", "")).strip()
         temp_sensor = str(call.data.get("temperature_sensor", "")).strip()
         schedules = call.data.get("schedules", [])
+        daily_report_enabled = bool(call.data.get("daily_report_enabled", True))
+        weekly_report_enabled = bool(call.data.get("weekly_report_enabled", True))
 
         _LOGGER.debug("sha.register_room payload: %s", dict(call.data))
 
-        updated = await coordinator.async_register_room(room_name, temp_sensor, schedules)
-        _LOGGER.debug(
-            "sha.register_room called: room='%s', sensor='%s', schedules=%s, updated=%s",
+        updated = await coordinator.async_register_room(
             room_name,
             temp_sensor,
             schedules,
+            daily_report_enabled=daily_report_enabled,
+            weekly_report_enabled=weekly_report_enabled,
+        )
+        _LOGGER.debug(
+            "sha.register_room called: room='%s', sensor='%s', schedules=%s, daily_report=%s, weekly_report=%s, updated=%s",
+            room_name,
+            temp_sensor,
+            schedules,
+            daily_report_enabled,
+            weekly_report_enabled,
             updated,
         )
 
@@ -282,4 +292,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, "run_daily_analysis")
         hass.services.async_remove(DOMAIN, "run_weekly_analysis")
         hass.services.async_remove(DOMAIN, "start_override")
+        hass.services.async_remove(DOMAIN, "register_room")
     return unload_ok

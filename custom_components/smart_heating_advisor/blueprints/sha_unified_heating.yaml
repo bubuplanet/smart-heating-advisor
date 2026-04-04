@@ -319,6 +319,20 @@ blueprint:
           selector:
             boolean:
 
+        notify_daily_report:
+          name: Notify daily analysis report
+          description: Show a persistent daily analysis report notification for this room.
+          default: true
+          selector:
+            boolean:
+
+        notify_weekly_report:
+          name: Notify weekly analysis report
+          description: Show a persistent weekly analysis report notification for this room.
+          default: true
+          selector:
+            boolean:
+
 variables:
   room_name:                  !input room_name
   temperature_sensor:         !input temperature_sensor
@@ -341,6 +355,8 @@ variables:
   notify_standby:             !input notify_standby
   notify_window:              !input notify_window
   notify_override:            !input notify_override
+  notify_daily_report:        !input notify_daily_report
+  notify_weekly_report:       !input notify_weekly_report
 
   room_id: >
     {{ room_name | lower
@@ -489,6 +505,8 @@ action:
       room_name: !input room_name
       temperature_sensor: !input temperature_sensor
       schedules: !input schedules
+      daily_report_enabled: !input notify_daily_report
+      weekly_report_enabled: !input notify_weekly_report
 
   - choose:
 

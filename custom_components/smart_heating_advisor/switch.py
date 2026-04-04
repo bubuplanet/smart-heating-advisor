@@ -28,11 +28,16 @@ async def async_setup_entry(
     coordinator: SmartHeatingCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     boolean_defs = [
-        ("airing_mode",       "Airing Mode (Window Pause)",       "mdi:window-open"),
-        ("preheat_notified",  "Preheat Notification Sent",         "mdi:bell"),
-        ("target_notified",   "Target Notification Sent",          "mdi:check-circle"),
-        ("standby_notified",  "Standby Notification Sent",         "mdi:sleep"),
-        ("vacation_notified", "Vacation Notification Sent",        "mdi:beach"),
+        ("airing_mode",                    "Airing Mode (Window Pause)",       "mdi:window-open", False, None),
+        ("preheat_notifications_enabled",  "Preheat Notifications Enabled",     "mdi:bell-ring",   True,  EntityCategory.CONFIG),
+        ("target_notifications_enabled",   "Target Notifications Enabled",      "mdi:check-circle", True, EntityCategory.CONFIG),
+        ("standby_notifications_enabled",  "Standby Notifications Enabled",     "mdi:sleep",       True,  EntityCategory.CONFIG),
+        ("window_notifications_enabled",   "Window Notifications Enabled",      "mdi:window-open", True,  EntityCategory.CONFIG),
+        ("override_notifications_enabled", "Override Notifications Enabled",    "mdi:hand-back-right", True, EntityCategory.CONFIG),
+        ("preheat_notified",               "Preheat Notification Sent",         "mdi:bell",        False, EntityCategory.DIAGNOSTIC),
+        ("target_notified",                "Target Notification Sent",          "mdi:check-circle", False, EntityCategory.DIAGNOSTIC),
+        ("standby_notified",               "Standby Notification Sent",         "mdi:sleep",       False, EntityCategory.DIAGNOSTIC),
+        ("vacation_notified",              "Vacation Notification Sent",        "mdi:beach",       False, EntityCategory.DIAGNOSTIC),
     ]
 
     async def _create_entities(_event=None) -> None:
@@ -46,8 +51,17 @@ async def async_setup_entry(
 
         entities: list = []
         for room in rooms:
-            for purpose, label, icon in boolean_defs:
-                e = SHABooleanSwitch(room.room_name, room.room_id, entry.entry_id, purpose, label, icon)
+            for purpose, label, icon, default_on, entity_category in boolean_defs:
+                e = SHABooleanSwitch(
+                    room.room_name,
+                    room.room_id,
+                    entry.entry_id,
+                    purpose,
+                    label,
+                    icon,
+                    default_on=default_on,
+                    entity_category=entity_category,
+                )
                 entities.append(e)
                 _LOGGER.debug(
                     "switch platform: prepared entity unique_id=%s expected_entity_id=switch.sha_%s_%s room='%s'",
@@ -89,19 +103,22 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
         purpose: str,
         purpose_label: str,
         icon: str,
+        default_on: bool = False,
+        entity_category: EntityCategory | None = None,
     ) -> None:
         self._room_name = room_name
         self._room_id = room_id
         self._entry_id = entry_id
         self._purpose = purpose
-        self._is_on = False
+        self._is_on = default_on
+        self._default_on = default_on
 
         self._attr_name = purpose_label
         self._attr_unique_id = f"sha_{room_id}_{purpose}"
         self._attr_icon = icon
 
-        if purpose.endswith("_notified"):
-            self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        if entity_category is not None:
+            self._attr_entity_category = entity_category
 
     @property
     def device_info(self) -> dict:
@@ -123,6 +140,12 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
                 "manual_use": "Advanced use only. Normally managed by the blueprint window logic.",
             }
 
+        if self._purpose.endswith("_notifications_enabled"):
+            return {
+                "meaning": "When on, this class of room notifications is enabled.",
+                "manual_use": "Toggle on/off to resume or pause this notification type for this room.",
+            }
+
         return {
             "meaning": "Notification flag: on means this notification already fired for current cycle.",
             "manual_use": "Set off to re-arm this notification manually. It may auto-reset on schedule or state changes.",
@@ -141,6 +164,8 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
         if (last := await self.async_get_last_state()) is not None:
             self._is_on = last.state == "on"
             _LOGGER.debug("%s: restored state → %s", self.entity_id, last.state)
+        else:
+            _LOGGER.debug("%s: no previous state, using default=%s", self.entity_id, self._default_on)
 
 
 class SHAOverrideSwitch(SwitchEntity, RestoreEntity):

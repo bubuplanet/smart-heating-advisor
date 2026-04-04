@@ -370,12 +370,37 @@ variables:
   sha_target_notified:   "switch.sha_{{ room_id }}_target_notified"
   sha_standby_notified:  "switch.sha_{{ room_id }}_standby_notified"
   sha_vacation_notified: "switch.sha_{{ room_id }}_vacation_notified"
+  sha_notify_preheat_enabled:  "switch.sha_{{ room_id }}_preheat_notifications_enabled"
+  sha_notify_target_enabled:   "switch.sha_{{ room_id }}_target_notifications_enabled"
+  sha_notify_standby_enabled:  "switch.sha_{{ room_id }}_standby_notifications_enabled"
+  sha_notify_window_enabled:   "switch.sha_{{ room_id }}_window_notifications_enabled"
+  sha_notify_override_enabled: "switch.sha_{{ room_id }}_override_notifications_enabled"
 
   room_temp:    "{{ states(temperature_sensor) | float(18) }}"
   heating_rate: "{{ states(sha_heating_rate) | float(0.15) }}"
 
   override_active: "{{ is_state(sha_override_switch, 'on') }}"
   windows_open:    "{{ is_state('switch.sha_' ~ room_id ~ '_airing_mode', 'on') }}"
+
+  notify_preheat_effective: >
+    {% set s = states(sha_notify_preheat_enabled) %}
+    {{ notify_preheat and (s == 'on' or s in ['unknown', 'unavailable']) }}
+
+  notify_target_effective: >
+    {% set s = states(sha_notify_target_enabled) %}
+    {{ notify_target_reached and (s == 'on' or s in ['unknown', 'unavailable']) }}
+
+  notify_standby_effective: >
+    {% set s = states(sha_notify_standby_enabled) %}
+    {{ notify_standby and (s == 'on' or s in ['unknown', 'unavailable']) }}
+
+  notify_window_effective: >
+    {% set s = states(sha_notify_window_enabled) %}
+    {{ notify_window and (s == 'on' or s in ['unknown', 'unavailable']) }}
+
+  notify_override_effective: >
+    {% set s = states(sha_notify_override_enabled) %}
+    {{ notify_override and (s == 'on' or s in ['unknown', 'unavailable']) }}
 
   vacation_active: >
     {% if not vacation_enabled %}
@@ -527,7 +552,7 @@ action:
               entity_id: "switch.sha_{{ room_id }}_airing_mode"
           - if:
               - condition: template
-                value_template: "{{ notify_window }}"
+                value_template: "{{ notify_window_effective }}"
             then:
               - action: notify.notify
                 data:
@@ -552,7 +577,7 @@ action:
                   entity_id: "switch.sha_{{ room_id }}_airing_mode"
               - if:
                   - condition: template
-                    value_template: "{{ notify_window }}"
+                    value_template: "{{ notify_window_effective }}"
                 then:
                   - action: notify.notify
                     data:
@@ -655,7 +680,7 @@ action:
                   duration_minutes: "{{ override_minutes | int(120) }}"
               - if:
                   - condition: template
-                    value_template: "{{ notify_override }}"
+                    value_template: "{{ notify_override_effective }}"
                 then:
                   - action: notify.notify
                     data:
@@ -734,6 +759,7 @@ action:
           - condition: template
             value_template: >
               {{ notify_preheat and
+                  notify_preheat_effective and
                  in_preheat and
                  is_state(sha_preheat_notified, 'off') }}
         then:
@@ -752,6 +778,7 @@ action:
           - condition: template
             value_template: >
               {{ notify_target_reached and
+                  notify_target_effective and
                  target_reached and
                  is_state(sha_target_notified, 'off') }}
         then:
@@ -769,6 +796,7 @@ action:
           - condition: template
             value_template: >
               {{ notify_standby and
+                  notify_standby_effective and
                  not in_comfort and
                  not in_preheat and
                  not vacation_active and
@@ -792,7 +820,7 @@ action:
 
       - if:
           - condition: template
-            value_template: "{{ notify_override and trigger.id == 'override_ended' }}"
+            value_template: "{{ notify_override_effective and trigger.id == 'override_ended' }}"
         then:
           - action: notify.notify
             data:

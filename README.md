@@ -326,18 +326,26 @@ Name each **HA Schedule helper** with the target temperature at the end:
 | **Notify override active/resumed** | On manual TRV change + resume | `true` |
 | **Notify daily report** | Daily analysis summary notification | `true` |
 | **Notify weekly report** | Weekly analysis summary notification | `true` |
-| **Notification Header Template** | Optional title template with placeholders | _(empty)_ |
-| **Notification Body Template** | Optional body template with placeholders | _(empty)_ |
-| **Notification Footer Template** | Optional footer appended to notifications | _(empty)_ |
+| **Window Open Header / Body Template** | Custom text for window-open notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
+| **Window Closed Header / Body Template** | Custom text for window-closed notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
+| **Schedule Started Header / Body Template** | Custom text for schedule-started notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
+| **Schedule Finished Header / Body Template** | Custom text for schedule-finished notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
+| **Pre-heat Started Header / Body Template** | Custom text for pre-heat notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
+| **Target Reached Header / Body Template** | Custom text for target-reached notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
+| **Standby Header / Body Template** | Custom text for standby notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
+| **Override Active Header / Body Template** | Custom text for override-active notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
+| **Override Ended Header / Body Template** | Custom text for override-ended notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
 
-Template placeholders:
-- `{{ room_name }}`
-- `{{ type }}`
-- `{{ status }}`
-
-If templates are left empty, SHA uses sensible defaults such as:
-- Header: `{{ room_name }} - {{ type }}`
-- Body: `{{ room_name }} - {{ type }} : {{ status }}`
+Supported template variables:
+- Common (all templates): `{{ room_name }}`, `{{ type }}`, `{{ status }}`
+- Window open/closed body: `{{ room_temp }}`
+- Schedule started body: `{{ room_temp }}`, `{{ schedule_name }}`
+- Schedule finished body: `{{ room_temp }}`, `{{ default_hvac_mode }}`, `{{ default_temp }}`
+- Pre-heat started body: `{{ room_temp }}`, `{{ target_temp }}`, `{{ schedule_name }}`, `{{ eta_minutes }}`
+- Target reached body: `{{ room_temp }}`, `{{ schedule_name }}`, `{{ time }}`
+- Standby body: `{{ room_temp }}`, `{{ default_hvac_mode }}`, `{{ default_temp }}`
+- Override active body: `{{ device_name }}`, `{{ override_minutes }}`, `{{ resume_time }}`, `{{ room_temp }}`
+- Override ended body: `{{ room_temp }}`
 
 ---
 

@@ -259,9 +259,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry.async_on_unload(entry.add_update_listener(_options_updated))
 
-    # ── Setup notification (errors only) ─────────────────────────────
+    # ── Setup notification (first install only) ──────────────────────
     action = blueprint_result["action"]
-    if action == "error":
+    if action == "installed":
         texts = await async_load_messages(hass)
         source_ver = blueprint_result["source_version"]
         dest_ver = blueprint_result["dest_version"]
@@ -276,7 +276,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             {
                 "title": notification_title,
                 "message": notification_message,
-                "notification_id": "sha_setup_error",
+                "notification_id": "sha_setup_complete",
             },
         )
 

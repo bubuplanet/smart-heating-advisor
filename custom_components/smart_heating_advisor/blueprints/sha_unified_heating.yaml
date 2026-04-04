@@ -366,10 +366,11 @@ variables:
 
   sha_heating_rate:      "number.sha_{{ room_id }}_heating_rate"
   sha_override_switch:   "switch.sha_{{ room_id }}_override"
-  sha_preheat_notified:  "switch.sha_{{ room_id }}_preheat_notified"
-  sha_target_notified:   "switch.sha_{{ room_id }}_target_notified"
-  sha_standby_notified:  "switch.sha_{{ room_id }}_standby_notified"
-  sha_vacation_notified: "switch.sha_{{ room_id }}_vacation_notified"
+  sha_preheat_notified:   "switch.sha_{{ room_id }}_preheat_notified"
+  sha_target_notified:    "switch.sha_{{ room_id }}_target_notified"
+  sha_standby_notified:   "switch.sha_{{ room_id }}_standby_notified"
+  sha_vacation_notified:  "switch.sha_{{ room_id }}_vacation_notified"
+  sha_override_notified:  "switch.sha_{{ room_id }}_override_notified"
   sha_notify_preheat_enabled:  "switch.sha_{{ room_id }}_preheat_notifications_enabled"
   sha_notify_target_enabled:   "switch.sha_{{ room_id }}_target_notifications_enabled"
   sha_notify_standby_enabled:  "switch.sha_{{ room_id }}_standby_notifications_enabled"
@@ -595,6 +596,18 @@ action:
                   - condition: template
                     value_template: "{{ trigger.to_state.state == 'on' }}"
                 sequence:
+                  - if:
+                      - condition: template
+                        value_template: >
+                          {{ notify_preheat_effective and is_state(sha_preheat_notified, 'on') }}
+                    then:
+                      - action: persistent_notification.create
+                        data:
+                          title: "🌅 {{ room_name }} — Pre-heat Complete"
+                          message: >
+                            Pre-heating for "{{ active_schedule.name }}" finished.
+                            Room: {{ room_temp | round(1) }}°C → target {{ comfort_temp }}°C.
+                          notification_id: "sha_preheat_status_{{ room_id }}"
                   - action: switch.turn_off
                     target:
                       entity_id:
@@ -680,15 +693,20 @@ action:
                   duration_minutes: "{{ override_minutes | int(120) }}"
               - if:
                   - condition: template
-                    value_template: "{{ notify_override_effective }}"
+                    value_template: >
+                      {{ notify_override_effective and is_state(sha_override_notified, 'off') }}
                 then:
-                  - action: notify.notify
+                  - action: persistent_notification.create
                     data:
                       title: "✋ {{ room_name }} — Override Active"
                       message: >
                         Manual change detected on {{ trigger.to_state.attributes.friendly_name }}.
                         Smart heating paused for {{ override_minutes }} min until
                         {{ (now() + timedelta(minutes=override_minutes | int)).strftime('%H:%M') }}.
+                      notification_id: "sha_override_status_{{ room_id }}"
+                  - action: switch.turn_on
+                    target:
+                      entity_id: "{{ sha_override_notified }}"
 
       - conditions:
           - condition: template
@@ -758,18 +776,18 @@ action:
       - if:
           - condition: template
             value_template: >
-              {{ notify_preheat and
-                  notify_preheat_effective and
+              {{ notify_preheat_effective and
                  in_preheat and
                  is_state(sha_preheat_notified, 'off') }}
         then:
-          - action: notify.notify
+          - action: persistent_notification.create
             data:
               title: "🌅 {{ room_name }} — Pre-heat Started"
               message: >
                 Pre-heating for "{{ preheat_schedule.name }}".
                 Room: {{ room_temp | round(1) }}°C → target {{ preheat_temp }}°C.
                 Est. {{ preheat_schedule.mins_needed }} min to reach target.
+              notification_id: "sha_preheat_status_{{ room_id }}"
           - action: switch.turn_on
             target:
               entity_id: "{{ sha_preheat_notified }}"
@@ -820,14 +838,22 @@ action:
 
       - if:
           - condition: template
-            value_template: "{{ notify_override_effective and trigger.id == 'override_ended' }}"
+            value_template: "{{ trigger.id == 'override_ended' }}"
         then:
-          - action: notify.notify
-            data:
-              title: "🔄 {{ room_name }} — Heating Resumed"
-              message: >
-                Manual override ended. Smart heating resumed.
-                Room: {{ room_temp | round(1) }}°C.
+          - action: switch.turn_off
+            target:
+              entity_id: "{{ sha_override_notified }}"
+          - if:
+              - condition: template
+                value_template: "{{ notify_override_effective }}"
+            then:
+              - action: persistent_notification.create
+                data:
+                  title: "🔄 {{ room_name }} — Heating Resumed"
+                  message: >
+                    Manual override ended. Smart heating resumed.
+                    Room: {{ room_temp | round(1) }}°C.
+                  notification_id: "sha_override_status_{{ room_id }}"
 
       - if:
           - condition: template

@@ -79,6 +79,7 @@ class RoomConfig:
         self.target_notified = f"switch.sha_{self.room_id}_target_notified"
         self.standby_notified = f"switch.sha_{self.room_id}_standby_notified"
         self.vacation_notified = f"switch.sha_{self.room_id}_vacation_notified"
+        self.override_notified = f"switch.sha_{self.room_id}_override_notified"
 
     def __repr__(self):
         return (

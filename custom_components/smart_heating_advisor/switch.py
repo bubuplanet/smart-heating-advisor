@@ -38,6 +38,7 @@ async def async_setup_entry(
         ("target_notified",                "Target Notification Sent",          "mdi:check-circle", False, EntityCategory.DIAGNOSTIC),
         ("standby_notified",               "Standby Notification Sent",         "mdi:sleep",       False, EntityCategory.DIAGNOSTIC),
         ("vacation_notified",              "Vacation Notification Sent",        "mdi:beach",       False, EntityCategory.DIAGNOSTIC),
+        ("override_notified",              "Override Notification Sent",        "mdi:hand-back-right", False, EntityCategory.DIAGNOSTIC),
     ]
 
     async def _create_entities(_event=None) -> None:

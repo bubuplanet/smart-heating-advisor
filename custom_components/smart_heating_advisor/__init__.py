@@ -4,6 +4,7 @@ import re
 import shutil
 from pathlib import Path
 
+from homeassistant.components.persistent_notification import async_create as pn_async_create
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_change
@@ -259,9 +260,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry.async_on_unload(entry.add_update_listener(_options_updated))
 
-    # ── Setup notification (first install only) ──────────────────────
+    # ── Setup notification (first install of this config entry only) ───
     action = blueprint_result["action"]
-    if action == "installed":
+    if not entry.data.get("setup_notification_sent"):
         texts = await async_load_messages(hass)
         source_ver = blueprint_result["source_version"]
         dest_ver = blueprint_result["dest_version"]
@@ -270,14 +271,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         bp_msg = render_blueprint_status(texts, action, source_ver, dest_ver, backup_name)
         notification_title, notification_message = render_setup_notification(texts, bp_msg)
 
-        await hass.services.async_call(
-            "persistent_notification",
-            "create",
-            {
-                "title": notification_title,
-                "message": notification_message,
-                "notification_id": "sha_setup_complete",
-            },
+        pn_async_create(
+            hass,
+            notification_message,
+            title=notification_title,
+            notification_id="sha_setup_complete",
+        )
+
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, "setup_notification_sent": True}
         )
 
     _LOGGER.info("Smart Heating Advisor setup complete")

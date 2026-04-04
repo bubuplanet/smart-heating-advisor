@@ -259,26 +259,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry.async_on_unload(entry.add_update_listener(_options_updated))
 
-    # ── Setup notification ───────────────────────────────────────────
-    texts = await async_load_messages(hass)
-
+    # ── Setup notification (errors only) ─────────────────────────────
     action = blueprint_result["action"]
-    source_ver = blueprint_result["source_version"]
-    dest_ver = blueprint_result["dest_version"]
-    backup = blueprint_result.get("backup_path")
-    backup_name = Path(backup).name if backup else "none"
-    bp_msg = render_blueprint_status(texts, action, source_ver, dest_ver, backup_name)
-    notification_title, notification_message = render_setup_notification(texts, bp_msg)
+    if action == "error":
+        texts = await async_load_messages(hass)
+        source_ver = blueprint_result["source_version"]
+        dest_ver = blueprint_result["dest_version"]
+        backup = blueprint_result.get("backup_path")
+        backup_name = Path(backup).name if backup else "none"
+        bp_msg = render_blueprint_status(texts, action, source_ver, dest_ver, backup_name)
+        notification_title, notification_message = render_setup_notification(texts, bp_msg)
 
-    await hass.services.async_call(
-        "persistent_notification",
-        "create",
-        {
-            "title": notification_title,
-            "message": notification_message,
-            "notification_id": "sha_setup_complete",
-        },
-    )
+        await hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "title": notification_title,
+                "message": notification_message,
+                "notification_id": "sha_setup_error",
+            },
+        )
 
     _LOGGER.info("Smart Heating Advisor setup complete")
     return True

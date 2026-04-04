@@ -80,7 +80,7 @@ SHA Daily analysis at 02:00 AM
 | 🏖️ **Vacation mode** | Calendar-based frost protection |
 | 🪟 **Window detection** | Pauses heating when windows open |
 | ✋ **Manual override** | Auto-resume after configurable duration |
-| 🔔 **Smart notifications** | Each notification fires once per event — no spam |
+| 🔔 **Smart notifications** | Mobile lifecycle notifications with per-room enable switches |
 | 📊 **Weekly reports** | Sunday persistent notification with 30-day analysis |
 | 🔄 **Blueprint auto-update** | New SHA versions automatically update the blueprint |
 
@@ -126,7 +126,7 @@ After restarting Home Assistant:
 3. Search for **Smart Heating Advisor** and select it
 4. Complete the 3-step setup wizard — see [Configuration](#configuration) for details
 
-> 💡 A persistent notification will appear after installation with a quick-start guide.
+> 💡 SHA only creates a persistent setup notification if there is a setup error.
 
 ### Manual
 
@@ -320,10 +320,24 @@ Name each **HA Schedule helper** with the target temperature at the end:
 | Notification | When | Default |
 |---|---|---|
 | **Notify pre-heat starts** | Once when pre-heat begins | `true` |
-| **Notify target reached** | Once when room hits target | `true` |
+| **Notify target reached / schedule start** | When comfort schedule starts | `true` |
 | **Notify standby starts** | Once when no schedule active | `true` |
 | **Notify window open/close** | On window state change | `true` |
 | **Notify override active/resumed** | On manual TRV change + resume | `true` |
+| **Notify daily report** | Daily analysis summary notification | `true` |
+| **Notify weekly report** | Weekly analysis summary notification | `true` |
+| **Notification Header Template** | Optional title template with placeholders | _(empty)_ |
+| **Notification Body Template** | Optional body template with placeholders | _(empty)_ |
+| **Notification Footer Template** | Optional footer appended to notifications | _(empty)_ |
+
+Template placeholders:
+- `{{ room_name }}`
+- `{{ type }}`
+- `{{ status }}`
+
+If templates are left empty, SHA uses sensible defaults such as:
+- Header: `{{ room_name }} - {{ type }}`
+- Body: `{{ room_name }} - {{ type }} : {{ status }}`
 
 ---
 
@@ -334,13 +348,14 @@ Name each **HA Schedule helper** with the target temperature at the end:
 | Notification | Title | When | Fires |
 |---|---|---|---|
 | Pre-heat | 🌅 Room — Pre-heat Started | Pre-heat begins | Once per schedule event |
-| Target reached | ✅ Room — Target Reached | Room hits target temp | Once per schedule event |
-| Standby | 🌡️ Room — Standby | No schedule active | Once per transition |
+| Schedule started | ▶️ Room — Schedule Started | Comfort schedule turns ON | Once per schedule start |
+| Schedule finished | ⏹️ Room — Schedule Finished | Comfort schedule turns OFF | Once per schedule end |
 | Window open | 🪟 Room — Window Open | Window opens (after delay) | Once per opening |
 | Window closed | 🪟 Room — Window Closed | All windows close | Once per closing |
 | Override active | ✋ Room — Override Active | Manual TRV change detected | On each manual change |
 | Override ended | 🔄 Room — Heating Resumed | Override expires | On each resume |
-| Vacation active | 🏖️ Room — Vacation Mode | Vacation calendar event | Once per vacation event |
+| Daily report | 📅 Room — Daily Heating Report | Daily analysis completes | Once per room per run |
+| Weekly report | 📊 Room — Weekly Heating Report | Weekly analysis completes | Once per room per run |
 
 ---
 
@@ -383,9 +398,14 @@ SHA creates entities per discovered room, all grouped under a device named **SHA
 | Entity | Description |
 |---|---|
 | `switch.sha_ROOM_airing_mode` | Window open — heating paused |
+| `switch.sha_ROOM_preheat_notifications_enabled` | Enable/disable pre-heat notifications for this room |
+| `switch.sha_ROOM_target_notifications_enabled` | Enable/disable schedule start notifications for this room |
+| `switch.sha_ROOM_standby_notifications_enabled` | Enable/disable schedule finish/standby notifications for this room |
+| `switch.sha_ROOM_window_notifications_enabled` | Enable/disable window open/close notifications for this room |
+| `switch.sha_ROOM_override_notifications_enabled` | Enable/disable override active/resumed notifications for this room |
 | `switch.sha_ROOM_preheat_notified` | Pre-heat notification sent this cycle |
-| `switch.sha_ROOM_target_notified` | Target reached notification sent this cycle |
-| `switch.sha_ROOM_standby_notified` | Standby notification sent this cycle |
+| `switch.sha_ROOM_target_notified` | Schedule start notification sent this cycle |
+| `switch.sha_ROOM_standby_notified` | Schedule finish/standby notification sent this cycle |
 | `switch.sha_ROOM_vacation_notified` | Vacation notification sent this cycle |
 | `switch.sha_ROOM_override` | Manual override active |
 
@@ -665,8 +685,9 @@ The blueprint is auto-installed by SHA on setup. If it's missing:
 
 ### Notifications firing every 5 minutes
 
-The notification flag switches are not being reset correctly. Check:
-- `switch.sha_ROOM_preheat_notified` and related switches are visible in HA
+Check these first:
+- Notification-enable switches are on for the room (for example `switch.sha_ROOM_preheat_notifications_enabled`)
+- Notification flag switches (`switch.sha_ROOM_preheat_notified`, etc.) are visible and changing state
 - The `schedule_changed` trigger is firing when schedules turn on/off
 
 ### Override not working

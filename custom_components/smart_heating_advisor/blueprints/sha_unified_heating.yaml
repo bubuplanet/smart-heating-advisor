@@ -204,28 +204,47 @@ blueprint:
           selector:
             duration:
 
-        window_close_reaction_time:
-          name: Close Reaction Time
-          description: How long after all windows close before heating resumes.
-          default:
-            hours: 0
-            minutes: 0
-            seconds: 30
+        notify_window:
+          name: Notify when heating is paused by a window
+          description: Send a notification when heating is paused because a window has been open too long.
+          default: true
           selector:
-            duration:
+            boolean:
 
-        window_max_airing_minutes:
-          name: Max Airing Duration
+        tpl_window_header:
+          name: Window Notification Header Template
           description: >
-            Send a reminder notification if a window stays open longer than this.
-            Set to 0 to disable.
-          default: 60
+            Shared header for all window notifications.
+            Variables: {{ room_name }}, {{ window_name }}, {{ status }}
+          default: "\U0001FA9F {{ room_name }} - {{ window_name }} {{ status }}"
           selector:
-            number:
-              min: 0
-              max: 480
-              step: 5
-              unit_of_measurement: min
+            text:
+
+        tpl_window_timeout_body:
+          name: Window Paused Body Template
+          description: >
+            Sent when heating is paused because a window has been open longer than the reaction time.
+            Variables: {{ room_name }}, {{ window_name }}, {{ room_temp }}
+          default: >-
+            Heating in {{ room_name }} has been paused because a window is open.
+            It will resume automatically when all windows are closed.
+            Current temperature: {{ room_temp }}\u00b0C.
+          selector:
+            text:
+              multiline: true
+
+        tpl_window_closed_body:
+          name: Window Closed Body Template
+          description: >
+            Sent only when windows close after the max airing time was exceeded.
+            Variables: {{ room_name }}, {{ window_name }}, {{ room_temp }}, {{ resume_mode }}
+          default: >-
+            All windows in {{ room_name }} are now closed.
+            Heating resumed ({{ resume_mode }}).
+            Current temperature: {{ room_temp }}\u00b0C.
+          selector:
+            text:
+              multiline: true
 
     vacation_section:
       name: "🏖️ Vacation"
@@ -320,59 +339,11 @@ blueprint:
           selector:
             boolean:
 
-        notify_window:
-          name: Notify when window opens or closes
-          default: true
-          selector:
-            boolean:
-
         notify_override:
           name: Notify when override is activated or resumed
           default: true
           selector:
             boolean:
-
-        tpl_window_open_header:
-          name: Window Open Header Template
-          description: "Variables: {{ room_name }}, {{ type }}, {{ status }}"
-          default: "{{ room_name }} - {{ type }}"
-          selector:
-            text:
-
-        tpl_window_open_body:
-          name: Window Open Body Template
-          description: "Variables: {{ room_name }}, {{ type }}, {{ status }}, {{ room_temp }}"
-          default: "{{ room_name }} - {{ type }} : {{ status }}"
-          selector:
-            text:
-
-        tpl_window_closed_header:
-          name: Window Closed Header Template
-          description: "Variables: {{ room_name }}, {{ type }}, {{ status }}"
-          default: "{{ room_name }} - {{ type }}"
-          selector:
-            text:
-
-        tpl_window_closed_body:
-          name: Window Closed Body Template
-          description: "Variables: {{ room_name }}, {{ type }}, {{ status }}, {{ room_temp }}, {{ resume_mode }}"
-          default: "{{ room_name }} - {{ type }} : {{ status }}"
-          selector:
-            text:
-
-        tpl_window_timeout_header:
-          name: Window Open Too Long Header Template
-          description: "Variables: {{ room_name }}, {{ type }}, {{ status }}, {{ airing_minutes }}"
-          default: "{{ room_name }} - {{ type }}"
-          selector:
-            text:
-
-        tpl_window_timeout_body:
-          name: Window Open Too Long Body Template
-          description: "Variables: {{ room_name }}, {{ type }}, {{ status }}, {{ room_temp }}, {{ airing_minutes }}"
-          default: "{{ room_name }} - {{ type }} : {{ status }}"
-          selector:
-            text:
 
         tpl_schedule_started_header:
           name: Schedule Started Header Template
@@ -508,10 +479,8 @@ variables:
   notify_standby:             !input notify_standby
   notify_window:              !input notify_window
   notify_override:            !input notify_override
-  tpl_window_open_header:       !input tpl_window_open_header
-  tpl_window_open_body:         !input tpl_window_open_body
-  tpl_window_closed_header:     !input tpl_window_closed_header
-  tpl_window_closed_body:       !input tpl_window_closed_body
+  tpl_window_header:            !input tpl_window_header
+  tpl_window_timeout_body:      !input tpl_window_timeout_body
   tpl_schedule_started_header:  !input tpl_schedule_started_header
   tpl_schedule_started_body:    !input tpl_schedule_started_body
   tpl_schedule_finished_header: !input tpl_schedule_finished_header
@@ -526,9 +495,6 @@ variables:
   tpl_override_active_body:     !input tpl_override_active_body
   tpl_override_ended_header:    !input tpl_override_ended_header
   tpl_override_ended_body:      !input tpl_override_ended_body
-  tpl_window_timeout_header:    !input tpl_window_timeout_header
-  tpl_window_timeout_body:      !input tpl_window_timeout_body
-  window_max_airing_minutes:    !input window_max_airing_minutes
   notify_daily_report:        !input notify_daily_report
   notify_weekly_report:       !input notify_weekly_report
 
@@ -543,7 +509,8 @@ variables:
   sha_preheat_notified:  "switch.sha_{{ room_id }}_preheat_notified"
   sha_target_notified:   "switch.sha_{{ room_id }}_target_notified"
   sha_standby_notified:  "switch.sha_{{ room_id }}_standby_notified"
-  sha_vacation_notified: "switch.sha_{{ room_id }}_vacation_notified"
+  sha_vacation_notified:         "switch.sha_{{ room_id }}_vacation_notified"
+  sha_window_timeout_notified:   "switch.sha_{{ room_id }}_window_timeout_notified"
   sha_notify_preheat_enabled:  "switch.sha_{{ room_id }}_preheat_notifications_enabled"
   sha_notify_target_enabled:   "switch.sha_{{ room_id }}_target_notifications_enabled"
   sha_notify_standby_enabled:  "switch.sha_{{ room_id }}_standby_notifications_enabled"
@@ -674,17 +641,7 @@ triggers:
     to:
       - "off"
       - "closed"
-    for: !input window_close_reaction_time
     id: window_airing_end
-
-  - trigger: state
-    entity_id: !input window_sensors
-    to:
-      - "on"
-      - "open"
-    for:
-      minutes: "{{ window_max_airing_minutes | int(60) }}"
-    id: window_airing_timeout
 
   - trigger: state
     entity_id: !input vacation_calendar
@@ -740,23 +697,24 @@ action:
               - action: notify.notify
                 data:
                   title: >
-                    {% set tpl = tpl_window_open_header | trim %}
-                    {% set base = tpl if tpl else "{{ room_name }} - {{ type }}" %}
+                    {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
+                    {% set tpl = tpl_window_header | trim %}
+                    {% set base = tpl if tpl else "\U0001FA9F {{ room_name }} - {{ window_name }} {{ status }}" %}
                     {{ base
                        | replace('{{ room_name }}', room_name)
-                       | replace('{{ type }}', 'Window')
+                       | replace('{{ window_name }}', win_name)
                        | replace('{{ status }}', 'Open') }}
                   message: >
-                    {% set body_tpl = tpl_window_open_body | trim %}
-                    {% set body_base = body_tpl if body_tpl else "{{ room_name }} - {{ type }} : {{ status }}" %}
-                    {% set body = body_base
+                    {% set body_tpl = tpl_window_timeout_body | trim %}
+                    {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
+                    {% set body_base = body_tpl if body_tpl else "Heating in {{ room_name }} has been paused because a window is open. It will resume when all windows are closed. Current temperature: {{ room_temp }}\u00b0C." %}
+                    {{ body_base
                        | replace('{{ room_name }}', room_name)
-                       | replace('{{ type }}', 'Window')
-                      | replace('{{ status }}', 'Open')
-                      | replace('{{ room_temp }}', (room_temp | round(1) | string)) %}
-                    {{ body }}
-                    Heating paused — window open.
-                    Room: {{ room_temp | round(1) }}°C.
+                       | replace('{{ window_name }}', win_name)
+                       | replace('{{ room_temp }}', (room_temp | round(1) | string)) }}
+              - action: switch.turn_on
+                target:
+                  entity_id: "{{ sha_window_timeout_notified }}"
 
       - conditions:
           - condition: template
@@ -774,68 +732,32 @@ action:
                   entity_id: "switch.sha_{{ room_id }}_airing_mode"
               - if:
                   - condition: template
-                    value_template: "{{ notify_window_effective }}"
+                    value_template: "{{ notify_window_effective and is_state(sha_window_timeout_notified, 'on') }}"
                 then:
                   - action: notify.notify
                     data:
                       title: >
-                        {% set tpl = tpl_window_closed_header | trim %}
-                        {% set base = tpl if tpl else "{{ room_name }} - {{ type }}" %}
+                        {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
+                        {% set tpl = tpl_window_header | trim %}
+                        {% set base = tpl if tpl else "\U0001FA9F {{ room_name }} - {{ window_name }} {{ status }}" %}
                         {{ base
                            | replace('{{ room_name }}', room_name)
-                           | replace('{{ type }}', 'Window')
-                           | replace('{{ status }}', 'Closed') }}
+                           | replace('{{ window_name }}', win_name)
+                           | replace('{{ status }}', 'Closed')
+                           | replace('{{ airing_minutes }}', (window_max_airing_minutes | string)) }}
                       message: >
                         {% set body_tpl = tpl_window_closed_body | trim %}
+                        {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
                         {% set resume_mode = 'Pre-heat' if in_preheat else ('Schedule' if in_comfort else 'Standby') %}
-                        {% set body_base = body_tpl if body_tpl else "{{ room_name }} - {{ type }} : {{ status }}" %}
-                        {% set body = body_base
+                        {% set body_base = body_tpl if body_tpl else "All windows in {{ room_name }} are now closed. Heating resumed ({{ resume_mode }}). Current temperature: {{ room_temp }}\u00b0C." %}
+                        {{ body_base
                            | replace('{{ room_name }}', room_name)
-                           | replace('{{ type }}', 'Window')
-                           | replace('{{ status }}', 'Closed')
-                           | replace('{{ room_temp }}', (room_temp | round(1) | string))
-                           | replace('{{ resume_mode }}', resume_mode) %}
-                        {{ body }}
-                        All windows closed.
-                        {% if in_preheat %}
-                          Pre-heat resuming for "{{ preheat_schedule.name }}".
-                        {% elif in_comfort %}
-                          Schedule "{{ active_schedule.name }}" resuming.
-                        {% else %}
-                          Heating resumed (standby).
-                        {% endif %}
-                        Room: {{ room_temp | round(1) }}°C.
-
-      - conditions:
-          - condition: template
-            value_template: "{{ trigger.id == 'window_airing_timeout' }}"
-        sequence:
-          - if:
-              - condition: template
-                value_template: "{{ notify_window_effective and window_max_airing_minutes | int(0) > 0 }}"
-            then:
-              - action: notify.notify
-                data:
-                  title: >
-                    {% set tpl = tpl_window_timeout_header | trim %}
-                    {% set base = tpl if tpl else "{{ room_name }} - {{ type }}" %}
-                    {{ base
-                       | replace('{{ room_name }}', room_name)
-                       | replace('{{ type }}', 'Window')
-                       | replace('{{ status }}', 'Open Too Long')
-                       | replace('{{ airing_minutes }}', (window_max_airing_minutes | string)) }}
-                  message: >
-                    {% set body_tpl = tpl_window_timeout_body | trim %}
-                    {% set body_base = body_tpl if body_tpl else "{{ room_name }} - {{ type }} : {{ status }}" %}
-                    {% set body = body_base
-                       | replace('{{ room_name }}', room_name)
-                       | replace('{{ type }}', 'Window')
-                       | replace('{{ status }}', 'Open Too Long')
-                       | replace('{{ room_temp }}', (room_temp | round(1) | string))
-                       | replace('{{ airing_minutes }}', (window_max_airing_minutes | string)) %}
-                    {{ body }}
-                    Window has been open for {{ window_max_airing_minutes }} min.
-                    Heating remains off. Room: {{ room_temp | round(1) }}°C.
+                           | replace('{{ window_name }}', win_name)
+                           | replace('{{ resume_mode }}', resume_mode)
+                           | replace('{{ room_temp }}', (room_temp | round(1) | string)) }}
+                  - action: switch.turn_off
+                    target:
+                      entity_id: "{{ sha_window_timeout_notified }}"
 
       - conditions:
           - condition: template
@@ -1027,8 +949,7 @@ action:
             value_template: >
               {{ override_active and
                  trigger.id not in ['override_ended', 'manual_override',
-                                    'window_airing_start', 'window_airing_end',
-                                    'window_airing_timeout'] }}
+                                    'window_airing_start', 'window_airing_end'] }}
         sequence:
           - stop: "Override active — skipping control loop."
 

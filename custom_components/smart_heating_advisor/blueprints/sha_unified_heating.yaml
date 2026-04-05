@@ -100,7 +100,7 @@ blueprint:
               multiple: true
 
         fixed_radiator_temperature:
-          name: Fixed Radiator Temperature
+          name: Fixed Radiator Temperature (optional)
           description: >
             Temperature applied to fixed radiator thermostats when heating is active.
           default: 30
@@ -143,67 +143,71 @@ blueprint:
               step: 0.5
               unit_of_measurement: "°C"
 
-        notify_preheat:
-          name: Notify when pre-heat starts
-          description: Fires once per schedule event — not every 5 minutes.
-          default: true
-          selector:
-            boolean:
-
-        notify_target_reached:
-          name: Notify when target temperature reached
-          description: Fires once per schedule event.
-          default: true
-          selector:
-            boolean:
-
         tpl_schedule_header:
           name: Schedule Notification Header
           description: >
-            Header for pre-heat, heating started/ended, and target reached notifications.
+            Shared header for all schedule notifications.
             Variables: {{ room_name }}, {{ status }}
-          default: "\U0001F514 {{ room_name }} \u2014 {{ status }}"
+          default: "🔔 {{ room_name }} — {{ status }}"
           selector:
             text:
+
+        notify_preheat:
+          name: Notify when pre-heat starts
+          description: >
+            Fires once when pre-heating begins — typically minutes before the schedule starts.
+            Only sent if the room needs warming up before the schedule activates.
+          default: true
+          selector:
+            boolean:
 
         tpl_preheat_started_body:
-          name: Pre-heat Started Body Template
-          description: "Variables: {{ room_name }}, {{ room_temp }}, {{ target_temp }}, {{ schedule_name }}, {{ eta_minutes }}"
+          name: Pre-heat Started — Message Body
+          description: "Sent when pre-heating begins. Variables: {{ room_name }}, {{ room_temp }}, {{ target_temp }}, {{ schedule_name }}, {{ eta_minutes }}"
           default: >-
             Pre-heating {{ room_name }} for "{{ schedule_name }}".
-            Target: {{ target_temp }}\u00b0C \u2014 ETA {{ eta_minutes }} min.
-            Current: {{ room_temp }}\u00b0C.
+            Target: {{ target_temp }}°C — ETA {{ eta_minutes }} min.
+            Current: {{ room_temp }}°C.
           selector:
             text:
               multiline: true
+
+        notify_target_reached:
+          name: Notify when target temperature reached
+          description: >
+            Fires once when the room reaches its target temperature during a schedule.
+            Also sent when a schedule starts if no pre-heat was needed.
+          default: true
+          selector:
+            boolean:
 
         tpl_schedule_started_body:
-          name: Schedule Started Body Template
-          description: "Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}"
+          name: Schedule Started — Message Body
+          description: "Sent when a schedule activates. Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}"
           default: >-
             "{{ schedule_name }}" is now active in {{ room_name }}.
-            Current: {{ room_temp }}\u00b0C.
-          selector:
-            text:
-              multiline: true
-
-        tpl_schedule_finished_body:
-          name: Schedule Finished Body Template
-          description: "Variables: {{ room_name }}, {{ room_temp }}, {{ default_hvac_mode }}, {{ default_temp }}"
-          default: >-
-            Schedule ended in {{ room_name }}.
-            Switching to {{ default_hvac_mode }} at {{ default_temp }}\u00b0C.
-            Current: {{ room_temp }}\u00b0C.
+            Current: {{ room_temp }}°C.
           selector:
             text:
               multiline: true
 
         tpl_target_reached_body:
-          name: Target Reached Body Template
-          description: "Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}, {{ time }}"
+          name: Target Reached — Message Body
+          description: "Sent when the room reaches its target temperature. Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}, {{ time }}"
           default: >-
-            {{ room_name }} reached {{ room_temp }}\u00b0C
+            {{ room_name }} reached {{ room_temp }}°C
             for "{{ schedule_name }}" at {{ time }}.
+          selector:
+            text:
+              multiline: true
+
+        tpl_schedule_finished_body:
+          name: Schedule Finished — Message Body
+          description: "Sent when a schedule ends and heating returns to default. Variables: {{ room_name }}, {{ room_temp }}, {{ default_hvac_mode }}, {{ default_temp }}"
+          default: >-
+            Schedule ended in {{ room_name }}.
+            Switching to {{ default_hvac_mode }} at {{ default_temp }}°C.
+            Current: {{ room_temp }}°C.
           selector:
             text:
               multiline: true
@@ -212,6 +216,7 @@ blueprint:
       name: "🌡️ Default — No Active Schedule"
       icon: mdi:thermostat-auto
       collapsed: true
+      description: Heating behaviour when no schedule is active.
       input:
 
         default_hvac_mode:
@@ -253,17 +258,17 @@ blueprint:
           description: >
             Header for standby notifications.
             Variables: {{ room_name }}, {{ status }}
-          default: "\U0001F514 {{ room_name }} \u2014 {{ status }}"
+          default: "🔔 {{ room_name }} — {{ status }}"
           selector:
             text:
 
         tpl_standby_body:
-          name: Standby Body Template
-          description: "Variables: {{ room_name }}, {{ room_temp }}, {{ default_hvac_mode }}, {{ default_temp }}"
+          name: Standby — Message Body
+          description: "Sent when no schedule is active and heating enters standby. Variables: {{ room_name }}, {{ room_temp }}, {{ default_hvac_mode }}, {{ default_temp }}"
           default: >-
             No active schedule in {{ room_name }}.
-            Heating set to {{ default_hvac_mode }} at {{ default_temp }}\u00b0C.
-            Current: {{ room_temp }}\u00b0C.
+            Heating set to {{ default_hvac_mode }} at {{ default_temp }}°C.
+            Current: {{ room_temp }}°C.
           selector:
             text:
               multiline: true
@@ -272,6 +277,7 @@ blueprint:
       name: "🪟 Window & Door Detection"
       icon: mdi:door-open
       collapsed: true
+      description: Optional. Pause heating when windows or doors are open.
       input:
 
         window_sensors:
@@ -304,36 +310,36 @@ blueprint:
             boolean:
 
         tpl_window_header:
-          name: Window Notification Header Template
+          name: Window Notification Header
           description: >
-            Shared header for all window notifications.
+            Header for window notifications.
             Variables: {{ room_name }}, {{ window_name }}, {{ status }}
-          default: "\U0001FA9F {{ room_name }} - {{ window_name }} {{ status }}"
+          default: "🪟 {{ room_name }} - {{ window_name }} {{ status }}"
           selector:
             text:
 
         tpl_window_timeout_body:
-          name: Window Paused Body Template
+          name: Window Paused — Message Body
           description: >
             Sent when heating is paused because a window has been open longer than the reaction time.
             Variables: {{ room_name }}, {{ window_name }}, {{ room_temp }}
           default: >-
             Heating in {{ room_name }} has been paused because a window is open.
             It will resume automatically when all windows are closed.
-            Current temperature: {{ room_temp }}\u00b0C.
+            Current temperature: {{ room_temp }}°C.
           selector:
             text:
               multiline: true
 
         tpl_window_closed_body:
-          name: Window Closed Body Template
+          name: Window Closed — Message Body
           description: >
-            Sent only when windows close after the max airing time was exceeded.
+            Sent only when windows close after a pause was previously triggered.
             Variables: {{ room_name }}, {{ window_name }}, {{ room_temp }}, {{ resume_mode }}
           default: >-
             All windows in {{ room_name }} are now closed.
             Heating resumed ({{ resume_mode }}).
-            Current temperature: {{ room_temp }}\u00b0C.
+            Current temperature: {{ room_temp }}°C.
           selector:
             text:
               multiline: true
@@ -342,6 +348,7 @@ blueprint:
       name: "🏖️ Vacation"
       icon: mdi:calendar-clock
       collapsed: true
+      description: Optional. Automatically reduce heating during calendar vacation events.
       input:
 
         vacation_enabled:
@@ -391,6 +398,7 @@ blueprint:
       name: "✋ Manual Override"
       icon: mdi:hand-back-right
       collapsed: true
+      description: Pause automation temporarily when the TRV is adjusted manually.
       input:
 
         override_minutes:
@@ -415,28 +423,28 @@ blueprint:
           description: >
             Header for override active and override ended notifications.
             Variables: {{ room_name }}, {{ status }}
-          default: "\U0001F514 {{ room_name }} \u2014 {{ status }}"
+          default: "🔔 {{ room_name }} — {{ status }}"
           selector:
             text:
 
         tpl_override_active_body:
-          name: Override Active Body Template
-          description: "Variables: {{ room_name }}, {{ device_name }}, {{ override_minutes }}, {{ resume_time }}, {{ room_temp }}"
+          name: Override Active — Message Body
+          description: "Sent when a manual TRV change triggers an override. Variables: {{ room_name }}, {{ device_name }}, {{ override_minutes }}, {{ resume_time }}, {{ room_temp }}"
           default: >-
             Manual override on {{ device_name }} in {{ room_name }}.
             Resumes in {{ override_minutes }} min ({{ resume_time }}).
-            Current: {{ room_temp }}\u00b0C.
+            Current: {{ room_temp }}°C.
           selector:
             text:
               multiline: true
 
         tpl_override_ended_body:
-          name: Override Ended Body Template
-          description: "Variables: {{ room_name }}, {{ room_temp }}"
+          name: Override Ended — Message Body
+          description: "Sent when the override expires and smart heating resumes. Variables: {{ room_name }}, {{ room_temp }}"
           default: >-
             Override in {{ room_name }} has ended.
             Resuming scheduled heating.
-            Current: {{ room_temp }}\u00b0C.
+            Current: {{ room_temp }}°C.
           selector:
             text:
               multiline: true
@@ -445,6 +453,7 @@ blueprint:
       name: "🤖 AI Report"
       icon: mdi:robot
       collapsed: true
+      description: Enable daily and weekly AI-generated heating analysis reports.
       input:
 
         notify_daily_report:
@@ -700,7 +709,7 @@ action:
                   title: >
                     {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
                     {% set tpl = tpl_window_header | trim %}
-                    {% set base = tpl if tpl else "\U0001FA9F {{ room_name }} - {{ window_name }} {{ status }}" %}
+                    {% set base = tpl if tpl else "🪟 {{ room_name }} - {{ window_name }} {{ status }}" %}
                     {{ base
                        | replace('{{ room_name }}', room_name)
                        | replace('{{ window_name }}', win_name)
@@ -708,7 +717,7 @@ action:
                   message: >
                     {% set body_tpl = tpl_window_timeout_body | trim %}
                     {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
-                    {% set body_base = body_tpl if body_tpl else "Heating in {{ room_name }} has been paused because a window is open. It will resume when all windows are closed. Current temperature: {{ room_temp }}\u00b0C." %}
+                    {% set body_base = body_tpl if body_tpl else "Heating in {{ room_name }} has been paused because a window is open. It will resume when all windows are closed. Current temperature: {{ room_temp }}°C." %}
                     {{ body_base
                        | replace('{{ room_name }}', room_name)
                        | replace('{{ window_name }}', win_name)
@@ -740,7 +749,7 @@ action:
                       title: >
                         {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
                         {% set tpl = tpl_window_header | trim %}
-                        {% set base = tpl if tpl else "\U0001FA9F {{ room_name }} - {{ window_name }} {{ status }}" %}
+                        {% set base = tpl if tpl else "🪟 {{ room_name }} - {{ window_name }} {{ status }}" %}
                         {{ base
                            | replace('{{ room_name }}', room_name)
                            | replace('{{ window_name }}', win_name)
@@ -749,7 +758,7 @@ action:
                         {% set body_tpl = tpl_window_closed_body | trim %}
                         {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
                         {% set resume_mode = 'Pre-heat' if in_preheat else ('Schedule' if in_comfort else 'Standby') %}
-                        {% set body_base = body_tpl if body_tpl else "All windows in {{ room_name }} are now closed. Heating resumed ({{ resume_mode }}). Current temperature: {{ room_temp }}\u00b0C." %}
+                        {% set body_base = body_tpl if body_tpl else "All windows in {{ room_name }} are now closed. Heating resumed ({{ resume_mode }}). Current temperature: {{ room_temp }}°C." %}
                         {{ body_base
                            | replace('{{ room_name }}', room_name)
                            | replace('{{ window_name }}', win_name)
@@ -780,13 +789,13 @@ action:
                         data:
                           title: >
                             {% set tpl = tpl_schedule_header | trim %}
-                            {% set base = tpl if tpl else "\U0001F514 {{ room_name }} \u2014 {{ status }}" %}
+                            {% set base = tpl if tpl else "🔔 {{ room_name }} — {{ status }}" %}
                             {{ base
                                | replace('{{ room_name }}', room_name)
                                | replace('{{ status }}', 'Heating Started') }}
                           message: >
                             {% set body_tpl = tpl_schedule_started_body | trim %}
-                            {% set body_base = body_tpl if body_tpl else "\"{{ schedule_name }}\" is now active in {{ room_name }}. Current: {{ room_temp }}\u00b0C." %}
+                            {% set body_base = body_tpl if body_tpl else "\"{{ schedule_name }}\" is now active in {{ room_name }}. Current: {{ room_temp }}°C." %}
                             {{ body_base
                                | replace('{{ room_name }}', room_name)
                                | replace('{{ room_temp }}', (room_temp | round(1) | string))
@@ -809,13 +818,13 @@ action:
                         data:
                           title: >
                             {% set tpl = tpl_schedule_header | trim %}
-                            {% set base = tpl if tpl else "\U0001F514 {{ room_name }} \u2014 {{ status }}" %}
+                            {% set base = tpl if tpl else "🔔 {{ room_name }} — {{ status }}" %}
                             {{ base
                                | replace('{{ room_name }}', room_name)
                                | replace('{{ status }}', 'Heating Ended') }}
                           message: >
                             {% set body_tpl = tpl_schedule_finished_body | trim %}
-                            {% set body_base = body_tpl if body_tpl else "Schedule ended in {{ room_name }}. Switching to {{ default_hvac_mode }} at {{ default_temp }}\u00b0C. Current: {{ room_temp }}\u00b0C." %}
+                            {% set body_base = body_tpl if body_tpl else "Schedule ended in {{ room_name }}. Switching to {{ default_hvac_mode }} at {{ default_temp }}°C. Current: {{ room_temp }}°C." %}
                             {{ body_base
                                | replace('{{ room_name }}', room_name)
                                | replace('{{ room_temp }}', (room_temp | round(1) | string))
@@ -906,14 +915,14 @@ action:
                     data:
                       title: >
                         {% set tpl = tpl_override_header | trim %}
-                        {% set base = tpl if tpl else "\U0001F514 {{ room_name }} \u2014 {{ status }}" %}
+                        {% set base = tpl if tpl else "🔔 {{ room_name }} — {{ status }}" %}
                         {{ base
                            | replace('{{ room_name }}', room_name)
                            | replace('{{ status }}', 'Override Active') }}
                       message: >
                         {% set body_tpl = tpl_override_active_body | trim %}
                         {% set resume = (now() + timedelta(minutes=override_minutes | int)).strftime('%H:%M') %}
-                        {% set body_base = body_tpl if body_tpl else "Manual override on {{ device_name }} in {{ room_name }}. Resumes in {{ override_minutes }} min ({{ resume_time }}). Current: {{ room_temp }}\u00b0C." %}
+                        {% set body_base = body_tpl if body_tpl else "Manual override on {{ device_name }} in {{ room_name }}. Resumes in {{ override_minutes }} min ({{ resume_time }}). Current: {{ room_temp }}°C." %}
                         {{ body_base
                            | replace('{{ room_name }}', room_name)
                            | replace('{{ device_name }}', trigger.to_state.attributes.friendly_name | default('device'))
@@ -997,13 +1006,13 @@ action:
             data:
               title: >
                 {% set tpl = tpl_schedule_header | trim %}
-                {% set base = tpl if tpl else "\U0001F514 {{ room_name }} \u2014 {{ status }}" %}
+                {% set base = tpl if tpl else "🔔 {{ room_name }} — {{ status }}" %}
                 {{ base
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ status }}', 'Pre-heat Started') }}
               message: >
                 {% set body_tpl = tpl_preheat_started_body | trim %}
-                {% set body_base = body_tpl if body_tpl else "Pre-heating {{ room_name }} for \"{{ schedule_name }}\". Target: {{ target_temp }}\u00b0C \u2014 ETA {{ eta_minutes }} min. Current: {{ room_temp }}\u00b0C." %}
+                {% set body_base = body_tpl if body_tpl else "Pre-heating {{ room_name }} for \"{{ schedule_name }}\". Target: {{ target_temp }}°C — ETA {{ eta_minutes }} min. Current: {{ room_temp }}°C." %}
                 {{ body_base
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ room_temp }}', (room_temp | round(1) | string))
@@ -1025,13 +1034,13 @@ action:
             data:
               title: >
                 {% set tpl = tpl_schedule_header | trim %}
-                {% set base = tpl if tpl else "\U0001F514 {{ room_name }} \u2014 {{ status }}" %}
+                {% set base = tpl if tpl else "🔔 {{ room_name }} — {{ status }}" %}
                 {{ base
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ status }}', 'Target Reached') }}
               message: >
                 {% set body_tpl = tpl_target_reached_body | trim %}
-                {% set body_base = body_tpl if body_tpl else "{{ room_name }} reached {{ room_temp }}\u00b0C for \"{{ schedule_name }}\" at {{ time }}." %}
+                {% set body_base = body_tpl if body_tpl else "{{ room_name }} reached {{ room_temp }}°C for \"{{ schedule_name }}\" at {{ time }}." %}
                 {{ body_base
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ room_temp }}', (room_temp | round(1) | string))
@@ -1055,13 +1064,13 @@ action:
             data:
               title: >
                 {% set tpl = tpl_default_header | trim %}
-                {% set base = tpl if tpl else "\U0001F514 {{ room_name }} \u2014 {{ status }}" %}
+                {% set base = tpl if tpl else "🔔 {{ room_name }} — {{ status }}" %}
                 {{ base
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ status }}', 'Standby') }}
               message: >
                 {% set body_tpl = tpl_standby_body | trim %}
-                {% set body_base = body_tpl if body_tpl else "No active schedule in {{ room_name }}. Heating set to {{ default_hvac_mode }} at {{ default_temp }}\u00b0C. Current: {{ room_temp }}\u00b0C." %}
+                {% set body_base = body_tpl if body_tpl else "No active schedule in {{ room_name }}. Heating set to {{ default_hvac_mode }} at {{ default_temp }}°C. Current: {{ room_temp }}°C." %}
                 {{ body_base
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ room_temp }}', (room_temp | round(1) | string))
@@ -1079,13 +1088,13 @@ action:
             data:
               title: >
                 {% set tpl = tpl_override_header | trim %}
-                {% set base = tpl if tpl else "\U0001F514 {{ room_name }} \u2014 {{ status }}" %}
+                {% set base = tpl if tpl else "🔔 {{ room_name }} — {{ status }}" %}
                 {{ base
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ status }}', 'Override Ended') }}
               message: >
                 {% set body_tpl = tpl_override_ended_body | trim %}
-                {% set body_base = body_tpl if body_tpl else "Override in {{ room_name }} has ended. Resuming scheduled heating. Current: {{ room_temp }}\u00b0C." %}
+                {% set body_base = body_tpl if body_tpl else "Override in {{ room_name }} has ended. Resuming scheduled heating. Current: {{ room_temp }}°C." %}
                 {{ body_base
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ room_temp }}', (room_temp | round(1) | string)) }}

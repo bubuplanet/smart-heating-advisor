@@ -364,6 +364,8 @@ blueprint:
 
         vacation_calendar:
           name: Vacation Calendar
+          description: Leave empty if vacation mode is disabled.
+          default: ""
           selector:
             entity:
               filter:
@@ -558,7 +560,7 @@ variables:
     {{ notify_override and (s == 'on' or s in ['unknown', 'unavailable']) }}
 
   vacation_active: >
-    {% if not vacation_enabled %}
+    {% if not vacation_enabled or not vacation_calendar %}
       false
     {% else %}
       {% set message = state_attr(vacation_calendar, 'message') | default('') | string %}
@@ -660,6 +662,7 @@ triggers:
   - trigger: state
     entity_id: !input vacation_calendar
     id: vacation_changed
+    enabled: "{{ vacation_calendar | length > 0 }}"
 
   - trigger: state
     entity_id: !input radiator_thermostats

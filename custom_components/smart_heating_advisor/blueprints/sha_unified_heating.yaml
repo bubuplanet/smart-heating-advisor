@@ -52,8 +52,9 @@ blueprint:
   input:
 
     room_section:
-      name: "🏠 Room"
+      name: "⚠️ 🏠 Room — Required"
       icon: mdi:radiator
+      collapsed: true
       input:
 
         room_name:
@@ -112,8 +113,9 @@ blueprint:
               unit_of_measurement: "°C"
 
     schedule_section:
-      name: "📅 Schedules"
+      name: "⚠️ 📅 Schedules — Required"
       icon: mdi:clock-outline
+      collapsed: true
       input:
 
         schedules:
@@ -185,6 +187,29 @@ blueprint:
             text:
               multiline: true
 
+        notify_preheat:
+          name: Notify when pre-heat starts
+          description: Fires once per schedule event — not every 5 minutes.
+          default: true
+          selector:
+            boolean:
+
+        notify_target_reached:
+          name: Notify when target temperature reached
+          description: Fires once per schedule event.
+          default: true
+          selector:
+            boolean:
+
+        tpl_schedule_header:
+          name: Schedule Notification Header
+          description: >
+            Header for pre-heat, heating started/ended, and target reached notifications.
+            Variables: {{ room_name }}, {{ status }}
+          default: "\U0001F514 {{ room_name }} \u2014 {{ status }}"
+          selector:
+            text:
+
     default_section:
       name: "🌡️ Default — No Active Schedule"
       icon: mdi:thermostat-auto
@@ -228,6 +253,22 @@ blueprint:
           selector:
             text:
               multiline: true
+
+        notify_standby:
+          name: Notify when standby mode starts
+          description: Fires once when transitioning to standby.
+          default: true
+          selector:
+            boolean:
+
+        tpl_default_header:
+          name: Standby Notification Header
+          description: >
+            Header for standby notifications.
+            Variables: {{ room_name }}, {{ status }}
+          default: "\U0001F514 {{ room_name }} \u2014 {{ status }}"
+          selector:
+            text:
 
     window_section:
       name: "🪟 Window & Door Detection"
@@ -365,6 +406,21 @@ blueprint:
               step: 5
               unit_of_measurement: min
 
+        notify_override:
+          name: Notify when override is activated or ended
+          default: true
+          selector:
+            boolean:
+
+        tpl_override_header:
+          name: Override Notification Header
+          description: >
+            Header for override active and override ended notifications.
+            Variables: {{ room_name }}, {{ status }}
+          default: "\U0001F514 {{ room_name }} \u2014 {{ status }}"
+          selector:
+            text:
+
         tpl_override_active_body:
           name: Override Active Body Template
           description: "Variables: {{ room_name }}, {{ device_name }}, {{ override_minutes }}, {{ resume_time }}, {{ room_temp }}"
@@ -387,47 +443,11 @@ blueprint:
             text:
               multiline: true
 
-        notify_override:
-          name: Notify when override is activated or ended
-          default: true
-          selector:
-            boolean:
-
-    notifications_section:
-      name: "🔔 Notifications"
-      icon: mdi:bell
+    ai_report_section:
+      name: "🤖 AI Report"
+      icon: mdi:robot
       collapsed: true
       input:
-
-        notify_preheat:
-          name: Notify when pre-heat starts
-          description: Fires once per schedule event — not every 5 minutes.
-          default: true
-          selector:
-            boolean:
-
-        notify_target_reached:
-          name: Notify when target temperature reached
-          description: Fires once per schedule event.
-          default: true
-          selector:
-            boolean:
-
-        notify_standby:
-          name: Notify when standby mode starts
-          description: Fires once when transitioning to standby.
-          default: true
-          selector:
-            boolean:
-
-        tpl_notification_header:
-          name: Notification Header Template
-          description: >
-            Shared header for all heating notifications.
-            Variables: {{ room_name }}, {{ status }}
-          default: "\U0001F514 {{ room_name }} \u2014 {{ status }}"
-          selector:
-            text:
 
         notify_daily_report:
           name: Notify daily analysis report
@@ -468,7 +488,9 @@ variables:
   tpl_window_header:            !input tpl_window_header
   tpl_window_timeout_body:      !input tpl_window_timeout_body
   tpl_window_closed_body:       !input tpl_window_closed_body
-  tpl_notification_header:      !input tpl_notification_header
+  tpl_schedule_header:          !input tpl_schedule_header
+  tpl_default_header:           !input tpl_default_header
+  tpl_override_header:          !input tpl_override_header
   tpl_preheat_started_body:     !input tpl_preheat_started_body
   tpl_schedule_started_body:    !input tpl_schedule_started_body
   tpl_schedule_finished_body:   !input tpl_schedule_finished_body
@@ -759,7 +781,7 @@ action:
                       - action: notify.notify
                         data:
                           title: >
-                            {% set tpl = tpl_notification_header | trim %}
+                            {% set tpl = tpl_schedule_header | trim %}
                             {% set base = tpl if tpl else "\U0001F514 {{ room_name }} \u2014 {{ status }}" %}
                             {{ base
                                | replace('{{ room_name }}', room_name)
@@ -788,7 +810,7 @@ action:
                       - action: notify.notify
                         data:
                           title: >
-                            {% set tpl = tpl_notification_header | trim %}
+                            {% set tpl = tpl_schedule_header | trim %}
                             {% set base = tpl if tpl else "\U0001F514 {{ room_name }} \u2014 {{ status }}" %}
                             {{ base
                                | replace('{{ room_name }}', room_name)
@@ -885,7 +907,7 @@ action:
                   - action: notify.notify
                     data:
                       title: >
-                        {% set tpl = tpl_notification_header | trim %}
+                        {% set tpl = tpl_override_header | trim %}
                         {% set base = tpl if tpl else "\U0001F514 {{ room_name }} \u2014 {{ status }}" %}
                         {{ base
                            | replace('{{ room_name }}', room_name)
@@ -976,7 +998,7 @@ action:
           - action: notify.notify
             data:
               title: >
-                {% set tpl = tpl_notification_header | trim %}
+                {% set tpl = tpl_schedule_header | trim %}
                 {% set base = tpl if tpl else "\U0001F514 {{ room_name }} \u2014 {{ status }}" %}
                 {{ base
                    | replace('{{ room_name }}', room_name)
@@ -1004,7 +1026,7 @@ action:
           - action: notify.notify
             data:
               title: >
-                {% set tpl = tpl_notification_header | trim %}
+                {% set tpl = tpl_schedule_header | trim %}
                 {% set base = tpl if tpl else "\U0001F514 {{ room_name }} \u2014 {{ status }}" %}
                 {{ base
                    | replace('{{ room_name }}', room_name)
@@ -1034,7 +1056,7 @@ action:
           - action: notify.notify
             data:
               title: >
-                {% set tpl = tpl_notification_header | trim %}
+                {% set tpl = tpl_default_header | trim %}
                 {% set base = tpl if tpl else "\U0001F514 {{ room_name }} \u2014 {{ status }}" %}
                 {{ base
                    | replace('{{ room_name }}', room_name)
@@ -1058,7 +1080,7 @@ action:
           - action: notify.notify
             data:
               title: >
-                {% set tpl = tpl_notification_header | trim %}
+                {% set tpl = tpl_override_header | trim %}
                 {% set base = tpl if tpl else "\U0001F514 {{ room_name }} \u2014 {{ status }}" %}
                 {{ base
                    | replace('{{ room_name }}', room_name)

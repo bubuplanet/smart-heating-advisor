@@ -317,7 +317,7 @@ Name each **HA Schedule helper** with the target temperature at the end:
 | Field | Description | Default |
 |---|---|---|
 | **Enable Vacation Mode** | Toggle vacation detection on/off | `false` |
-| **Vacation Calendar** | Calendar with vacation events | `calendar.home` |
+| **Vacation Calendar** | Calendar with vacation events | _(none)_ |
 | **Vacation Keyword** | Event title prefix to detect | `vacation` |
 | **Vacation Behavior** | Off or Frost protection | `Off` |
 | **Vacation Frost Temperature** | Temp during frost protection | `12°C` |
@@ -559,7 +559,7 @@ Repeats daily — system gets smarter over time
 | Schedule Fallback Temp | `21°C` |
 | Default Heating Mode | `Off` |
 | Window Sensors | `binary_sensor.bathroom_window` |
-| Vacation Calendar | `calendar.home` |
+| Vacation Calendar | _(none)_ |
 | Vacation Keyword | `vacation` |
 | Override Duration | `120 min` |
 

@@ -364,7 +364,6 @@ blueprint:
 
         vacation_calendar:
           name: Vacation Calendar
-          default: calendar.home
           selector:
             entity:
               filter:
@@ -974,7 +973,8 @@ action:
           - if:
               - condition: template
                 value_template: >
-                  {{ not windows_open and not override_active and (
+                  {{ not windows_open and not override_active and
+                     trigger.from_state is not none and (
                        (trigger.attribute == 'temperature' and
                         (trigger.to_state.attributes.temperature | float(-1)) != (target_temperature | float(0))) or
                        (trigger.attribute == 'hvac_mode' and

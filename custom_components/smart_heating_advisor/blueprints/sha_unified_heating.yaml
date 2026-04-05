@@ -52,9 +52,8 @@ blueprint:
   input:
 
     room_section:
-      name: "⚠️ 🏠 Room — Required"
+      name: "⚠️ 🏠 Room — Mandatory"
       icon: mdi:radiator
-      collapsed: true
       input:
 
         room_name:
@@ -113,9 +112,8 @@ blueprint:
               unit_of_measurement: "°C"
 
     schedule_section:
-      name: "⚠️ 📅 Schedules — Required"
+      name: "⚠️ 📅 Schedules — Mandatory"
       icon: mdi:clock-outline
-      collapsed: true
       input:
 
         schedules:
@@ -144,6 +142,29 @@ blueprint:
               max: 30
               step: 0.5
               unit_of_measurement: "°C"
+
+        notify_preheat:
+          name: Notify when pre-heat starts
+          description: Fires once per schedule event — not every 5 minutes.
+          default: true
+          selector:
+            boolean:
+
+        notify_target_reached:
+          name: Notify when target temperature reached
+          description: Fires once per schedule event.
+          default: true
+          selector:
+            boolean:
+
+        tpl_schedule_header:
+          name: Schedule Notification Header
+          description: >
+            Header for pre-heat, heating started/ended, and target reached notifications.
+            Variables: {{ room_name }}, {{ status }}
+          default: "\U0001F514 {{ room_name }} \u2014 {{ status }}"
+          selector:
+            text:
 
         tpl_preheat_started_body:
           name: Pre-heat Started Body Template
@@ -187,29 +208,6 @@ blueprint:
             text:
               multiline: true
 
-        notify_preheat:
-          name: Notify when pre-heat starts
-          description: Fires once per schedule event — not every 5 minutes.
-          default: true
-          selector:
-            boolean:
-
-        notify_target_reached:
-          name: Notify when target temperature reached
-          description: Fires once per schedule event.
-          default: true
-          selector:
-            boolean:
-
-        tpl_schedule_header:
-          name: Schedule Notification Header
-          description: >
-            Header for pre-heat, heating started/ended, and target reached notifications.
-            Variables: {{ room_name }}, {{ status }}
-          default: "\U0001F514 {{ room_name }} \u2014 {{ status }}"
-          selector:
-            text:
-
     default_section:
       name: "🌡️ Default — No Active Schedule"
       icon: mdi:thermostat-auto
@@ -243,17 +241,6 @@ blueprint:
               step: 0.5
               unit_of_measurement: "°C"
 
-        tpl_standby_body:
-          name: Standby Body Template
-          description: "Variables: {{ room_name }}, {{ room_temp }}, {{ default_hvac_mode }}, {{ default_temp }}"
-          default: >-
-            No active schedule in {{ room_name }}.
-            Heating set to {{ default_hvac_mode }} at {{ default_temp }}\u00b0C.
-            Current: {{ room_temp }}\u00b0C.
-          selector:
-            text:
-              multiline: true
-
         notify_standby:
           name: Notify when standby mode starts
           description: Fires once when transitioning to standby.
@@ -269,6 +256,17 @@ blueprint:
           default: "\U0001F514 {{ room_name }} \u2014 {{ status }}"
           selector:
             text:
+
+        tpl_standby_body:
+          name: Standby Body Template
+          description: "Variables: {{ room_name }}, {{ room_temp }}, {{ default_hvac_mode }}, {{ default_temp }}"
+          default: >-
+            No active schedule in {{ room_name }}.
+            Heating set to {{ default_hvac_mode }} at {{ default_temp }}\u00b0C.
+            Current: {{ room_temp }}\u00b0C.
+          selector:
+            text:
+              multiline: true
 
     window_section:
       name: "🪟 Window & Door Detection"

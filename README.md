@@ -52,7 +52,7 @@ SHA Blueprint automation (per room)
          │
          ▼ (records to InfluxDB automatically)
          │
-SHA Daily analysis at 02:00 AM
+SHA Daily analysis at 00:01 AM
         ├── Reads rooms from SHA internal room registry
   ├── Queries InfluxDB per room (7 days history)
   ├── Reads each room's schedules and target temperatures
@@ -267,7 +267,7 @@ Name each **HA Schedule helper** with the target temperature at the end:
 
 ## 🎛️ Blueprint Configuration
 
-### 🏠 Room Section
+### 🏠 Room Section _(collapsed)_
 
 | Field | Description | Example |
 |---|---|---|
@@ -277,12 +277,19 @@ Name each **HA Schedule helper** with the target temperature at the end:
 | **Fixed Radiator Thermostat** | Optional TRVs always heating to a fixed temp | `climate.bathroom_heated_towel_rail` |
 | **Fixed Radiator Temperature** | Temperature for fixed TRVs when active | `30°C` |
 
-### 📅 Schedules Section
+### 📅 Schedules Section _(collapsed)_
 
-| Field | Description | Example |
+| Field | Description | Default / Example |
 |---|---|---|
 | **Schedule Helpers** | Select one or more HA Schedule helpers | `Morning Shower 26C`, `Evening Bath 28C` |
 | **Schedule Fallback Temperature** | Used when no temp found in schedule name | `21°C` |
+| **Notify when pre-heat starts** | Fires once when pre-heating begins | `true` |
+| **Pre-heat Started — Message Body** | Sent when pre-heating begins. Variables: `{{ room_name }}`, `{{ room_temp }}`, `{{ target_temp }}`, `{{ schedule_name }}`, `{{ eta_minutes }}` | — |
+| **Notify when target temperature reached** | Fires once on target reached, or on schedule start if no pre-heat was needed | `true` |
+| **Schedule Notification Header** | Shared header for all schedule notifications. Variables: `{{ room_name }}`, `{{ status }}` | `🔔 {{ room_name }} — {{ status }}` |
+| **Schedule Started — Message Body** | Sent when a schedule activates. Variables: `{{ room_name }}`, `{{ room_temp }}`, `{{ schedule_name }}` | — |
+| **Target Reached — Message Body** | Sent when the room reaches its target temp. Variables: `{{ room_name }}`, `{{ room_temp }}`, `{{ schedule_name }}`, `{{ time }}` | — |
+| **Schedule Finished — Message Body** | Sent when a schedule ends. Variables: `{{ room_name }}`, `{{ room_temp }}`, `{{ default_hvac_mode }}`, `{{ default_temp }}` | — |
 
 ### 🌡️ Default Section _(collapsed)_
 
@@ -290,6 +297,9 @@ Name each **HA Schedule helper** with the target temperature at the end:
 |---|---|---|
 | **Default Heating Mode** | Off or Heat when no schedule is active | `Off` |
 | **Default Temperature** | Standby temp when Default Mode = Heat | `16°C` |
+| **Notify when standby mode starts** | Fires once when transitioning to standby | `true` |
+| **Standby Notification Header** | Variables: `{{ room_name }}`, `{{ status }}` | `🔔 {{ room_name }} — {{ status }}` |
+| **Standby — Message Body** | Variables: `{{ room_name }}`, `{{ room_temp }}`, `{{ default_hvac_mode }}`, `{{ default_temp }}` | — |
 
 ### 🪟 Window Detection Section _(collapsed)_
 
@@ -297,7 +307,10 @@ Name each **HA Schedule helper** with the target temperature at the end:
 |---|---|---|
 | **Window & Door Sensors** | Binary sensors for windows/doors | _(empty)_ |
 | **Open Reaction Time** | Delay before pausing heating | `5 min` |
-| **Close Reaction Time** | Delay before resuming heating | `30 sec` |
+| **Notify when heating is paused by a window** | Notification on window-triggered pause and resume | `true` |
+| **Window Notification Header** | Variables: `{{ room_name }}`, `{{ window_name }}`, `{{ status }}` | `🪟 {{ room_name }} - {{ window_name }} {{ status }}` |
+| **Window Paused — Message Body** | Sent when heating pauses. Variables: `{{ room_name }}`, `{{ window_name }}`, `{{ room_temp }}` | — |
+| **Window Closed — Message Body** | Sent when all windows close after a pause. Variables: `{{ room_name }}`, `{{ window_name }}`, `{{ room_temp }}`, `{{ resume_mode }}` | — |
 
 ### 🏖️ Vacation Section _(collapsed)_
 
@@ -314,38 +327,17 @@ Name each **HA Schedule helper** with the target temperature at the end:
 | Field | Description | Default |
 |---|---|---|
 | **Override Duration** | Minutes to pause after manual TRV change | `120 min` |
+| **Notify when override is activated or ended** | Notification on manual TRV change and resume | `true` |
+| **Override Notification Header** | Variables: `{{ room_name }}`, `{{ status }}` | `🔔 {{ room_name }} — {{ status }}` |
+| **Override Active — Message Body** | Variables: `{{ room_name }}`, `{{ device_name }}`, `{{ override_minutes }}`, `{{ resume_time }}`, `{{ room_temp }}` | — |
+| **Override Ended — Message Body** | Variables: `{{ room_name }}`, `{{ room_temp }}` | — |
 
-### 🔔 Notifications Section _(collapsed)_
+### 🤖 AI Report Section _(collapsed)_
 
-| Notification | When | Default |
+| Field | Description | Default |
 |---|---|---|
-| **Notify pre-heat starts** | Once when pre-heat begins | `true` |
-| **Notify target reached / schedule start** | When comfort schedule starts | `true` |
-| **Notify standby starts** | Once when no schedule active | `true` |
-| **Notify window open/close** | On window state change | `true` |
-| **Notify override active/resumed** | On manual TRV change + resume | `true` |
-| **Notify daily report** | Daily analysis summary notification | `true` |
-| **Notify weekly report** | Weekly analysis summary notification | `true` |
-| **Window Open Header / Body Template** | Custom text for window-open notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
-| **Window Closed Header / Body Template** | Custom text for window-closed notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
-| **Schedule Started Header / Body Template** | Custom text for schedule-started notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
-| **Schedule Finished Header / Body Template** | Custom text for schedule-finished notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
-| **Pre-heat Started Header / Body Template** | Custom text for pre-heat notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
-| **Target Reached Header / Body Template** | Custom text for target-reached notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
-| **Standby Header / Body Template** | Custom text for standby notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
-| **Override Active Header / Body Template** | Custom text for override-active notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
-| **Override Ended Header / Body Template** | Custom text for override-ended notification | `{{ room_name }} - {{ type }}` / `{{ room_name }} - {{ type }} : {{ status }}` |
-
-Supported template variables:
-- Common (all templates): `{{ room_name }}`, `{{ type }}`, `{{ status }}`
-- Window open/closed body: `{{ room_temp }}`
-- Schedule started body: `{{ room_temp }}`, `{{ schedule_name }}`
-- Schedule finished body: `{{ room_temp }}`, `{{ default_hvac_mode }}`, `{{ default_temp }}`
-- Pre-heat started body: `{{ room_temp }}`, `{{ target_temp }}`, `{{ schedule_name }}`, `{{ eta_minutes }}`
-- Target reached body: `{{ room_temp }}`, `{{ schedule_name }}`, `{{ time }}`
-- Standby body: `{{ room_temp }}`, `{{ default_hvac_mode }}`, `{{ default_temp }}`
-- Override active body: `{{ device_name }}`, `{{ override_minutes }}`, `{{ resume_time }}`, `{{ room_temp }}`
-- Override ended body: `{{ room_temp }}`
+| **Notify daily analysis report** | Persistent daily AI analysis notification | `true` |
+| **Notify weekly analysis report** | Persistent weekly AI analysis notification | `true` |
 
 ---
 
@@ -353,17 +345,21 @@ Supported template variables:
 
 ## 🔔 Notification Reference
 
-| Notification | Title | When | Fires |
+| Notification | Default Title | When | Fires |
 |---|---|---|---|
-| Pre-heat | 🌅 Room — Pre-heat Started | Pre-heat begins | Once per schedule event |
-| Schedule started | ▶️ Room — Schedule Started | Comfort schedule turns ON | Once per schedule start |
-| Schedule finished | ⏹️ Room — Schedule Finished | Comfort schedule turns OFF | Once per schedule end |
-| Window open | 🪟 Room — Window Open | Window opens (after delay) | Once per opening |
-| Window closed | 🪟 Room — Window Closed | All windows close | Once per closing |
-| Override active | ✋ Room — Override Active | Manual TRV change detected | On each manual change |
-| Override ended | 🔄 Room — Heating Resumed | Override expires | On each resume |
-| Daily report | 📅 Room — Daily Heating Report | Daily analysis completes | Once per room per run |
-| Weekly report | 📊 Room — Weekly Heating Report | Weekly analysis completes | Once per room per run |
+| Pre-heat started | `🔔 Room — Pre-heat Started` | Pre-heat begins before a schedule (room needs warming) | Once per schedule event |
+| Schedule started | `🔔 Room — Heating Started` | Comfort schedule turns ON | Once per schedule start |
+| Target reached | `🔔 Room — Target Reached` | Room reaches target temperature | Once per schedule activation |
+| Schedule finished | `🔔 Room — Heating Ended` | Comfort schedule turns OFF | Once per schedule end |
+| Standby | `🔔 Room — Standby` | No schedule active, heating at default | Once per standby transition |
+| Window paused | `🪟 Room - Window Open` | Window open longer than reaction time | Once per opening event |
+| Window resumed | `🪟 Room - Window Closed` | All windows close after a pause | Once per closing event |
+| Override active | `🔔 Room — Override Active` | Manual TRV change detected | On each manual change |
+| Override ended | `🔔 Room — Override Ended` | Override expires | On each resume |
+| Daily report | _(persistent notification)_ | Daily AI analysis completes | Once per room per run |
+| Weekly report | _(persistent notification)_ | Weekly AI analysis completes | Once per room per run |
+
+> The title is generated from the header template (configurable per section). Default: `🔔 {{ room_name }} — {{ status }}` for schedule/default/override; `🪟 {{ room_name }} - {{ window_name }} {{ status }}` for window.
 
 ---
 
@@ -414,6 +410,7 @@ SHA creates entities per discovered room, all grouped under a device named **SHA
 | `switch.sha_ROOM_preheat_notified` | Pre-heat notification sent this cycle |
 | `switch.sha_ROOM_target_notified` | Schedule start notification sent this cycle |
 | `switch.sha_ROOM_standby_notified` | Schedule finish/standby notification sent this cycle |
+| `switch.sha_ROOM_window_timeout_notified` | Window-pause notification sent this cycle |
 | `switch.sha_ROOM_vacation_notified` | Vacation notification sent this cycle |
 | `switch.sha_ROOM_override` | Manual override active |
 
@@ -461,19 +458,20 @@ SHA reloads → discovers rooms from internal registry
         │
         ▼
 SHA creates helper entities per room:
-  number.sha_ROOM_heating_rate      (AI-calibrated, default 0.15°C/min)
-  switch.sha_ROOM_override          (manual override state)
-  switch.sha_ROOM_airing_mode       (window open tracking)
-  switch.sha_ROOM_preheat_notified  (notification flags)
+  number.sha_ROOM_heating_rate           (AI-calibrated, default 0.15°C/min)
+  switch.sha_ROOM_override               (manual override state)
+  switch.sha_ROOM_airing_mode            (window open tracking)
+  switch.sha_ROOM_preheat_notified       (notification flags)
   switch.sha_ROOM_target_notified
   switch.sha_ROOM_standby_notified
+  switch.sha_ROOM_window_timeout_notified
   switch.sha_ROOM_vacation_notified
         │
         ▼
 Automation runs normally ✅
 ```
 
-### 3 — Daily AI analysis (02:00 AM)
+### 3 — Daily AI analysis (00:01 AM)
 
 ```
 SHA coordinator wakes up
@@ -525,7 +523,7 @@ Send notifications (once per event via flag switches)
 Room heats up → data recorded in InfluxDB
         │
         ▼
-Next day 02:00 AM → SHA analyses session
+Next day 00:01 AM → SHA analyses session
   Was target reached? Was pre-heat too early / too late?
         │
         ▼
@@ -650,6 +648,7 @@ If setup appears correct but behavior is wrong, verify entity states directly:
         - `switch.sha_ROOM_preheat_notified`
         - `switch.sha_ROOM_target_notified`
         - `switch.sha_ROOM_standby_notified`
+        - `switch.sha_ROOM_window_timeout_notified`
         - `switch.sha_ROOM_vacation_notified`
 3. Check sensor entities exist:
         - `sensor.sha_ROOM_heating_rate`

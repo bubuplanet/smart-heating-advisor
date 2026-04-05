@@ -42,8 +42,8 @@ BLUEPRINT_FILENAME = "sha_unified_heating.yaml"
 BLUEPRINT_RELATIVE_PATH = "blueprints"
 
 # ── Analysis schedule ─────────────────────────────────────────────────
-DAILY_ANALYSIS_HOUR = 2
-DAILY_ANALYSIS_MINUTE = 0
+DAILY_ANALYSIS_HOUR = 0
+DAILY_ANALYSIS_MINUTE = 1
 WEEKLY_ANALYSIS_WEEKDAY = 6  # Sunday
 WEEKLY_ANALYSIS_HOUR = 1
 WEEKLY_ANALYSIS_MINUTE = 0

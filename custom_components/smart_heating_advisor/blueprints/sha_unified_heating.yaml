@@ -42,6 +42,7 @@ blueprint:
     - switch.sha_ROOM_preheat_notified
     - switch.sha_ROOM_target_notified
     - switch.sha_ROOM_standby_notified
+    - switch.sha_ROOM_window_timeout_notified
     - switch.sha_ROOM_vacation_notified
     - switch.sha_ROOM_airing_mode
     - switch.sha_ROOM_override
@@ -54,6 +55,8 @@ blueprint:
     room_section:
       name: "⚠️ 🏠 Room — Mandatory"
       icon: mdi:radiator
+      collapsed: true
+      description: Required. Room name, temperature sensor, and TRV thermostats.
       input:
 
         room_name:
@@ -114,6 +117,8 @@ blueprint:
     schedule_section:
       name: "⚠️ 📅 Schedules — Mandatory"
       icon: mdi:clock-outline
+      collapsed: true
+      description: Required. Schedule helpers, fallback temperature, and notification templates.
       input:
 
         schedules:
@@ -143,15 +148,6 @@ blueprint:
               step: 0.5
               unit_of_measurement: "°C"
 
-        tpl_schedule_header:
-          name: Schedule Notification Header
-          description: >
-            Shared header for all schedule notifications.
-            Variables: {{ room_name }}, {{ status }}
-          default: "🔔 {{ room_name }} — {{ status }}"
-          selector:
-            text:
-
         notify_preheat:
           name: Notify when pre-heat starts
           description: >
@@ -180,6 +176,15 @@ blueprint:
           default: true
           selector:
             boolean:
+
+        tpl_schedule_header:
+          name: Schedule Notification Header
+          description: >
+            Shared header for all schedule notifications.
+            Variables: {{ room_name }}, {{ status }}
+          default: "🔔 {{ room_name }} — {{ status }}"
+          selector:
+            text:
 
         tpl_schedule_started_body:
           name: Schedule Started — Message Body
@@ -767,6 +772,73 @@ action:
                   - action: switch.turn_off
                     target:
                       entity_id: "{{ sha_window_timeout_notified }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ not override_active }}"
+                then:
+                  - variables:
+                      resume_target_mode: >
+                        {% if vacation_active and vacation_mode == 'off' %}
+                          off
+                        {% elif in_comfort or in_preheat or (vacation_active and vacation_mode == 'frost') %}
+                          heat
+                        {% elif default_hvac_mode == 'heat' %}
+                          heat
+                        {% else %}
+                          off
+                        {% endif %}
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ resume_target_mode == 'off' }}"
+                        sequence:
+                          - action: climate.set_hvac_mode
+                            target:
+                              entity_id: !input radiator_thermostats
+                            data:
+                              hvac_mode: "off"
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ resume_target_mode == 'heat' }}"
+                        sequence:
+                          - action: climate.set_hvac_mode
+                            target:
+                              entity_id: !input radiator_thermostats
+                            data:
+                              hvac_mode: heat
+                          - action: climate.set_temperature
+                            target:
+                              entity_id: !input radiator_thermostats
+                            data:
+                              temperature: "{{ target_temperature | float }}"
+                  - if:
+                      - condition: template
+                        value_template: "{{ fixed_radiator_thermostats | list | count > 0 }}"
+                    then:
+                      - choose:
+                          - conditions:
+                              - condition: template
+                                value_template: "{{ resume_target_mode == 'off' }}"
+                            sequence:
+                              - action: climate.set_hvac_mode
+                                target:
+                                  entity_id: "{{ fixed_radiator_thermostats }}"
+                                data:
+                                  hvac_mode: "off"
+                          - conditions:
+                              - condition: template
+                                value_template: "{{ resume_target_mode == 'heat' }}"
+                            sequence:
+                              - action: climate.set_hvac_mode
+                                target:
+                                  entity_id: "{{ fixed_radiator_thermostats }}"
+                                data:
+                                  hvac_mode: heat
+                              - action: climate.set_temperature
+                                target:
+                                  entity_id: "{{ fixed_radiator_thermostats }}"
+                                data:
+                                  temperature: "{{ fixed_radiator_temperature | float }}"
 
       - conditions:
           - condition: template
@@ -901,7 +973,13 @@ action:
         sequence:
           - if:
               - condition: template
-                value_template: "{{ not windows_open and not override_active }}"
+                value_template: >
+                  {{ not windows_open and not override_active and (
+                       (trigger.attribute == 'temperature' and
+                        (trigger.to_state.attributes.temperature | float(-1)) != (target_temperature | float(0))) or
+                       (trigger.attribute == 'hvac_mode' and
+                        trigger.to_state.attributes.hvac_mode != target_mode)
+                     ) }}
             then:
               - action: smart_heating_advisor.start_override
                 data:

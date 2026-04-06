@@ -553,7 +553,7 @@ variables:
 
   notify_preheat_effective: >
     {% set s = states(sha_notify_preheat_enabled) %}
-    {{ notify_preheat and (s == 'on' or s in ['unknown', 'unavailable']) }}
+    {{ notify_preheat and s != 'off' }}
 
   notify_target_effective: >
     {% set s = states(sha_notify_target_enabled) %}
@@ -733,6 +733,14 @@ action:
               - condition: template
                 value_template: "{{ notify_window_effective and is_state(sha_window_timeout_notified, 'off') }}"
             then:
+              - action: system_log.write
+                data:
+                  message: >-
+                    SHA [{{ room_name }}] Notification sent: window_paused
+                    (effective={{ notify_window_effective }},
+                    already_sent={{ is_state(sha_window_timeout_notified, 'on') }}).
+                  level: debug
+                  logger: custom_components.smart_heating_advisor
               - action: notify.notify
                 data:
                   title: >
@@ -773,6 +781,14 @@ action:
                   - condition: template
                     value_template: "{{ notify_window_effective and is_state(sha_window_timeout_notified, 'on') }}"
                 then:
+                  - action: system_log.write
+                    data:
+                      message: >-
+                        SHA [{{ room_name }}] Notification sent: window_closed
+                        (effective={{ notify_window_effective }},
+                        previously_sent={{ is_state(sha_window_timeout_notified, 'on') }}).
+                      level: debug
+                      logger: custom_components.smart_heating_advisor
                   - action: notify.notify
                     data:
                       title: >
@@ -889,6 +905,14 @@ action:
                       - condition: template
                         value_template: "{{ notify_target_effective and is_state(sha_target_notified, 'off') }}"
                     then:
+                      - action: system_log.write
+                        data:
+                          message: >-
+                            SHA [{{ room_name }}] Notification sent: schedule_started
+                            (effective={{ notify_target_effective }},
+                            already_sent={{ is_state(sha_target_notified, 'on') }}).
+                          level: debug
+                          logger: custom_components.smart_heating_advisor
                       - action: notify.notify
                         data:
                           title: >
@@ -920,6 +944,14 @@ action:
                       - condition: template
                         value_template: "{{ notify_standby_effective and is_state(sha_standby_notified, 'off') }}"
                     then:
+                      - action: system_log.write
+                        data:
+                          message: >-
+                            SHA [{{ room_name }}] Notification sent: schedule_ended
+                            (effective={{ notify_standby_effective }},
+                            already_sent={{ is_state(sha_standby_notified, 'on') }}).
+                          level: debug
+                          logger: custom_components.smart_heating_advisor
                       - action: notify.notify
                         data:
                           title: >
@@ -1069,6 +1101,14 @@ action:
                   - condition: template
                     value_template: "{{ notify_override_effective }}"
                 then:
+                  - action: system_log.write
+                    data:
+                      message: >-
+                        SHA [{{ room_name }}] Notification sent: override_active
+                        (effective={{ notify_override_effective }},
+                        parent_id={{ trigger.to_state.context.parent_id | default('none') }}).
+                      level: debug
+                      logger: custom_components.smart_heating_advisor
                   - action: notify.notify
                     data:
                       title: >
@@ -1108,6 +1148,20 @@ action:
             in_comfort={{ in_comfort }}, in_preheat={{ in_preheat }},
             override={{ override_active }}, windows={{ windows_open }},
             vacation={{ vacation_active }}.
+          level: debug
+          logger: custom_components.smart_heating_advisor
+
+      - action: system_log.write
+        data:
+          message: >
+            SHA [{{ room_name }}] Notification gates:
+            preheat_eff={{ notify_preheat_effective }}, target_eff={{ notify_target_effective }},
+            standby_eff={{ notify_standby_effective }}, window_eff={{ notify_window_effective }},
+            override_eff={{ notify_override_effective }}, in_preheat={{ in_preheat_bool }},
+            windows_open={{ windows_open_bool }}, target_reached={{ target_reached }},
+            preheat_sent={{ states(sha_preheat_notified) }}, target_sent={{ states(sha_target_notified) }},
+            standby_sent={{ states(sha_standby_notified) }}, window_sent={{ states(sha_window_timeout_notified) }},
+            trigger={{ trigger.id }}.
           level: debug
           logger: custom_components.smart_heating_advisor
 
@@ -1191,6 +1245,14 @@ action:
                  not windows_open_bool and
                  is_state(sha_preheat_notified, 'off') }}
         then:
+          - action: system_log.write
+            data:
+              message: >-
+                SHA [{{ room_name }}] Notification sent: preheat_started
+                (effective={{ notify_preheat_effective }}, in_preheat={{ in_preheat_bool }},
+                windows_open={{ windows_open_bool }}, already_sent={{ is_state(sha_preheat_notified, 'on') }}).
+              level: debug
+              logger: custom_components.smart_heating_advisor
           - action: notify.notify
             data:
               title: >
@@ -1220,6 +1282,14 @@ action:
                  windows_open_bool and
                  is_state(sha_preheat_notified, 'off') }}
         then:
+          - action: system_log.write
+            data:
+              message: >-
+                SHA [{{ room_name }}] Notification sent: preheat_suspended
+                (effective={{ notify_preheat_effective }}, in_preheat={{ in_preheat_bool }},
+                windows_open={{ windows_open_bool }}, already_sent={{ is_state(sha_preheat_notified, 'on') }}).
+              level: debug
+              logger: custom_components.smart_heating_advisor
           - action: notify.notify
             data:
               title: >
@@ -1249,6 +1319,14 @@ action:
                  target_reached and
                  is_state(sha_target_notified, 'off') }}
         then:
+          - action: system_log.write
+            data:
+              message: >-
+                SHA [{{ room_name }}] Notification sent: target_reached
+                (effective={{ notify_target_effective }}, target_reached={{ target_reached }},
+                already_sent={{ is_state(sha_target_notified, 'on') }}).
+              level: debug
+              logger: custom_components.smart_heating_advisor
           - action: notify.notify
             data:
               title: >
@@ -1280,6 +1358,15 @@ action:
                  not windows_open_bool and
                  is_state(sha_standby_notified, 'off') }}
         then:
+          - action: system_log.write
+            data:
+              message: >-
+                SHA [{{ room_name }}] Notification sent: standby
+                (effective={{ notify_standby_effective }}, in_comfort={{ in_comfort_bool }},
+                in_preheat={{ in_preheat_bool }}, vacation={{ vacation_active_bool }},
+                windows_open={{ windows_open_bool }}, already_sent={{ is_state(sha_standby_notified, 'on') }}).
+              level: debug
+              logger: custom_components.smart_heating_advisor
           - action: notify.notify
             data:
               title: >
@@ -1318,6 +1405,13 @@ action:
           - condition: template
             value_template: "{{ notify_override_effective and trigger.id == 'override_ended' }}"
         then:
+          - action: system_log.write
+            data:
+              message: >-
+                SHA [{{ room_name }}] Notification sent: override_ended
+                (effective={{ notify_override_effective }}, trigger={{ trigger.id }}).
+              level: debug
+              logger: custom_components.smart_heating_advisor
           - action: notify.notify
             data:
               title: >

@@ -672,11 +672,6 @@ triggers:
     id: window_airing_end
 
   - trigger: state
-    entity_id: !input vacation_calendar
-    id: vacation_changed
-    enabled: "{{ vacation_calendar | length > 0 }}"
-
-  - trigger: state
     entity_id: !input radiator_thermostats
     attribute: temperature
     id: manual_override

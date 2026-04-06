@@ -731,7 +731,7 @@ action:
               entity_id: "switch.sha_{{ room_id }}_airing_mode"
           - if:
               - condition: template
-                value_template: "{{ notify_window_effective }}"
+                value_template: "{{ notify_window_effective and is_state(sha_window_timeout_notified, 'off') }}"
             then:
               - action: notify.notify
                 data:
@@ -1040,7 +1040,11 @@ action:
           - if:
               - condition: template
                 value_template: >
-                  {{ not windows_open_bool and not override_active_bool and
+                  {{ not windows_open_bool and
+                     not override_active_bool and
+                     is_state(sha_override_switch, 'off') and
+                     trigger.to_state is not none and
+                     trigger.to_state.context.parent_id is none and
                      trigger.from_state is not none and (
                        (trigger.attribute == 'temperature' and
                         (trigger.to_state.attributes.temperature | float(-1)) != (target_temperature | float(0))) or
@@ -1333,7 +1337,7 @@ action:
       - if:
           - condition: template
             value_template: >
-              {{ vacation_active and
+              {{ vacation_active_bool and
                  is_state(sha_vacation_notified, 'off') }}
         then:
           - action: switch.turn_on
@@ -1343,7 +1347,7 @@ action:
       - if:
           - condition: template
             value_template: >
-              {{ not vacation_active and
+              {{ not vacation_active_bool and
                  is_state(sha_vacation_notified, 'on') }}
         then:
           - action: switch.turn_off

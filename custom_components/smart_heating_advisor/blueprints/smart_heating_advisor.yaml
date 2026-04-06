@@ -924,10 +924,32 @@ action:
               - condition: template
                 value_template: "{{ not override_active }}"
             then:
+              - variables:
+                  schedule_trigger_mode: >
+                    {% set new_state = trigger.to_state.state %}
+                    {% if windows_open %}
+                      off
+                    {% elif vacation_active and vacation_mode == 'off' %}
+                      off
+                    {% elif new_state == 'on' %}
+                      heat
+                    {% elif default_hvac_mode == 'heat' %}
+                      heat
+                    {% else %}
+                      off
+                    {% endif %}
+                  schedule_trigger_temp: >
+                    {% if trigger.to_state.state == 'on' %}
+                      {% set fname = state_attr(trigger.entity_id, 'friendly_name') | default('') %}
+                      {% set temps = fname | regex_findall('(\d+(?:\.\d+)?)C$', ignorecase=True) %}
+                      {{ temps | first | float(schedule_fallback_temp) if temps else schedule_fallback_temp | float }}
+                    {% else %}
+                      {{ default_temp | float }}
+                    {% endif %}
               - choose:
                   - conditions:
                       - condition: template
-                        value_template: "{{ target_mode == 'off' }}"
+                        value_template: "{{ schedule_trigger_mode == 'off' }}"
                     sequence:
                       - action: climate.set_hvac_mode
                         target:
@@ -936,7 +958,7 @@ action:
                           hvac_mode: "off"
                   - conditions:
                       - condition: template
-                        value_template: "{{ target_mode == 'heat' }}"
+                        value_template: "{{ schedule_trigger_mode == 'heat' }}"
                     sequence:
                       - action: climate.set_hvac_mode
                         target:
@@ -947,7 +969,7 @@ action:
                         target:
                           entity_id: !input radiator_thermostats
                         data:
-                          temperature: "{{ target_temperature | float }}"
+                          temperature: "{{ schedule_trigger_temp | float }}"
               - if:
                   - condition: template
                     value_template: "{{ fixed_radiator_thermostats | list | count > 0 }}"
@@ -955,7 +977,7 @@ action:
                   - choose:
                       - conditions:
                           - condition: template
-                            value_template: "{{ target_mode == 'off' }}"
+                            value_template: "{{ schedule_trigger_mode == 'off' }}"
                         sequence:
                           - action: climate.set_hvac_mode
                             target:
@@ -964,7 +986,7 @@ action:
                               hvac_mode: "off"
                       - conditions:
                           - condition: template
-                            value_template: "{{ target_mode == 'heat' }}"
+                            value_template: "{{ schedule_trigger_mode == 'heat' }}"
                         sequence:
                           - action: climate.set_hvac_mode
                             target:

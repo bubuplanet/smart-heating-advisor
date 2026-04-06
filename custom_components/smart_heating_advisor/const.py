@@ -38,7 +38,7 @@ CONF_DEBUG_LOGGING = "debug_logging"
 BLUEPRINT_TAG_PREFIX = "sha:"
 
 # ── Blueprint file ────────────────────────────────────────────────────
-BLUEPRINT_FILENAME = "sha_unified_heating.yaml"
+BLUEPRINT_FILENAME = "smart_heating_advisor.yaml"
 BLUEPRINT_RELATIVE_PATH = "blueprints"
 
 # ── Analysis schedule ─────────────────────────────────────────────────

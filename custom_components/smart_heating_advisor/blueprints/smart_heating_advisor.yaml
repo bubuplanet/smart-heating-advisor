@@ -47,7 +47,7 @@ blueprint:
     - switch.sha_ROOM_airing_mode
     - switch.sha_ROOM_override
 
-  source_url: https://raw.githubusercontent.com/bubuplanet/smart-heating-advisor/main/blueprints/automation/smart_heating_advisor/sha_unified_heating.yaml
+  source_url: https://raw.githubusercontent.com/bubuplanet/smart-heating-advisor/main/blueprints/automation/smart_heating_advisor/smart_heating_advisor.yaml
   domain: automation
 
   input:

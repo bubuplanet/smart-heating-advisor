@@ -170,12 +170,12 @@ SHA tests the connection before proceeding.
 
 ### Optional: Customize setup notification text (no Python edits)
 
-SHA notification text is loaded from JSON templates:
+SHA notification text is loaded from Markdown templates:
 
-- Bundled defaults: `custom_components/smart_heating_advisor/messages.json`
-- User override file: `/config/smart_heating_advisor_messages.json`
+- Bundled defaults: `custom_components/smart_heating_advisor/messages.md`
+- User override file: `/config/smart_heating_advisor_messages.md`
 
-If `/config/smart_heating_advisor_messages.json` exists, SHA merges it over defaults at startup.
+If `/config/smart_heating_advisor_messages.md` exists, SHA merges it over defaults at startup.
 This lets you customize wording without touching Python files.
 
 ---
@@ -317,7 +317,7 @@ Name each **HA Schedule helper** with the target temperature at the end:
 | Field | Description | Default |
 |---|---|---|
 | **Enable Vacation Mode** | Toggle vacation detection on/off | `false` |
-| **Vacation Calendar** | Calendar with vacation events | _(none)_ |
+| **Vacation Calendar** | Calendar with vacation events | `calendar.home` |
 | **Vacation Keyword** | Event title prefix to detect | `vacation` |
 | **Vacation Behavior** | Off or Frost protection | `Off` |
 | **Vacation Frost Temperature** | Temp during frost protection | `12°C` |
@@ -559,7 +559,7 @@ Repeats daily — system gets smarter over time
 | Schedule Fallback Temp | `21°C` |
 | Default Heating Mode | `Off` |
 | Window Sensors | `binary_sensor.bathroom_window` |
-| Vacation Calendar | _(none)_ |
+| Vacation Calendar | `calendar.home` |
 | Vacation Keyword | `vacation` |
 | Override Duration | `120 min` |
 
@@ -687,7 +687,7 @@ from(bucket: "home_assistant")
 ### Blueprint not showing in HA
 
 The blueprint is auto-installed by SHA on setup. If it's missing:
-1. Check `/config/blueprints/automation/smart_heating_advisor/sha_unified_heating.yaml` exists
+1. Check `/config/blueprints/automation/smart_heating_advisor/smart_heating_advisor.yaml` exists
 2. Go to **Settings → Automations → Blueprints** and click **Reload blueprints**
 
 ### Notifications firing every 5 minutes

@@ -1,7 +1,6 @@
 """Text resource loading for Smart Heating Advisor."""
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -10,13 +9,51 @@ from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_MESSAGES_FILE = Path(__file__).with_name("messages.json")
-USER_MESSAGES_FILENAME = "smart_heating_advisor_messages.json"
+DEFAULT_MESSAGES_FILE = Path(__file__).with_name("messages.md")
+USER_MESSAGES_FILENAME = "smart_heating_advisor_messages.md"
 
 
-def _load_json_file(path: Path) -> dict[str, Any]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return data if isinstance(data, dict) else {}
+def _load_md_file(path: Path) -> dict[str, Any]:
+    """Parse a Markdown messages file into a nested dict.
+
+    Format::
+
+        # section_name
+
+        ## key_name
+        Value text. May span multiple lines and contain blank lines.
+
+        ## next_key
+        ...
+    """
+    text = path.read_text(encoding="utf-8")
+    result: dict[str, Any] = {}
+    current_section: str | None = None
+    current_key: str | None = None
+    current_lines: list[str] = []
+
+    def _flush() -> None:
+        if current_section is not None and current_key is not None:
+            result.setdefault(current_section, {})[current_key] = (
+                "\n".join(current_lines).strip("\n")
+            )
+
+    for line in text.splitlines():
+        if line.startswith("## "):
+            _flush()
+            current_key = line[3:].strip()
+            current_lines = []
+        elif line.startswith("# ") and not line.startswith("## "):
+            _flush()
+            current_section = line[2:].strip()
+            current_key = None
+            current_lines = []
+        else:
+            if current_key is not None:
+                current_lines.append(line)
+
+    _flush()
+    return result
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -43,14 +80,14 @@ def _safe_format(template: str, **kwargs: Any) -> str:
 
 async def async_load_messages(hass: HomeAssistant) -> dict[str, Any]:
     """Load bundled messages plus optional user overrides from /config."""
-    default_messages = await hass.async_add_executor_job(_load_json_file, DEFAULT_MESSAGES_FILE)
+    default_messages = await hass.async_add_executor_job(_load_md_file, DEFAULT_MESSAGES_FILE)
 
     user_file = Path(hass.config.config_dir) / USER_MESSAGES_FILENAME
     if not user_file.exists():
         return default_messages
 
     try:
-        user_messages = await hass.async_add_executor_job(_load_json_file, user_file)
+        user_messages = await hass.async_add_executor_job(_load_md_file, user_file)
     except Exception as err:
         _LOGGER.warning("Failed to load user messages from %s: %s", user_file, err)
         return default_messages
@@ -70,21 +107,21 @@ def render_blueprint_status(
     pn = texts.get("persistent_notification", {}) if isinstance(texts, dict) else {}
 
     if action == "installed":
-        template = pn.get("bp_installed", "✅ Blueprint v{source_ver} installed automatically.\n\n")
+        template = pn.get("bp_installed", "✅ Blueprint v{source_ver} installed automatically.")
     elif action == "updated":
         template = pn.get(
             "bp_updated",
             "🔄 Blueprint updated from v{dest_ver} to v{source_ver}.\n"
             "Backup saved as {backup_name}.\n"
-            "Existing automations continue working — re-save to use new features.\n\n",
+            "Existing automations continue working — re-save to use new features.",
         )
     elif action == "skipped":
-        template = pn.get("bp_skipped", "✅ Blueprint v{source_ver} already up to date.\n\n")
+        template = pn.get("bp_skipped", "✅ Blueprint v{source_ver} already up to date.")
     else:
         template = pn.get(
             "bp_error",
             "⚠️ Blueprint could not be installed automatically.\n"
-            "Import it manually using the magic link in the README.\n\n",
+            "Import it manually using the magic link in the README.",
         )
 
     return _safe_format(

@@ -168,6 +168,17 @@ blueprint:
             text:
               multiline: true
 
+        tpl_preheat_suspended_body:
+          name: Pre-heat Suspended — Message Body
+          description: "Sent when pre-heat is due but blocked by an open window. Variables: {{ room_name }}, {{ room_temp }}, {{ target_temp }}, {{ schedule_name }}, {{ window_name }}"
+          default: >-
+            Pre-heating for "{{ schedule_name }}" in {{ room_name }} is suspended
+            while a window is open. Target: {{ target_temp }}°C.
+            Current: {{ room_temp }}°C.
+          selector:
+            text:
+              multiline: true
+
         notify_target_reached:
           name: Notify when target temperature reached
           description: >
@@ -188,7 +199,7 @@ blueprint:
 
         tpl_schedule_started_body:
           name: Schedule Started — Message Body
-          description: "Sent when a schedule activates. Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}"
+          description: "Sent when a schedule activates. Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}, {{ target_temp }}"
           default: >-
             "{{ schedule_name }}" is now active in {{ room_name }}.
             Current: {{ room_temp }}°C.
@@ -198,7 +209,7 @@ blueprint:
 
         tpl_target_reached_body:
           name: Target Reached — Message Body
-          description: "Sent when the room reaches its target temperature. Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}, {{ time }}"
+          description: "Sent when the room reaches its target temperature. Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}, {{ time }}, {{ target_temp }}"
           default: >-
             {{ room_name }} reached {{ room_temp }}°C
             for "{{ schedule_name }}" at {{ time }}.
@@ -446,7 +457,7 @@ blueprint:
 
         tpl_override_ended_body:
           name: Override Ended — Message Body
-          description: "Sent when the override expires and smart heating resumes. Variables: {{ room_name }}, {{ room_temp }}"
+          description: "Sent when the override expires and smart heating resumes. Variables: {{ room_name }}, {{ room_temp }}, {{ target_temp }}"
           default: >-
             Override in {{ room_name }} has ended.
             Resuming scheduled heating.
@@ -505,6 +516,7 @@ variables:
   tpl_default_header:           !input tpl_default_header
   tpl_override_header:          !input tpl_override_header
   tpl_preheat_started_body:     !input tpl_preheat_started_body
+  tpl_preheat_suspended_body:   !input tpl_preheat_suspended_body
   tpl_schedule_started_body:    !input tpl_schedule_started_body
   tpl_schedule_finished_body:   !input tpl_schedule_finished_body
   tpl_target_reached_body:      !input tpl_target_reached_body
@@ -873,7 +885,8 @@ action:
                             {{ body_base
                                | replace('{{ room_name }}', room_name)
                                | replace('{{ room_temp }}', (room_temp | round(1) | string))
-                               | replace('{{ schedule_name }}', active_schedule.name | default('n/a')) }}
+                               | replace('{{ schedule_name }}', active_schedule.name | default('n/a'))
+                               | replace('{{ target_temp }}', (comfort_temp | string)) }}
                       - action: switch.turn_on
                         target:
                           entity_id: "{{ sha_target_notified }}"
@@ -1081,6 +1094,7 @@ action:
             value_template: >
               {{ notify_preheat_effective and
                  in_preheat and
+                 not windows_open and
                  is_state(sha_preheat_notified, 'off') }}
         then:
           - action: notify.notify
@@ -1107,6 +1121,36 @@ action:
       - if:
           - condition: template
             value_template: >
+              {{ notify_preheat_effective and
+                 in_preheat and
+                 windows_open and
+                 is_state(sha_preheat_notified, 'off') }}
+        then:
+          - action: notify.notify
+            data:
+              title: >
+                {% set tpl = tpl_schedule_header | trim %}
+                {% set base = tpl if tpl else "🔔 {{ room_name }} — {{ status }}" %}
+                {{ base
+                   | replace('{{ room_name }}', room_name)
+                   | replace('{{ status }}', 'Pre-heat Suspended') }}
+              message: >
+                {% set body_tpl = tpl_preheat_suspended_body | trim %}
+                {% set win_name = expand(window_sensors) | selectattr('state', 'in', ['on', 'open']) | map(attribute='attributes.friendly_name') | list | join(', ') | default('a window') %}
+                {% set body_base = body_tpl if body_tpl else "Pre-heating for \"{{ schedule_name }}\" in {{ room_name }} is suspended while a window is open. Target: {{ target_temp }}°C. Current: {{ room_temp }}°C." %}
+                {{ body_base
+                   | replace('{{ room_name }}', room_name)
+                   | replace('{{ target_temp }}', (preheat_temp | string))
+                   | replace('{{ schedule_name }}', preheat_schedule.name | default('n/a'))
+                   | replace('{{ room_temp }}', (room_temp | round(1) | string))
+                   | replace('{{ window_name }}', win_name) }}
+          - action: switch.turn_on
+            target:
+              entity_id: "{{ sha_preheat_notified }}"
+
+      - if:
+          - condition: template
+            value_template: >
               {{ notify_target_effective and
                  target_reached and
                  is_state(sha_target_notified, 'off') }}
@@ -1126,7 +1170,8 @@ action:
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ room_temp }}', (room_temp | round(1) | string))
                    | replace('{{ schedule_name }}', active_schedule.name | default('n/a'))
-                   | replace('{{ time }}', now().strftime('%H:%M')) }}
+                   | replace('{{ time }}', now().strftime('%H:%M'))
+                   | replace('{{ target_temp }}', (comfort_temp | string)) }}
           - action: switch.turn_on
             target:
               entity_id: "{{ sha_target_notified }}"
@@ -1178,7 +1223,8 @@ action:
                 {% set body_base = body_tpl if body_tpl else "Override in {{ room_name }} has ended. Resuming scheduled heating. Current: {{ room_temp }}°C." %}
                 {{ body_base
                    | replace('{{ room_name }}', room_name)
-                   | replace('{{ room_temp }}', (room_temp | round(1) | string)) }}
+                   | replace('{{ room_temp }}', (room_temp | round(1) | string))
+                   | replace('{{ target_temp }}', (target_temperature | string)) }}
 
       - if:
           - condition: template

@@ -593,12 +593,13 @@ variables:
     {% endfor %}
     {{ {'active': ns.found, 'temp': ns.temp, 'name': ns.name} | tojson }}
 
-  in_comfort:   "{{ active_schedule.active }}"
-  comfort_temp: "{{ active_schedule.temp | float(0) }}"
+  in_comfort:          "{{ (active_schedule | from_json).active }}"
+  comfort_temp:        "{{ (active_schedule | from_json).temp | float(0) }}"
+  active_schedule_name: "{{ (active_schedule | from_json).name | default('') }}"
 
   preheat_schedule: >
     {% set ns = namespace(found=false, temp=0.0, name='', mins_needed=0) %}
-    {% if not in_comfort %}
+    {% if not (in_comfort | bool(false)) %}
       {% for s in schedules %}
         {% if not ns.found and is_state(s, 'off') %}
           {% set fname = state_attr(s, 'friendly_name') | default('') %}
@@ -620,8 +621,10 @@ variables:
     {% endif %}
     {{ {'active': ns.found, 'temp': ns.temp, 'name': ns.name, 'mins_needed': ns.mins_needed} | tojson }}
 
-  in_preheat:   "{{ preheat_schedule.active }}"
-  preheat_temp: "{{ preheat_schedule.temp | float(0) }}"
+  in_preheat:           "{{ (preheat_schedule | from_json).active }}"
+  preheat_temp:         "{{ (preheat_schedule | from_json).temp | float(0) }}"
+  preheat_schedule_name: "{{ (preheat_schedule | from_json).name | default('') }}"
+  preheat_schedule_mins: "{{ (preheat_schedule | from_json).mins_needed | int(10) }}"
 
   target_temperature: >
     {% if vacation_active and vacation_mode == 'frost' %}
@@ -1164,8 +1167,8 @@ action:
             data:
               message: >-
                 SHA [{{ room_name }}] Pre-heat started for
-                '{{ preheat_schedule.name }}' — target {{ preheat_temp }}°C,
-                ETA {{ preheat_schedule.mins_needed }} min,
+                '{{ preheat_schedule_name }}' — target {{ preheat_temp }}°C,
+                ETA {{ preheat_schedule_mins }} min,
                 current {{ room_temp | round(1) }}°C,
                 rate {{ heating_rate }}°C/min.
               level: info
@@ -1194,8 +1197,8 @@ action:
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ room_temp }}', (room_temp | round(1) | string))
                    | replace('{{ target_temp }}', (preheat_temp | string))
-                   | replace('{{ schedule_name }}', preheat_schedule.name | default('n/a'))
-                   | replace('{{ eta_minutes }}', (preheat_schedule.mins_needed | string)) }}
+                   | replace('{{ schedule_name }}', preheat_schedule_name if preheat_schedule_name else 'n/a')
+                   | replace('{{ eta_minutes }}', preheat_schedule_mins | string) }}
           - action: switch.turn_on
             target:
               entity_id: "{{ sha_preheat_notified }}"
@@ -1223,7 +1226,7 @@ action:
                 {{ body_base
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ target_temp }}', (preheat_temp | string))
-                   | replace('{{ schedule_name }}', preheat_schedule.name | default('n/a'))
+                   | replace('{{ schedule_name }}', preheat_schedule_name if preheat_schedule_name else 'n/a')
                    | replace('{{ room_temp }}', (room_temp | round(1) | string))
                    | replace('{{ window_name }}', win_name) }}
           - action: switch.turn_on
@@ -1251,7 +1254,7 @@ action:
                 {{ body_base
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ room_temp }}', (room_temp | round(1) | string))
-                   | replace('{{ schedule_name }}', active_schedule.name | default('n/a'))
+                   | replace('{{ schedule_name }}', active_schedule_name if active_schedule_name else 'n/a')
                    | replace('{{ time }}', now().strftime('%H:%M'))
                    | replace('{{ target_temp }}', (comfort_temp | string)) }}
           - action: switch.turn_on

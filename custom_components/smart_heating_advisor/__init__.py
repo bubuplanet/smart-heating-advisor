@@ -31,14 +31,15 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["sensor", "switch", "number"]
 
-_SHA_LOGGER = logging.getLogger(__name__)  # custom_components.smart_heating_advisor — parent of all submodule loggers
-
 
 def _apply_debug_logging(enabled: bool) -> None:
     """Set the SHA package log level based on the debug toggle."""
     _LOGGER.info("SHA debug logging %s", "enabled" if enabled else "disabled")
     level = logging.DEBUG if enabled else logging.WARNING
-    _SHA_LOGGER.setLevel(level)
+    # _LOGGER is the package-level logger (custom_components.smart_heating_advisor),
+    # which is the parent of all SHA submodule loggers (coordinator, ollama, sensor…).
+    # Setting its level here propagates the effective level across the entire package.
+    _LOGGER.setLevel(level)
 
 BLUEPRINT_SOURCE = Path(__file__).parent / BLUEPRINT_RELATIVE_PATH / BLUEPRINT_FILENAME
 
@@ -210,7 +211,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         daily_report_enabled = bool(call.data.get("daily_report_enabled", True))
         weekly_report_enabled = bool(call.data.get("weekly_report_enabled", True))
 
-        _LOGGER.debug("sha.register_room payload: %s", dict(call.data))
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("sha.register_room payload: %s", dict(call.data))
 
         updated = await coordinator.async_register_room(
             room_name,
@@ -219,15 +221,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             daily_report_enabled=daily_report_enabled,
             weekly_report_enabled=weekly_report_enabled,
         )
-        _LOGGER.debug(
-            "sha.register_room called: room='%s', sensor='%s', schedules=%s, daily_report=%s, weekly_report=%s, updated=%s",
-            room_name,
-            temp_sensor,
-            schedules,
-            daily_report_enabled,
-            weekly_report_enabled,
-            updated,
-        )
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "sha.register_room called: room='%s', sensor='%s', schedules=%s, daily_report=%s, weekly_report=%s, updated=%s",
+                room_name,
+                temp_sensor,
+                schedules,
+                daily_report_enabled,
+                weekly_report_enabled,
+                updated,
+            )
 
     hass.services.async_register(DOMAIN, "run_daily_analysis", handle_daily_analysis)
     hass.services.async_register(DOMAIN, "run_weekly_analysis", handle_weekly_analysis)

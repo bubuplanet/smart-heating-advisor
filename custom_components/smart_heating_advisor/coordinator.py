@@ -53,6 +53,23 @@ def _room_name_to_id(room_name: str) -> str:
     return room_id
 
 
+def _mask_secret(value: str, visible: int = 4) -> str:
+    """Return a masked version of a secret string for safe log output.
+
+    Shows only the last ``visible`` characters; the rest are replaced with ``*``.
+    Returns ``'<empty>'`` for falsy or non-string input.
+
+    Example::
+
+        _mask_secret("my-long-api-token-abc1")  # → "********************abc1"
+    """
+    if not isinstance(value, str) or not value:
+        return "<empty>"
+    if len(value) <= visible:
+        return "*" * len(value)
+    return "*" * (len(value) - visible) + value[-visible:]
+
+
 class RoomConfig:
     """Holds configuration for a single room discovered from blueprint automations."""
 
@@ -253,20 +270,20 @@ class SmartHeatingCoordinator:
                 )
             )
 
-        _LOGGER.debug(
-            "Room discovery (registry): %d room(s): %s",
-            len(rooms),
-            [r.room_name for r in rooms],
-        )
-
-        for room in rooms:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "Room discovery (registry) detail: room='%s' room_id='%s' sensor='%s' schedules=%s",
-                room.room_name,
-                room.room_id,
-                room.temp_sensor,
-                room.schedule_entities,
+                "Room discovery (registry): %d room(s): %s",
+                len(rooms),
+                [r.room_name for r in rooms],
             )
+            for room in rooms:
+                _LOGGER.debug(
+                    "Room discovery (registry) detail: room='%s' room_id='%s' sensor='%s' schedules=%s",
+                    room.room_name,
+                    room.room_id,
+                    room.temp_sensor,
+                    room.schedule_entities,
+                )
 
         if not rooms:
             _LOGGER.warning(
@@ -332,12 +349,13 @@ from(bucket: "{bucket}")
                         return []
                     csv_text = await response.text()
                     readings = self._parse_influxdb_csv(csv_text)
-                    _LOGGER.debug(
-                        "InfluxDB: received %d reading(s) for '%s'%s",
-                        len(readings),
-                        entity_id,
-                        f" — first: {readings[0][0]}, last: {readings[-1][0]}" if readings else "",
-                    )
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "InfluxDB: received %d reading(s) for '%s'%s",
+                            len(readings),
+                            entity_id,
+                            f" — first: {readings[0][0]}, last: {readings[-1][0]}" if readings else "",
+                        )
                     return readings
         except Exception as e:
             _LOGGER.error("InfluxDB query error for %s: %s", entity_id, e)
@@ -379,7 +397,7 @@ from(bucket: "{bucket}")
         for entity_id in room.schedule_entities:
             state = self.hass.states.get(entity_id)
             if state is None:
-                _LOGGER.debug("Schedule entity %s not found", entity_id)
+                _LOGGER.debug("[%s] Schedule entity %s not found in HA states", room.room_name, entity_id)
                 continue
             fname = state.attributes.get("friendly_name", entity_id)
             next_event = state.attributes.get("next_event")
@@ -633,7 +651,8 @@ from(bucket: "{bucket}")
             return
 
         schedules = self._get_schedule_info(room)
-        _LOGGER.debug("[%s] Schedules found: %d — %s", room.room_name, len(schedules), [s["name"] for s in schedules])
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("[%s] Schedules found: %d — %s", room.room_name, len(schedules), [s["name"] for s in schedules])
         analysis = analyze_heating_sessions(readings, schedules)
         _LOGGER.debug(
             "[%s] Analysis: %d session(s), success_rate=%s%%, avg_rate=%s",
@@ -677,7 +696,11 @@ from(bucket: "{bucket}")
         result = await self.ollama.async_parse_json_response(response)
 
         if not result or "heating_rate" not in result:
-            _LOGGER.error("[%s] Invalid Ollama response: %s", room.room_name, response)
+            _LOGGER.error(
+                "[%s] Invalid Ollama response (first 200 chars): %s",
+                room.room_name,
+                (response or "")[:200],
+            )
             await self._async_notify_daily_room_result(
                 room=room,
                 run_ts=run_ts,
@@ -692,10 +715,11 @@ from(bucket: "{bucket}")
         new_rate = float(result["heating_rate"])
         reasoning = result.get("reasoning", "No reasoning provided")
         confidence = result.get("confidence", "unknown")
-        _LOGGER.debug(
-            "[%s] AI result — new_rate=%.3f, confidence=%s, reasoning=%s",
-            room.room_name, new_rate, confidence, reasoning,
-        )
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "[%s] AI result — new_rate=%.3f, confidence=%s, reasoning=%s",
+                room.room_name, new_rate, confidence, reasoning,
+            )
 
         if room.room_id not in self.room_states:
             self.room_states[room.room_id] = {}
@@ -796,7 +820,9 @@ from(bucket: "{bucket}")
 
         if not result:
             _LOGGER.error(
-                "[%s] Invalid weekly Ollama response: %s", room.room_name, response
+                "[%s] Invalid weekly Ollama response (first 200 chars): %s",
+                room.room_name,
+                (response or "")[:200],
             )
             await self._async_notify_weekly_room_result(
                 room=room,

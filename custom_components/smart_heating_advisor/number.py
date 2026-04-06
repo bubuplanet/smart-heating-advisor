@@ -32,7 +32,7 @@ async def async_setup_entry(
             type(_event).__name__ if _event is not None else "direct",
         )
         rooms = coordinator.discover_rooms()
-        _LOGGER.info("number platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms])
+        _LOGGER.info("number platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms] if _LOGGER.isEnabledFor(logging.INFO) else "")
 
         entities: list[SHAHeatingRateNumber] = []
         for room in rooms:

@@ -730,3 +730,5 @@ MIT License — see [LICENSE](LICENSE) for details.
 ## 🤝 Contributing
 
 Issues and pull requests welcome at [github.com/bubuplanet/smart-heating-advisor](https://github.com/bubuplanet/smart-heating-advisor).
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, logging standards, and the pull request checklist.

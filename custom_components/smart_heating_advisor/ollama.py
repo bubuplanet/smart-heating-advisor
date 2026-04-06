@@ -26,10 +26,11 @@ class OllamaClient:
                 "num_predict": 512,
             },
         }
-        _LOGGER.debug(
-            "Ollama: sending prompt to %s (model=%s, %d chars)\n--- PROMPT ---\n%s\n--- END PROMPT ---",
-            self.url, self.model, len(prompt), prompt,
-        )
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Ollama: sending prompt to %s (model=%s, %d chars)\n--- PROMPT ---\n%s\n--- END PROMPT ---",
+                self.url, self.model, len(prompt), prompt,
+            )
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -46,10 +47,11 @@ class OllamaClient:
                         return None
                     data = await response.json()
                     raw = data.get("response")
-                    _LOGGER.debug(
-                        "Ollama: raw response received (%d chars)\n--- RESPONSE ---\n%s\n--- END RESPONSE ---",
-                        len(raw) if raw else 0, raw,
-                    )
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "Ollama: raw response received (%d chars)\n--- RESPONSE ---\n%s\n--- END RESPONSE ---",
+                            len(raw) if raw else 0, raw,
+                        )
                     return raw
         except aiohttp.ClientConnectorError:
             _LOGGER.error("Cannot connect to Ollama at %s", self.url)
@@ -73,7 +75,8 @@ class OllamaClient:
                 if clean.startswith("json"):
                     clean = clean[4:]
             result = json.loads(clean.strip())
-            _LOGGER.debug("Ollama: parsed JSON result: %s", result)
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("Ollama: parsed JSON result: %s", result)
             return result
         except json.JSONDecodeError as e:
             _LOGGER.error(

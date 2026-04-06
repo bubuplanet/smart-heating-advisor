@@ -591,7 +591,7 @@ variables:
         {% set ns.name = fname %}
       {% endif %}
     {% endfor %}
-    {{ {'active': ns.found, 'temp': ns.temp, 'name': ns.name} }}
+    {{ {'active': ns.found, 'temp': ns.temp, 'name': ns.name} | tojson }}
 
   in_comfort:   "{{ active_schedule.active }}"
   comfort_temp: "{{ active_schedule.temp | float(0) }}"
@@ -618,7 +618,7 @@ variables:
         {% endif %}
       {% endfor %}
     {% endif %}
-    {{ {'active': ns.found, 'temp': ns.temp, 'name': ns.name, 'mins_needed': ns.mins_needed} }}
+    {{ {'active': ns.found, 'temp': ns.temp, 'name': ns.name, 'mins_needed': ns.mins_needed} | tojson }}
 
   in_preheat:   "{{ preheat_schedule.active }}"
   preheat_temp: "{{ preheat_schedule.temp | float(0) }}"
@@ -711,6 +711,13 @@ action:
           - condition: template
             value_template: "{{ trigger.id == 'window_airing_start' }}"
         sequence:
+          - action: system_log.write
+            data:
+              message: >-
+                SHA [{{ room_name }}] Window open — heating paused.
+                Current: {{ room_temp | round(1) }}°C.
+              level: info
+              logger: custom_components.smart_heating_advisor
           - action: switch.turn_on
             target:
               entity_id: "switch.sha_{{ room_id }}_airing_mode"
@@ -781,6 +788,14 @@ action:
                   - action: switch.turn_off
                     target:
                       entity_id: "{{ sha_window_timeout_notified }}"
+              - action: system_log.write
+                data:
+                  message: >-
+                    SHA [{{ room_name }}] All windows closed — heating resumed
+                    ({{ 'Pre-heat' if in_preheat else ('Schedule' if in_comfort else 'Standby') }}).
+                    Current: {{ room_temp | round(1) }}°C.
+                  level: info
+                  logger: custom_components.smart_heating_advisor
               - if:
                   - condition: template
                     value_template: "{{ not override_active }}"
@@ -877,10 +892,11 @@ action:
                           message: >
                             {% set body_tpl = tpl_schedule_started_body | trim %}
                             {% set body_base = body_tpl if body_tpl else "\"{{ schedule_name }}\" is now active in {{ room_name }}. Current: {{ room_temp }}°C." %}
+                            {% set triggered_name = state_attr(trigger.entity_id, 'friendly_name') | default('n/a') %}
                             {{ body_base
                                | replace('{{ room_name }}', room_name)
                                | replace('{{ room_temp }}', (room_temp | round(1) | string))
-                               | replace('{{ schedule_name }}', active_schedule.name | default('n/a'))
+                               | replace('{{ schedule_name }}', triggered_name)
                                | replace('{{ target_temp }}', (comfort_temp | string)) }}
                       - action: switch.turn_on
                         target:
@@ -946,6 +962,16 @@ action:
                     {% else %}
                       {{ default_temp | float }}
                     {% endif %}
+              - action: system_log.write
+                data:
+                  message: >
+                    SHA [{{ room_name }}] Schedule
+                    '{{ trigger.to_state.attributes.friendly_name | default(trigger.entity_id) }}'
+                    {{ 'ON — commanding heat to ' ~ schedule_trigger_temp ~ '°C.' if trigger.to_state.state == 'on'
+                       else 'OFF — returning to default (' ~ default_hvac_mode ~ ', ' ~ default_temp ~ '°C).' }}
+                    Current: {{ room_temp | round(1) }}°C.
+                  level: info
+                  logger: custom_components.smart_heating_advisor
               - choose:
                   - conditions:
                       - condition: template
@@ -1014,6 +1040,15 @@ action:
                         trigger.to_state.attributes.hvac_mode != target_mode)
                      ) }}
             then:
+              - action: system_log.write
+                data:
+                  message: >-
+                    SHA [{{ room_name }}] Manual override on
+                    {{ trigger.to_state.attributes.friendly_name | default(trigger.entity_id) }} —
+                    pausing for {{ override_minutes }} min.
+                    Current: {{ room_temp | round(1) }}°C.
+                  level: info
+                  logger: custom_components.smart_heating_advisor
               - action: smart_heating_advisor.start_override
                 data:
                   room_name: "{{ room_name }}"
@@ -1051,6 +1086,18 @@ action:
           - stop: "Override active — skipping control loop."
 
     default:
+
+      - action: system_log.write
+        data:
+          message: >
+            SHA [{{ room_name }}] Control loop:
+            mode={{ target_mode }}, target={{ target_temperature | round(1) }}°C,
+            room={{ room_temp | round(1) }}°C,
+            in_comfort={{ in_comfort }}, in_preheat={{ in_preheat }},
+            override={{ override_active }}, windows={{ windows_open }},
+            vacation={{ vacation_active }}.
+          level: debug
+          logger: custom_components.smart_heating_advisor
 
       - choose:
           - conditions:
@@ -1105,6 +1152,24 @@ action:
                       entity_id: "{{ fixed_radiator_thermostats }}"
                     data:
                       temperature: "{{ fixed_radiator_temperature | float }}"
+
+      - if:
+          - condition: template
+            value_template: >
+              {{ in_preheat and
+                 not windows_open and
+                 is_state(sha_preheat_notified, 'off') }}
+        then:
+          - action: system_log.write
+            data:
+              message: >-
+                SHA [{{ room_name }}] Pre-heat started for
+                '{{ preheat_schedule.name }}' — target {{ preheat_temp }}°C,
+                ETA {{ preheat_schedule.mins_needed }} min,
+                current {{ room_temp | round(1) }}°C,
+                rate {{ heating_rate }}°C/min.
+              level: info
+              logger: custom_components.smart_heating_advisor
 
       - if:
           - condition: template
@@ -1222,6 +1287,20 @@ action:
           - action: switch.turn_on
             target:
               entity_id: "{{ sha_standby_notified }}"
+
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id == 'override_ended' }}"
+        then:
+          - action: system_log.write
+            data:
+              message: >-
+                SHA [{{ room_name }}] Override ended — resuming
+                {{ 'pre-heat' if in_preheat else ('schedule' if in_comfort else 'default') }}
+                ({{ target_mode }}, {{ target_temperature | round(1) }}°C).
+                Current: {{ room_temp | round(1) }}°C.
+              level: info
+              logger: custom_components.smart_heating_advisor
 
       - if:
           - condition: template

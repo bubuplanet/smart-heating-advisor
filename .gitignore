@@ -4,3 +4,4 @@
 *.sln
 /env
 *.zip
+MANUAL_TEST_SCENARIOS.md

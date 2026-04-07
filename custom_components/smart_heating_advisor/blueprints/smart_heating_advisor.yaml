@@ -977,7 +977,13 @@ action:
                 sequence:
                   - if:
                       - condition: template
-                        value_template: "{{ notify_standby_effective and not standby_notified_on }}"
+                        value_template: >
+                          {{ notify_standby_effective and
+                             not standby_notified_on and
+                             not in_preheat_bool and
+                             not in_comfort_bool and
+                             not vacation_active_bool and
+                             not windows_open_bool }}
                     then:
                       - action: system_log.write
                         data:

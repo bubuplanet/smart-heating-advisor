@@ -163,7 +163,7 @@ blueprint:
           name: Pre-heat Started — Message Body
           description: "Sent when pre-heating begins. Variables: {{ room_name }}, {{ room_temp }}, {{ target_temp }}, {{ schedule_name }}, {{ eta_minutes }}"
           default: >-
-            Starting pre-heat in {{ '{{ room_name }}' }} for "{{ '{{ schedule_name }}' }}".
+            Starting Pre-heat in {{ '{{ room_name }}' }} for "{{ '{{ schedule_name }}' }}".
             Room is {{ '{{ room_temp }}' }}°C — heating to {{ '{{ target_temp }}' }}°C.
             Expected ready in {{ '{{ eta_minutes }}' }} min.
           selector:
@@ -174,8 +174,8 @@ blueprint:
           name: Pre-heat Suspended — Message Body
           description: "Sent when pre-heat is due but blocked by an open window. Variables: {{ room_name }}, {{ room_temp }}, {{ target_temp }}, {{ schedule_name }}, {{ window_name }}"
           default: >-
-            Pre-heat skipped in {{ '{{ room_name }}' }} — {{ '{{ window_name }}' }} is open.
-            Schedule "{{ '{{ schedule_name }}' }}" starts soon but heating is paused.
+            Pre-heat skipped in {{ '{{ room_name }}' }} because {{ '{{ window_name }}' }} is open.
+            Schedule "{{ '{{ schedule_name }}' }}" starts soon but pre-heating is paused.
             Close the window to resume. Current: {{ '{{ room_temp }}' }}°C.
           selector:
             text:
@@ -203,7 +203,7 @@ blueprint:
           name: Schedule Started — Message Body
           description: "Sent when a schedule activates. Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}, {{ target_temp }}"
           default: >-
-            "{{ '{{ schedule_name }}' }}" is now active in {{ '{{ room_name }}' }}.
+            Schedule "{{ '{{ schedule_name }}' }}" is now active in {{ '{{ room_name }}' }}.
             Heating to {{ '{{ target_temp }}' }}°C. Current: {{ '{{ room_temp }}' }}°C.
           selector:
             text:
@@ -223,7 +223,7 @@ blueprint:
           name: Schedule Finished — Message Body
           description: "Sent when a schedule ends and heating returns to default. Variables: {{ room_name }}, {{ room_temp }}, {{ default_hvac_mode }}, {{ default_temp }}"
           default: >-
-            "{{ '{{ schedule_name }}' }}" ended in {{ '{{ room_name }}' }}.
+            Schedule "{{ '{{ schedule_name }}' }}" ended in {{ '{{ room_name }}' }}.
             {% if default_hvac_mode == 'off' %}Heating off.{% else %}
             Maintaining {{ '{{ default_temp }}' }}°C standby.{% endif %}
             Current: {{ '{{ room_temp }}' }}°C.
@@ -334,7 +334,7 @@ blueprint:
           description: >
             Header for window notifications.
             Variables: {{ room_name }}, {{ window_name }}, {{ status }}
-          default: "🪟 {{ '{{ room_name }}' }} - {{ '{{ window_name }}' }} {{ '{{ status }}' }}"
+          default: "🪟 {{ '{{ room_name }}' }} - {{ '{{ window_name }}' }} is {{ '{{ status }}' }}"
           selector:
             text:
 
@@ -443,7 +443,7 @@ blueprint:
           description: >
             Header for override active and override ended notifications.
             Variables: {{ room_name }}, {{ status }}
-          default: "🔔 {{ '{{ room_name }}' }} — {{ '{{ status }}' }}"
+          default: "🔔 Manual Override in {{ '{{ room_name }}' }} — {{ '{{ status }}' }}"
           selector:
             text:
 
@@ -710,8 +710,6 @@ triggers:
 
   - trigger: event
     event_type: sha_override_ended
-    event_data:
-      room_id: "{{ room_id }}"
     id: override_ended
 
 conditions: []

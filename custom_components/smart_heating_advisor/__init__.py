@@ -335,37 +335,57 @@ async def _async_remove_room_entities(
         )
 
 
-async def _async_disable_room_automation(hass: HomeAssistant, room_name: str) -> None:
-    """Find and disable the SHA blueprint automation for a room.
+def _do_delete_room_automation(config_dir: str, room_name: str) -> bool:
+    """Remove the SHA automation for a room from automations.yaml.
 
-    The automation is disabled rather than deleted so the user can inspect
-    or re-enable it manually from Settings → Automations.
+    Runs in executor (blocking I/O).
+    Returns True if an entry was removed, False if not found or on error.
     """
     alias = f"SHA — {room_name}"
-    entity_id = None
-    for state in hass.states.async_all("automation"):
-        if state.attributes.get("friendly_name") == alias:
-            entity_id = state.entity_id
-            break
+    automations_file = Path(config_dir) / "automations.yaml"
 
-    if entity_id:
-        try:
-            await hass.services.async_call(
-                "automation", "turn_off",
-                {"entity_id": entity_id},
-                blocking=True,
-            )
-            _LOGGER.info(
-                "SHA: disabled automation '%s' (%s)", alias, entity_id
-            )
-        except Exception as exc:
-            _LOGGER.warning(
-                "SHA: could not disable automation '%s': %s", alias, exc
-            )
-    else:
+    if not automations_file.exists():
         _LOGGER.info(
-            "SHA: automation '%s' not found — may have been deleted manually", alias
+            "SHA: automations.yaml not found — automation '%s' may not exist", alias
         )
+        return False
+
+    try:
+        content = automations_file.read_text(encoding="utf-8")
+        loaded = yaml.safe_load(content)
+        automations: list = loaded if isinstance(loaded, list) else []
+    except Exception as exc:
+        _LOGGER.error("SHA: failed to read automations.yaml: %s", exc)
+        return False
+
+    filtered = [a for a in automations if not (isinstance(a, dict) and a.get("alias") == alias)]
+    if len(filtered) == len(automations):
+        _LOGGER.info("SHA: automation '%s' not found in automations.yaml — already deleted?", alias)
+        return False
+
+    try:
+        automations_file.write_text(
+            yaml.dump(filtered, allow_unicode=True, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
+        )
+        _LOGGER.info("SHA: deleted automation '%s' from automations.yaml", alias)
+        return True
+    except Exception as exc:
+        _LOGGER.error("SHA: failed to write automations.yaml when deleting '%s': %s", alias, exc)
+        return False
+
+
+async def _async_delete_room_automation(hass: HomeAssistant, room_name: str) -> None:
+    """Delete the SHA blueprint automation for a room from automations.yaml and reload."""
+    deleted = await hass.async_add_executor_job(
+        _do_delete_room_automation, hass.config.config_dir, room_name
+    )
+    if deleted:
+        try:
+            await hass.services.async_call("automation", "reload", blocking=True)
+            _LOGGER.info("SHA: automation.reload called after deleting '%s'", f"SHA — {room_name}")
+        except Exception as exc:
+            _LOGGER.warning("SHA: automation.reload failed after deleting room automation: %s", exc)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -513,15 +533,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         await coordinator.async_unregister_room(room_name)
         await _async_remove_room_entities(hass, entry.entry_id, room_id)
-        await _async_disable_room_automation(hass, room_name)
+        await _async_delete_room_automation(hass, room_name)
         pn_async_create(
             hass,
             (
                 f"Room **{room_name}** has been removed from Smart Heating Advisor.\n\n"
-                f"The automation **SHA — {room_name}** has been disabled.\n\n"
-                f"All SHA entities for this room have been removed.\n\n"
-                f"You can delete the automation manually from "
-                f"Settings → Automations if it is no longer needed."
+                f"The automation **SHA — {room_name}** has been deleted.\n\n"
+                f"All SHA entities for this room have been removed."
             ),
             title=f"🗑️ SHA — {room_name} Removed",
             notification_id=f"sha_removed_{room_id}",
@@ -610,16 +628,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
 
         await _async_remove_room_entities(hass, entry.entry_id, room_id)
-        await _async_disable_room_automation(hass, room_name)
+        await _async_delete_room_automation(hass, room_name)
 
         pn_async_create(
             hass,
             (
                 f"Room **{room_name}** has been removed from Smart Heating Advisor.\n\n"
-                f"The automation **SHA — {room_name}** has been disabled.\n\n"
-                f"All SHA entities for this room have been removed.\n\n"
-                f"You can delete the automation manually from "
-                f"Settings → Automations if it is no longer needed."
+                f"The automation **SHA — {room_name}** has been deleted.\n\n"
+                f"All SHA entities for this room have been removed."
             ),
             title=f"🗑️ SHA — {room_name} Removed",
             notification_id=f"sha_removed_{room_id}",

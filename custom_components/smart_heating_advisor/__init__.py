@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 
 from homeassistant.components.persistent_notification import async_create as pn_async_create
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_time_change
@@ -373,7 +373,20 @@ async def _async_disable_room_automation(hass: HomeAssistant, room_name: str) ->
 # ──────────────────────────────────────────────────────────────────────
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Smart Heating Advisor from a config entry."""
+    """Set up Smart Heating Advisor from a config entry.
+
+    Room lifecycle:
+      - Rooms are stored as SubEntries on the config entry (HA 2024.11+).
+      - On first startup, rooms from CONF_ROOM_CONFIGS (legacy wizard flow) are
+        migrated to SubEntries. After migration the flag 'sha_migration_v2_complete'
+        is set and CONF_ROOM_CONFIGS is no longer used as authoritative source.
+      - SubEntries are the single source of truth for which rooms SHA manages.
+        Any room in the coordinator registry that is NOT in entry.subentries
+        is treated as deleted and cleaned up automatically.
+      - When a SubEntry is added or removed, HA fires the update_listeners.
+        The listener registered at the end of this function reloads the config
+        entry so platforms pick up the change.
+    """
     _LOGGER.info("Setting up Smart Heating Advisor")
     _LOGGER.debug(
         "SHA setup entry context: entry_id=%s hass_state=%s options=%s",
@@ -394,34 +407,125 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # ── Populate room registry from config data ──────────────────────
-    # Rooms selected in the config / options flow are stored in entry.data.
-    # Register each one that is not already in the persistent store so that
-    # entity platforms can immediately discover them on setup.
-    room_configs: list[dict] = entry.data.get(CONF_ROOM_CONFIGS, [])
-    for room_config in room_configs:
-        room_name = room_config.get("room_name", "").strip()
-        temp_sensor = room_config.get("temp_sensor", "").strip()
-        if not room_name or not temp_sensor:
-            continue
+    # ── Phase 1: One-time migration — CONF_ROOM_CONFIGS → SubEntries ──
+    # Runs exactly once (guarded by the 'sha_migration_v2_complete' flag).
+    # Registers legacy rooms in coordinator, then creates a SubEntry for
+    # each room that does not yet have one.
+    # The update_listener is NOT registered yet, so async_add_subentry /
+    # async_update_entry calls here do NOT trigger a reload loop.
+    if not entry.data.get("sha_migration_v2_complete"):
+        _LOGGER.info("SHA: starting v2 migration — moving rooms to SubEntries")
+
+        # Register legacy rooms in coordinator
+        for room_config in entry.data.get(CONF_ROOM_CONFIGS, []):
+            room_name = room_config.get("room_name", "").strip()
+            if not room_name:
+                continue
+            room_id = _room_name_to_id(room_name)
+            if room_id not in coordinator._room_registry:
+                await coordinator.async_register_room(
+                    room_name=room_name,
+                    temp_sensor=room_config.get("temp_sensor", ""),
+                    schedules=[],
+                    daily_report_enabled=True,
+                    weekly_report_enabled=True,
+                )
+                _LOGGER.info("SHA: migration — registered room '%s' in coordinator", room_name)
+
+        # Create SubEntries for all coordinator rooms that don't have one yet
+        existing_subentry_rooms: set[str] = {
+            s.data.get("room_name")
+            for s in entry.subentries.values()
+            if s.data.get("room_name")
+        }
+        for room in coordinator.discover_rooms():
+            if room.room_name not in existing_subentry_rooms:
+                try:
+                    hass.config_entries.async_add_subentry(
+                        entry,
+                        ConfigSubentry(
+                            data={
+                                "room_name": room.room_name,
+                                "area_id": None,
+                                "temp_sensor": room.temp_sensor,
+                                "trvs": [],
+                            },
+                            subentry_type="room",
+                            title=room.room_name,
+                            unique_id=f"sha_{room.room_id}",
+                        ),
+                    )
+                    _LOGGER.info(
+                        "SHA: migration — created SubEntry for room '%s'", room.room_name
+                    )
+                except Exception as exc:
+                    _LOGGER.warning(
+                        "SHA: migration — could not create SubEntry for room '%s': %s",
+                        room.room_name, exc,
+                    )
+
+        # Mark migration complete (no listener registered yet → no reload triggered)
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, "sha_migration_v2_complete": True}
+        )
+        _LOGGER.info("SHA: v2 migration complete")
+
+    # ── Phase 2: Sync coordinator with SubEntries (authoritative source) ──
+    # SubEntries are the single source of truth after migration.
+    # • New subentry (room added via "+ Add Room") → register in coordinator.
+    # • Orphaned coordinator room (subentry deleted) → full cleanup.
+    subentry_room_names: set[str] = {
+        s.data.get("room_name")
+        for s in entry.subentries.values()
+        if s.data.get("room_name")
+    }
+    subentry_data_by_name: dict[str, dict] = {
+        s.data.get("room_name"): dict(s.data)
+        for s in entry.subentries.values()
+        if s.data.get("room_name")
+    }
+
+    # Register rooms that are in subentries but not yet in coordinator
+    for room_name in subentry_room_names:
         room_id = _room_name_to_id(room_name)
         if room_id not in coordinator._room_registry:
-            # Room not yet in persistent store — register it now.
-            # Pass schedules=[] so we don't overwrite schedules that may have
-            # been added by the user via the blueprint previously.
+            sub_data = subentry_data_by_name[room_name]
             await coordinator.async_register_room(
                 room_name=room_name,
-                temp_sensor=temp_sensor,
+                temp_sensor=sub_data.get("temp_sensor", ""),
                 schedules=[],
                 daily_report_enabled=True,
                 weekly_report_enabled=True,
             )
-            _LOGGER.info("SHA: registered new room '%s' from config data", room_name)
-        else:
-            _LOGGER.debug(
-                "SHA: room '%s' already in registry — skipping initial registration",
-                room_name,
-            )
+            _LOGGER.info("SHA: registered room '%s' from SubEntry", room_name)
+
+    # Detect and clean up rooms that are in coordinator but not in any subentry
+    # (these are rooms whose SubEntry was deleted by the user via ⋮ → Delete).
+    orphaned: list[tuple[str, str]] = [
+        (room_id, coordinator._room_registry[room_id].get("room_name", room_id))
+        for room_id in list(coordinator._room_registry.keys())
+        if coordinator._room_registry[room_id].get("room_name") not in subentry_room_names
+    ]
+    for room_id, room_name in orphaned:
+        _LOGGER.info(
+            "SHA: room '%s' (id=%s) is no longer a SubEntry — cleaning up",
+            room_name, room_id,
+        )
+        await coordinator.async_unregister_room(room_name)
+        await _async_remove_room_entities(hass, entry.entry_id, room_id)
+        await _async_disable_room_automation(hass, room_name)
+        pn_async_create(
+            hass,
+            (
+                f"Room **{room_name}** has been removed from Smart Heating Advisor.\n\n"
+                f"The automation **SHA — {room_name}** has been disabled.\n\n"
+                f"All SHA entities for this room have been removed.\n\n"
+                f"You can delete the automation manually from "
+                f"Settings → Automations if it is no longer needed."
+            ),
+            title=f"🗑️ SHA — {room_name} Removed",
+            notification_id=f"sha_removed_{room_id}",
+        )
 
     # Set up sensor / switch / number platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -442,13 +546,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """sha.start_override — starts the override switch for a room with a duration."""
         room_name = call.data.get("room_name", "")
         duration_minutes = int(call.data.get("duration_minutes", 120))
-        _LOGGER.debug("sha.start_override called: room='%s', duration=%d min", room_name, duration_minutes)
+        _LOGGER.debug(
+            "sha.start_override called: room='%s', duration=%d min", room_name, duration_minutes
+        )
         if not room_name:
             _LOGGER.warning("sha.start_override called without room_name")
             return
         room_id = _room_name_to_id(room_name)
         override_switch = coordinator._override_switches.get(room_id)
-        _LOGGER.debug("sha.start_override: resolved room_id='%s', switch found=%s", room_id, override_switch is not None)
+        _LOGGER.debug(
+            "sha.start_override: resolved room_id='%s', switch found=%s",
+            room_id, override_switch is not None,
+        )
         if override_switch:
             await override_switch.async_start(duration_minutes * 60)
         else:
@@ -482,7 +591,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
     async def handle_unregister_room(call):
-        """sha.unregister_room — fully remove a room from SHA."""
+        """sha.unregister_room — backwards-compat service (deprecated).
+
+        Prefer using the ⋮ → Delete button on the integration card.
+        This service only removes the room from the coordinator registry;
+        the SubEntry must be removed separately for full UI cleanup.
+        """
         room_name = str(call.data.get("room_name", "")).strip()
         if not room_name:
             _LOGGER.warning("sha.unregister_room called without room_name")
@@ -559,20 +673,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except (ValueError, TypeError):
             _LOGGER.debug("Weekly catch-up: could not parse last_weekly_analysis timestamp")
 
-    # React to options changes (e.g. debug toggle) without requiring a reload
-    async def _options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-        _apply_debug_logging(entry.options.get(CONF_DEBUG_LOGGING, False))
-
-    entry.async_on_unload(entry.add_update_listener(_options_updated))
-
-    # ── Create blueprint automations for new rooms ───────────────────
-    newly_created_rooms = await _async_ensure_room_automations(hass, room_configs)
+    # ── Create blueprint automations for all coordinator rooms ───────
+    # Build room config dicts from coordinator + SubEntry data (for TRV list).
+    rooms_for_automation = [
+        {
+            "room_name": r.room_name,
+            "temp_sensor": r.temp_sensor,
+            "trvs": subentry_data_by_name.get(r.room_name, {}).get("trvs", []),
+        }
+        for r in coordinator.discover_rooms()
+    ]
+    newly_created_rooms = await _async_ensure_room_automations(hass, rooms_for_automation)
 
     # ── Setup / room notification ────────────────────────────────────
     action = blueprint_result["action"]
 
     if not entry.data.get("setup_notification_sent"):
-        # First-time setup notification (blueprint install status + checklist)
         texts = await async_load_messages(hass)
         source_ver = blueprint_result["source_version"]
         dest_ver = blueprint_result["dest_version"]
@@ -593,7 +709,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     if newly_created_rooms:
-        # Send a follow-up notification listing the newly created automations
         rooms_list = "\n".join(
             f"- **{r['room_name']}**: Settings → Automations → SHA — {r['room_name']}"
             for r in newly_created_rooms
@@ -613,6 +728,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             title="✅ Smart Heating Advisor — Room Automations Created",
             notification_id="sha_rooms_created",
         )
+
+    # ── Update listener — reload on SubEntry changes ─────────────────
+    # Registered LAST so that migration calls above (async_add_subentry,
+    # async_update_entry) do not accidentally trigger this listener.
+    #
+    # The listener is called whenever entry.options OR entry.subentries change.
+    # • SubEntry added/removed → subentry IDs differ from snapshot → reload.
+    # • Options-only change (e.g. debug toggle) → apply live, no reload.
+    # • Data-only change (e.g. weekly analysis timestamp, connection settings)
+    #   → no subentry change → no reload from this listener.
+    #   Connection-settings changes already schedule an explicit reload in
+    #   the options flow handler.
+    _known_subentry_ids = frozenset(entry.subentries.keys())
+
+    async def _async_update_listener(
+        hass: HomeAssistant, entry: ConfigEntry
+    ) -> None:
+        _apply_debug_logging(entry.options.get(CONF_DEBUG_LOGGING, False))
+        current_ids = frozenset(entry.subentries.keys())
+        if current_ids != _known_subentry_ids:
+            _LOGGER.info(
+                "SHA: SubEntries changed (%d → %d) — reloading",
+                len(_known_subentry_ids),
+                len(current_ids),
+            )
+            await hass.config_entries.async_reload(entry.entry_id)
+
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     _LOGGER.info("Smart Heating Advisor setup complete")
     return True

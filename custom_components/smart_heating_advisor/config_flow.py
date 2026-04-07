@@ -4,7 +4,11 @@ import voluptuous as vol
 import aiohttp
 
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigFlowResult,
+    ConfigSubentryFlow,
+    SubentryFlowResult,
+)
 from homeassistant.core import callback
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
@@ -34,8 +38,12 @@ from .const import (
     DEFAULT_INFLUXDB_ORG,
     DEFAULT_INFLUXDB_BUCKET,
 )
+from .coordinator import _room_name_to_id
 
 _LOGGER = logging.getLogger(__name__)
+
+# Sentinel value for the "create room manually" option in the area selector
+MANUAL_ENTRY_KEY = "__manual__"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -85,7 +93,9 @@ async def _test_influxdb(url: str, token: str, org: str, bucket: str) -> bool:
 # Area / entity registry helpers
 # ──────────────────────────────────────────────────────────────────────
 
-def _get_area_entities(hass, area_id: str, domain: str, device_class: str | None = None) -> list[str]:
+def _get_area_entities(
+    hass, area_id: str, domain: str, device_class: str | None = None
+) -> list[str]:
     """Find entity IDs in an area by domain and optional device class.
 
     Checks both the entity's own area assignment and the area of its parent device.
@@ -120,7 +130,186 @@ def _get_area_entities(hass, area_id: str, domain: str, device_class: str | None
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Config flow
+# Subentry flow — Add Room
+# ──────────────────────────────────────────────────────────────────────
+
+class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
+    """Handle subentry flow for adding a room to Smart Heating Advisor.
+
+    Flow paths:
+      async_step_user  →  area selected  →  async_step_entities  →  create
+                       →  manual chosen  →  async_step_manual    →  create
+    """
+
+    def __init__(self) -> None:
+        self._area_id: str | None = None
+        self._area_name: str = ""
+
+    def _existing_room_ids(self) -> set[str]:
+        """Return room_ids of rooms already configured as subentries."""
+        entry = self._get_entry()
+        return {
+            _room_name_to_id(s.data.get("room_name", ""))
+            for s in entry.subentries.values()
+            if s.data.get("room_name")
+        }
+
+    async def async_step_user(
+        self, user_input: dict | None = None
+    ) -> SubentryFlowResult:
+        """Entry point — select an HA Area or choose manual creation."""
+        existing_ids = self._existing_room_ids()
+
+        # Build the area options: manual sentinel first, then available areas
+        area_reg = ar.async_get(self.hass)
+        available_areas: dict[str, str] = {}
+        for area in sorted(area_reg.async_list_areas(), key=lambda a: a.name):
+            if _room_name_to_id(area.name) not in existing_ids:
+                available_areas[area.id] = area.name
+
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            selected = user_input.get("area_id", MANUAL_ENTRY_KEY)
+            if selected == MANUAL_ENTRY_KEY:
+                return await self.async_step_manual()
+            if selected in available_areas:
+                self._area_id = selected
+                self._area_name = available_areas[selected]
+                return await self.async_step_entities()
+            errors["area_id"] = "no_areas_available"
+
+        area_options = [
+            {"value": MANUAL_ENTRY_KEY, "label": "➕ Create room manually (not an HA Area)"},
+        ]
+        area_options += [
+            {"value": aid, "label": aname}
+            for aid, aname in available_areas.items()
+        ]
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("area_id", default=MANUAL_ENTRY_KEY): SelectSelector(
+                        SelectSelectorConfig(
+                            options=area_options,
+                            mode=SelectSelectorMode.LIST,
+                        )
+                    ),
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_entities(
+        self, user_input: dict | None = None
+    ) -> SubentryFlowResult:
+        """Confirm auto-detected entities for the selected HA Area."""
+        if self._area_id:
+            detected_sensors = _get_area_entities(
+                self.hass, self._area_id, "sensor", "temperature"
+            )
+            detected_trvs = _get_area_entities(self.hass, self._area_id, "climate")
+        else:
+            detected_sensors = []
+            detected_trvs = []
+
+        if user_input is not None:
+            room_name = user_input.get("room_name", self._area_name).strip()
+            trvs_raw = user_input.get("trvs", [])
+            if isinstance(trvs_raw, str):
+                trvs_raw = [trvs_raw] if trvs_raw else []
+            return self.async_create_entry(
+                title=room_name,
+                data={
+                    "room_name": room_name,
+                    "area_id": self._area_id,
+                    "temp_sensor": user_input.get("temp_sensor", ""),
+                    "trvs": trvs_raw,
+                },
+            )
+
+        detected_temp = detected_sensors[0] if detected_sensors else ""
+        schema_dict: dict = {
+            vol.Required("room_name", default=self._area_name): str,
+        }
+        if detected_temp:
+            schema_dict[vol.Optional("temp_sensor", default=detected_temp)] = EntitySelector(
+                EntitySelectorConfig(domain="sensor", device_class="temperature")
+            )
+        else:
+            schema_dict[vol.Optional("temp_sensor")] = EntitySelector(
+                EntitySelectorConfig(domain="sensor", device_class="temperature")
+            )
+        if detected_trvs:
+            schema_dict[vol.Optional("trvs", default=detected_trvs)] = EntitySelector(
+                EntitySelectorConfig(domain="climate", multiple=True)
+            )
+        else:
+            schema_dict[vol.Optional("trvs")] = EntitySelector(
+                EntitySelectorConfig(domain="climate", multiple=True)
+            )
+
+        return self.async_show_form(
+            step_id="entities",
+            data_schema=vol.Schema(schema_dict),
+            description_placeholders={"room_name": self._area_name},
+        )
+
+    async def async_step_manual(
+        self, user_input: dict | None = None
+    ) -> SubentryFlowResult:
+        """Manual room creation — free-text name + optional entity selectors."""
+        errors: dict[str, str] = {}
+        existing_ids = self._existing_room_ids()
+
+        if user_input is not None:
+            room_name = user_input.get("room_name", "").strip()
+            if not room_name:
+                errors["room_name"] = "required"
+            elif _room_name_to_id(room_name) in existing_ids:
+                errors["room_name"] = "room_already_exists"
+            else:
+                trvs_raw = user_input.get("trvs", [])
+                if isinstance(trvs_raw, str):
+                    trvs_raw = [trvs_raw] if trvs_raw else []
+                return self.async_create_entry(
+                    title=room_name,
+                    data={
+                        "room_name": room_name,
+                        "area_id": None,
+                        "temp_sensor": user_input.get("temp_sensor", ""),
+                        "trvs": trvs_raw,
+                    },
+                )
+
+        return self.async_show_form(
+            step_id="manual",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("room_name"): str,
+                    vol.Optional("temp_sensor"): EntitySelector(
+                        EntitySelectorConfig(domain="sensor", device_class="temperature")
+                    ),
+                    vol.Optional("trvs"): EntitySelector(
+                        EntitySelectorConfig(domain="climate", multiple=True)
+                    ),
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "tip": (
+                    "Tip: you can also create an Area first in "
+                    "Settings → Areas, then use it here for "
+                    "auto-detection of entities."
+                )
+            },
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Main config flow
 # ──────────────────────────────────────────────────────────────────────
 
 class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -129,17 +318,31 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     5 steps:
       1. Ollama — URL + model, connection tested
       2. InfluxDB — URL, token, org, bucket, connection tested
-      3. Rooms — multi-select HA Areas
+      3. Rooms — multi-select HA Areas (optional, skip for later)
       4. Room entities — per-room entity confirmation (iterates once per area)
       5. HA entities — weather entity
+
+    Room management after initial setup:
+      Add Room: "➕ Add Room" button on integration card → SHARoomSubentryFlowHandler
+      Remove Room: ⋮ → Delete on a room subentry card
     """
 
     VERSION = 1
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> "SHAOptionsFlow":
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> "SHAOptionsFlow":
         return SHAOptionsFlow(config_entry)
+
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: config_entries.ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        """Return subentry flow handlers supported by this integration."""
+        return {"room": SHARoomSubentryFlowHandler}
 
     def __init__(self) -> None:
         self._ollama_data: dict = {}
@@ -206,7 +409,7 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # ── Step 3: Room selection ────────────────────────────────────────
 
     async def async_step_rooms(self, user_input=None) -> ConfigFlowResult:
-        """Step 3 — Select rooms from HA Areas."""
+        """Step 3 — Select rooms from HA Areas (optional)."""
         area_reg = ar.async_get(self.hass)
         areas = {a.id: a.name for a in area_reg.async_list_areas()}
 
@@ -219,7 +422,6 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             selected_ids = user_input.get("selected_areas", [])
             if not selected_ids:
-                # User skipped — proceed without rooms
                 self._pending_rooms = []
                 self._room_configs = []
                 return await self.async_step_entities()
@@ -249,7 +451,10 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {
                     vol.Optional("selected_areas"): SelectSelector(
                         SelectSelectorConfig(
-                            options=[{"value": aid, "label": aname} for aid, aname in sorted_areas],
+                            options=[
+                                {"value": aid, "label": aname}
+                                for aid, aname in sorted_areas
+                            ],
                             multiple=True,
                             mode=SelectSelectorMode.LIST,
                         )
@@ -346,264 +551,93 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Options flow
+# Options flow — global settings only
 # ──────────────────────────────────────────────────────────────────────
 
 class SHAOptionsFlow(config_entries.OptionsFlow):
-    """Handle SHA options — debug logging toggle plus room management."""
+    """Handle SHA options — global connection settings and debug toggle.
+
+    Room management is done via:
+      ➕ Add Room button on the integration card (subentry flow)
+      ⋮ Delete on each room card (triggers full cleanup via reload)
+    """
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
-        self._debug_logging: bool = False
-        self._pending_rooms: list[dict] = []
-        self._new_room_configs: list[dict] = []
-
-    # ── Step: init ────────────────────────────────────────────────────
 
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
-        """Show current rooms + options to add/remove."""
+        """Show global settings form."""
+        cd = self._config_entry.data
         current_debug = self._config_entry.options.get(CONF_DEBUG_LOGGING, False)
-        current_rooms = self._config_entry.data.get(CONF_ROOM_CONFIGS, [])
-        room_names = [r.get("room_name", "?") for r in current_rooms]
 
         if user_input is not None:
-            self._debug_logging = user_input.get(CONF_DEBUG_LOGGING, current_debug)
-            action = user_input.get("action", "settings")
+            debug = user_input.get(CONF_DEBUG_LOGGING, current_debug)
 
-            if action == "add":
-                self._new_room_configs = []
-                self._pending_rooms = []
-                return await self.async_step_add_rooms()
-            if action == "remove":
-                return await self.async_step_remove_rooms()
-            # settings only
-            return self.async_create_entry(
-                title="",
-                data={CONF_DEBUG_LOGGING: self._debug_logging},
+            # If any connection/entity setting changed, update entry.data and reload.
+            # Debug logging is always saved to entry.options (live update, no reload).
+            data_keys = [
+                CONF_OLLAMA_URL, CONF_OLLAMA_MODEL,
+                CONF_INFLUXDB_URL, CONF_INFLUXDB_TOKEN,
+                CONF_INFLUXDB_ORG, CONF_INFLUXDB_BUCKET,
+                CONF_WEATHER_ENTITY,
+            ]
+            data_changed = any(
+                user_input.get(k) != cd.get(k)
+                for k in data_keys
+                if k in user_input
             )
 
-        action_options = [
-            {"value": "settings", "label": "Save settings only"},
-            {"value": "add", "label": "Add new room(s)"},
-        ]
-        if current_rooms:
-            action_options.append({"value": "remove", "label": "Remove room(s)"})
+            if data_changed:
+                new_data = dict(cd)
+                for k in data_keys:
+                    if k in user_input:
+                        new_data[k] = user_input[k]
+                self.hass.config_entries.async_update_entry(
+                    self._config_entry, data=new_data
+                )
+                _LOGGER.info("SHA options: connection settings changed — scheduling reload")
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self._config_entry.entry_id)
+                )
 
-        description = (
-            f"Currently managing {len(current_rooms)} room(s)"
-            + (f": {', '.join(room_names)}" if room_names else "")
-            + "."
-        )
+            return self.async_create_entry(
+                title="",
+                data={CONF_DEBUG_LOGGING: debug},
+            )
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
+                    vol.Required(
+                        CONF_OLLAMA_URL,
+                        default=cd.get(CONF_OLLAMA_URL, DEFAULT_OLLAMA_URL),
+                    ): str,
+                    vol.Required(
+                        CONF_OLLAMA_MODEL,
+                        default=cd.get(CONF_OLLAMA_MODEL, DEFAULT_OLLAMA_MODEL),
+                    ): str,
+                    vol.Required(
+                        CONF_INFLUXDB_URL,
+                        default=cd.get(CONF_INFLUXDB_URL, DEFAULT_INFLUXDB_URL),
+                    ): str,
+                    vol.Required(
+                        CONF_INFLUXDB_TOKEN,
+                        default=cd.get(CONF_INFLUXDB_TOKEN, ""),
+                    ): str,
+                    vol.Required(
+                        CONF_INFLUXDB_ORG,
+                        default=cd.get(CONF_INFLUXDB_ORG, DEFAULT_INFLUXDB_ORG),
+                    ): str,
+                    vol.Required(
+                        CONF_INFLUXDB_BUCKET,
+                        default=cd.get(CONF_INFLUXDB_BUCKET, DEFAULT_INFLUXDB_BUCKET),
+                    ): str,
+                    vol.Required(
+                        CONF_WEATHER_ENTITY,
+                        default=cd.get(CONF_WEATHER_ENTITY, "weather.forecast_home"),
+                    ): str,
                     vol.Required(CONF_DEBUG_LOGGING, default=current_debug): bool,
-                    vol.Required("action", default="settings"): SelectSelector(
-                        SelectSelectorConfig(
-                            options=action_options,
-                            mode=SelectSelectorMode.LIST,
-                        )
-                    ),
                 }
             ),
-            description_placeholders={"rooms_summary": description},
-        )
-
-    # ── Step: add_rooms ───────────────────────────────────────────────
-
-    async def async_step_add_rooms(self, user_input=None) -> ConfigFlowResult:
-        """Select new areas to add as rooms."""
-        area_reg = ar.async_get(self.hass)
-        existing_rooms = self._config_entry.data.get(CONF_ROOM_CONFIGS, [])
-        existing_area_ids = {r.get("area_id") for r in existing_rooms}
-        all_areas = {a.id: a.name for a in area_reg.async_list_areas()}
-        available_areas = {
-            aid: aname for aid, aname in all_areas.items()
-            if aid not in existing_area_ids
-        }
-
-        if not available_areas:
-            # All areas already added — go back
-            return await self.async_step_init()
-
-        if user_input is not None:
-            selected_ids = user_input.get("selected_areas", [])
-            if not selected_ids:
-                return await self.async_step_init()
-
-            self._pending_rooms = []
-            for area_id in selected_ids:
-                area_name = available_areas.get(area_id, area_id)
-                temp_sensors = _get_area_entities(self.hass, area_id, "sensor", "temperature")
-                trvs = _get_area_entities(self.hass, area_id, "climate")
-                self._pending_rooms.append({
-                    "area_id": area_id,
-                    "room_name": area_name,
-                    "temp_sensor": temp_sensors[0] if temp_sensors else "",
-                    "trvs": trvs,
-                })
-            return await self.async_step_add_room_entities()
-
-        sorted_areas = sorted(available_areas.items(), key=lambda x: x[1])
-        return self.async_show_form(
-            step_id="add_rooms",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional("selected_areas"): SelectSelector(
-                        SelectSelectorConfig(
-                            options=[{"value": aid, "label": aname} for aid, aname in sorted_areas],
-                            multiple=True,
-                            mode=SelectSelectorMode.LIST,
-                        )
-                    ),
-                }
-            ),
-        )
-
-    # ── Step: add_room_entities ───────────────────────────────────────
-
-    async def async_step_add_room_entities(self, user_input=None) -> ConfigFlowResult:
-        """Confirm detected entities for each new room (iterates)."""
-        if user_input is not None and self._pending_rooms:
-            room_draft = self._pending_rooms[0]
-            trvs_raw = user_input.get("trvs", [])
-            if isinstance(trvs_raw, str):
-                trvs_raw = [trvs_raw] if trvs_raw else []
-            self._new_room_configs.append({
-                "area_id": room_draft["area_id"],
-                "room_name": user_input.get("room_name", room_draft["room_name"]).strip(),
-                "temp_sensor": user_input.get("temp_sensor", ""),
-                "trvs": trvs_raw,
-            })
-            self._pending_rooms.pop(0)
-
-        if not self._pending_rooms:
-            # All new rooms confirmed — save and reload
-            return await self._async_save_rooms_and_complete(
-                added=self._new_room_configs,
-                removed_names=[],
-            )
-
-        room_draft = self._pending_rooms[0]
-        room_name = room_draft["room_name"]
-        detected_temp = room_draft.get("temp_sensor", "")
-        detected_trvs = room_draft.get("trvs", [])
-
-        schema_dict: dict = {
-            vol.Required("room_name", default=room_name): str,
-        }
-        if detected_temp:
-            schema_dict[vol.Optional("temp_sensor", default=detected_temp)] = EntitySelector(
-                EntitySelectorConfig(domain="sensor")
-            )
-        else:
-            schema_dict[vol.Optional("temp_sensor")] = EntitySelector(
-                EntitySelectorConfig(domain="sensor")
-            )
-        if detected_trvs:
-            schema_dict[vol.Optional("trvs", default=detected_trvs)] = EntitySelector(
-                EntitySelectorConfig(domain="climate", multiple=True)
-            )
-        else:
-            schema_dict[vol.Optional("trvs")] = EntitySelector(
-                EntitySelectorConfig(domain="climate", multiple=True)
-            )
-
-        return self.async_show_form(
-            step_id="add_room_entities",
-            data_schema=vol.Schema(schema_dict),
-            description_placeholders={"room_name": room_name},
-        )
-
-    # ── Step: remove_rooms ────────────────────────────────────────────
-
-    async def async_step_remove_rooms(self, user_input=None) -> ConfigFlowResult:
-        """Select rooms to remove."""
-        current_rooms = self._config_entry.data.get(CONF_ROOM_CONFIGS, [])
-
-        if not current_rooms:
-            return await self.async_step_init()
-
-        if user_input is not None:
-            names_to_remove = user_input.get("rooms_to_remove", [])
-            return await self._async_save_rooms_and_complete(
-                added=[],
-                removed_names=names_to_remove,
-            )
-
-        room_options = [
-            {"value": r["room_name"], "label": r["room_name"]}
-            for r in current_rooms
-        ]
-        return self.async_show_form(
-            step_id="remove_rooms",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional("rooms_to_remove"): SelectSelector(
-                        SelectSelectorConfig(
-                            options=room_options,
-                            multiple=True,
-                            mode=SelectSelectorMode.LIST,
-                        )
-                    ),
-                }
-            ),
-        )
-
-    # ── Internal: save rooms to entry.data + reload ───────────────────
-
-    async def _async_save_rooms_and_complete(
-        self,
-        added: list[dict],
-        removed_names: list[str],
-    ) -> ConfigFlowResult:
-        """Merge room changes into entry.data, trigger reload, complete flow."""
-        current_rooms = list(self._config_entry.data.get(CONF_ROOM_CONFIGS, []))
-
-        # ── Remove requested rooms ────────────────────────────────────
-        # Delegate to the sha.unregister_room service which handles
-        # coordinator cleanup, entity registry removal, automation
-        # disable, and the user notification in one place.
-        if removed_names:
-            for name in removed_names:
-                try:
-                    await self.hass.services.async_call(
-                        DOMAIN,
-                        "unregister_room",
-                        {"room_name": name},
-                        blocking=True,
-                    )
-                except Exception as exc:
-                    _LOGGER.warning(
-                        "SHA options: failed to call unregister_room for '%s': %s",
-                        name, exc,
-                    )
-            current_rooms = [
-                r for r in current_rooms
-                if r.get("room_name") not in removed_names
-            ]
-
-        # ── Add new rooms (deduplicate by room_name) ──────────────────
-        existing_names = {r.get("room_name") for r in current_rooms}
-        for new_room in added:
-            if new_room.get("room_name") not in existing_names:
-                current_rooms.append(new_room)
-                existing_names.add(new_room.get("room_name"))
-
-        self.hass.config_entries.async_update_entry(
-            self._config_entry,
-            data={**self._config_entry.data, CONF_ROOM_CONFIGS: current_rooms},
-        )
-        _LOGGER.info(
-            "SHA options flow: room_configs updated — %d room(s). Scheduling reload.",
-            len(current_rooms),
-        )
-        self.hass.async_create_task(
-            self.hass.config_entries.async_reload(self._config_entry.entry_id)
-        )
-        return self.async_create_entry(
-            title="",
-            data={CONF_DEBUG_LOGGING: self._debug_logging},
         )

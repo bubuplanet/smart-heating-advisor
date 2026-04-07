@@ -52,41 +52,68 @@
       "already_configured": "Smart Heating Advisor is already configured."
     }
   },
+  "config_subentries": {
+    "room": {
+      "entry_type": "Room",
+      "initiate_flow": {
+        "user": "Add Room"
+      },
+      "step": {
+        "user": {
+          "title": "Add Room — Select Area",
+          "description": "Select an HA Area to use as a room. SHA will auto-detect temperature sensors and TRVs. Already-configured rooms are excluded. Choose **➕ Create room manually** if the room is not yet an HA Area.",
+          "data": {
+            "area_id": "Room / Area"
+          }
+        },
+        "entities": {
+          "title": "Add Room — {room_name} Entities",
+          "description": "Confirm the entities detected for **{room_name}**. SHA will create helper entities and a blueprint automation. Leave sensors blank if none were detected — you can configure them in the automation later.",
+          "data": {
+            "room_name": "Room display name",
+            "temp_sensor": "Temperature sensor (optional)",
+            "trvs": "Radiator thermostats (optional)"
+          }
+        },
+        "manual": {
+          "title": "Add Room — Manual Setup",
+          "description": "Enter a name for the new room and optionally select its entities. Entities can also be configured later in the room automation.\n\n{tip}",
+          "data": {
+            "room_name": "Room name",
+            "temp_sensor": "Temperature sensor (optional)",
+            "trvs": "Radiator thermostats (optional)"
+          }
+        }
+      },
+      "error": {
+        "required": "This field is required.",
+        "room_already_exists": "A room with this name is already configured in SHA. Use a different name.",
+        "no_areas_available": "No HA Areas available."
+      },
+      "abort": {
+        "no_areas_available": "No HA Areas are available to add. Either all areas are already configured in SHA, or no areas exist yet. Use the manual option to add a room without an area, or create areas first in Settings → Areas."
+      }
+    }
+  },
   "options": {
     "step": {
       "init": {
-        "title": "Smart Heating Advisor — Options",
-        "description": "{rooms_summary}",
+        "title": "Smart Heating Advisor — Settings",
+        "description": "Update global settings. Use the **➕ Add Room** button on the integration card to add rooms, or click **⋮** next to a room to remove it.",
         "data": {
-          "debug_logging": "Enable debug logging",
-          "action": "Room management"
+          "ollama_url": "Ollama URL",
+          "ollama_model": "Ollama Model Name",
+          "influxdb_url": "InfluxDB URL",
+          "influxdb_token": "InfluxDB API Token",
+          "influxdb_org": "InfluxDB Organisation",
+          "influxdb_bucket": "InfluxDB Bucket",
+          "weather_entity": "Weather entity",
+          "debug_logging": "Enable debug logging"
         },
         "data_description": {
           "debug_logging": "Writes detailed logs for entity creation, room discovery, InfluxDB queries, Ollama prompts and responses, and heating rate updates. Disable when not actively debugging.",
-          "action": "Choose an action to perform in addition to saving settings."
-        }
-      },
-      "add_rooms": {
-        "title": "Smart Heating Advisor — Add Rooms",
-        "description": "Select the HA Areas you want to add as new rooms. SHA will auto-detect temperature sensors and TRVs.",
-        "data": {
-          "selected_areas": "Areas to add"
-        }
-      },
-      "add_room_entities": {
-        "title": "Smart Heating Advisor — {room_name} Entities",
-        "description": "Confirm the entities detected for **{room_name}**.",
-        "data": {
-          "room_name": "Room display name",
-          "temp_sensor": "Temperature sensor",
-          "trvs": "Radiator thermostats"
-        }
-      },
-      "remove_rooms": {
-        "title": "Smart Heating Advisor — Remove Rooms",
-        "description": "Select the rooms you want to remove from SHA management. Helper entities will be removed after the next reload.",
-        "data": {
-          "rooms_to_remove": "Rooms to remove"
+          "influxdb_token": "Changes to connection settings (Ollama, InfluxDB, weather entity) will trigger an integration reload.",
+          "ollama_url": "Changes to connection settings (Ollama, InfluxDB, weather entity) will trigger an integration reload."
         }
       }
     }

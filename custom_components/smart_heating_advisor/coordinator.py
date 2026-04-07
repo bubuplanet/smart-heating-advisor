@@ -203,8 +203,8 @@ class SmartHeatingCoordinator:
             schedules,
         )
 
-        if not room_name or not temp_sensor:
-            _LOGGER.debug("Room registry register skipped: missing room_name or temp_sensor")
+        if not room_name:
+            _LOGGER.debug("Room registry register skipped: missing room_name")
             return False
 
         if isinstance(schedules, str):
@@ -276,7 +276,7 @@ class SmartHeatingCoordinator:
             daily_report_enabled = bool(room_data.get("daily_report_enabled", True))
             weekly_report_enabled = bool(room_data.get("weekly_report_enabled", True))
 
-            if not room_name or not temp_sensor:
+            if not room_name:
                 continue
 
             if isinstance(schedules, str):

@@ -7,6 +7,32 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- SubEntry-based room management — each room appears as a SubEntry
+  on the SHA integration card with its own ⋮ three-dot menu
+- ➕ Add Room button directly on the SHA integration card via HA
+  native SubEntry pattern (ConfigSubentryFlow / async_get_supported_subentry_types)
+- SHARoomSubentryFlowHandler — separate ConfigSubentryFlow class
+  handling the Add Room flow:
+  - async_step_user: area selector with "➕ Create room manually"
+    as first option; excludes already-configured rooms
+  - async_step_entities: entity confirmation for area-based rooms
+    with auto-detected sensor and TRVs
+  - async_step_manual: free-text room name + optional entity
+    selectors; validates for duplicate room names
+- One-time migration on startup: rooms from CONF_ROOM_CONFIGS and
+  coordinator registry automatically promoted to SubEntries so they
+  appear in the UI with per-room ⋮ menus (flag: sha_migration_v2_complete)
+- Update listener in async_setup_entry: reloads integration when
+  SubEntries change (room added or deleted); applies debug logging
+  live when only options change — no reload needed
+- Full room cleanup on ⋮ Delete: coordinator unregistered, all SHA
+  entity registry entries removed, blueprint automation disabled,
+  "Room Removed" persistent notification sent — all happens on the
+  next reload triggered by the SubEntry deletion
+- config_subentries.room section in strings.json and
+  translations/en.json: entry_type, initiate_flow.user ("Add Room"),
+  step.user, step.entities, step.manual, errors (required,
+  room_already_exists, no_areas_available)
 - Area-based room discovery in config flow — select rooms from
   HA Areas instead of manually creating automations
 - Config flow Step 3: multi-select HA Areas for room management
@@ -38,6 +64,23 @@ All notable changes to this project will be documented in this file.
   cleaned up and linking to the disabled automation
 
 ### Changed
+- Subentry flow implemented as separate SHARoomSubentryFlowHandler
+  class (ConfigSubentryFlow) registered via async_get_supported_subentry_types
+  on the main ConfigFlow — not as methods on the main flow class
+- Room deletion handled via HA update_listener → reload pattern:
+  orphaned rooms detected on async_setup_entry and cleaned up;
+  no async_setup_subentry / async_unload_subentry (these do not
+  exist in the HA API — confirmed against HA 2026.4.1 source)
+- manifest.json: "subentries" key removed — subentry support is
+  declared in the config flow class, not in manifest
+- strings.json: config_subentries key is top-level (not nested
+  under "config") — each subentry type is a keyed subsection
+- Options flow (gear icon) now shows only global settings: Ollama
+  URL/model, InfluxDB URL/token/org/bucket, weather entity, and
+  debug logging toggle — room management moved to integration card
+- coordinator.discover_rooms() and async_register_room() no longer
+  require temp_sensor — manual rooms without a sensor are fully
+  supported (analysis is skipped gracefully when no sensor data)
 - Room registration no longer requires blueprint automation to
   run first — rooms are populated from config flow on setup
 - sha.register_room service kept for backwards compatibility only
@@ -79,6 +122,8 @@ All notable changes to this project will be documented in this file.
   unregister_room now fully cleans up all associated entities
 
 ### Removed
+- Options flow steps: add_rooms, add_room_entities, remove_rooms
+  — replaced by integration card Add Room button and ⋮ Delete
 - register_room call from blueprint first action — rooms are
   now managed exclusively by the config and options flow
 

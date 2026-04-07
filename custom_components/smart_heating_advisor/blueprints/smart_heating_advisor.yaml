@@ -550,6 +550,21 @@ variables:
 
   override_active: "{{ is_state(sha_override_switch, 'on') }}"
   windows_open:    "{{ is_state('switch.sha_' ~ room_id ~ '_airing_mode', 'on') }}"
+  preheat_notified_state: "{{ states(sha_preheat_notified) }}"
+  target_notified_state: "{{ states(sha_target_notified) }}"
+  standby_notified_state: "{{ states(sha_standby_notified) }}"
+  window_timeout_notified_state: "{{ states(sha_window_timeout_notified) }}"
+  vacation_notified_state: "{{ states(sha_vacation_notified) }}"
+  preheat_notified_available: "{{ preheat_notified_state not in ['unknown', 'unavailable'] }}"
+  target_notified_available: "{{ target_notified_state not in ['unknown', 'unavailable'] }}"
+  standby_notified_available: "{{ standby_notified_state not in ['unknown', 'unavailable'] }}"
+  window_timeout_notified_available: "{{ window_timeout_notified_state not in ['unknown', 'unavailable'] }}"
+  vacation_notified_available: "{{ vacation_notified_state not in ['unknown', 'unavailable'] }}"
+  preheat_notified_on: "{{ preheat_notified_state == 'on' }}"
+  target_notified_on: "{{ target_notified_state == 'on' }}"
+  standby_notified_on: "{{ standby_notified_state == 'on' }}"
+  window_timeout_notified_on: "{{ window_timeout_notified_state == 'on' }}"
+  vacation_notified_on: "{{ vacation_notified_state == 'on' }}"
 
   notify_preheat_effective: >
     {% set s = states(sha_notify_preheat_enabled) %}
@@ -731,14 +746,14 @@ action:
               entity_id: "switch.sha_{{ room_id }}_airing_mode"
           - if:
               - condition: template
-                value_template: "{{ notify_window_effective and is_state(sha_window_timeout_notified, 'off') }}"
+                value_template: "{{ notify_window_effective and not window_timeout_notified_on }}"
             then:
               - action: system_log.write
                 data:
                   message: >-
                     SHA [{{ room_name }}] Notification sent: window_paused
                     (effective={{ notify_window_effective }},
-                    already_sent={{ is_state(sha_window_timeout_notified, 'on') }}).
+                    already_sent={{ window_timeout_notified_on }}).
                   level: debug
                   logger: custom_components.smart_heating_advisor
               - action: notify.notify
@@ -759,9 +774,13 @@ action:
                        | replace('{{ room_name }}', room_name)
                        | replace('{{ window_name }}', win_name)
                        | replace('{{ room_temp }}', (room_temp | round(1) | string)) }}
-              - action: switch.turn_on
-                target:
-                  entity_id: "{{ sha_window_timeout_notified }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ window_timeout_notified_available }}"
+                then:
+                  - action: switch.turn_on
+                    target:
+                      entity_id: "{{ sha_window_timeout_notified }}"
 
       - conditions:
           - condition: template
@@ -779,14 +798,14 @@ action:
                   entity_id: "switch.sha_{{ room_id }}_airing_mode"
               - if:
                   - condition: template
-                    value_template: "{{ notify_window_effective and is_state(sha_window_timeout_notified, 'on') }}"
+                    value_template: "{{ notify_window_effective and window_timeout_notified_on }}"
                 then:
                   - action: system_log.write
                     data:
                       message: >-
                         SHA [{{ room_name }}] Notification sent: window_closed
                         (effective={{ notify_window_effective }},
-                        previously_sent={{ is_state(sha_window_timeout_notified, 'on') }}).
+                        previously_sent={{ window_timeout_notified_on }}).
                       level: debug
                       logger: custom_components.smart_heating_advisor
                   - action: notify.notify
@@ -809,9 +828,13 @@ action:
                            | replace('{{ window_name }}', win_name)
                            | replace('{{ resume_mode }}', resume_mode)
                            | replace('{{ room_temp }}', (room_temp | round(1) | string)) }}
-                  - action: switch.turn_off
-                    target:
-                      entity_id: "{{ sha_window_timeout_notified }}"
+                  - if:
+                      - condition: template
+                        value_template: "{{ window_timeout_notified_available }}"
+                    then:
+                      - action: switch.turn_off
+                        target:
+                          entity_id: "{{ sha_window_timeout_notified }}"
               - action: system_log.write
                 data:
                   message: >-
@@ -897,20 +920,24 @@ action:
                   - condition: template
                     value_template: "{{ trigger.to_state.state == 'on' }}"
                 sequence:
-                  - action: switch.turn_off
-                    target:
-                      entity_id:
-                        - "{{ sha_standby_notified }}"
                   - if:
                       - condition: template
-                        value_template: "{{ notify_target_effective and is_state(sha_target_notified, 'off') }}"
+                        value_template: "{{ standby_notified_available }}"
+                    then:
+                      - action: switch.turn_off
+                        target:
+                          entity_id:
+                            - "{{ sha_standby_notified }}"
+                  - if:
+                      - condition: template
+                        value_template: "{{ notify_target_effective and not target_notified_on }}"
                     then:
                       - action: system_log.write
                         data:
                           message: >-
                             SHA [{{ room_name }}] Notification sent: schedule_started
                             (effective={{ notify_target_effective }},
-                            already_sent={{ is_state(sha_target_notified, 'on') }}).
+                            already_sent={{ target_notified_on }}).
                           level: debug
                           logger: custom_components.smart_heating_advisor
                       - action: notify.notify
@@ -930,26 +957,34 @@ action:
                                | replace('{{ room_temp }}', (room_temp | round(1) | string))
                                | replace('{{ schedule_name }}', triggered_name)
                                | replace('{{ target_temp }}', (comfort_temp | string)) }}
-                      - action: switch.turn_on
+                      - if:
+                          - condition: template
+                            value_template: "{{ target_notified_available }}"
+                        then:
+                          - action: switch.turn_on
+                            target:
+                              entity_id: "{{ sha_target_notified }}"
+                  - if:
+                      - condition: template
+                        value_template: "{{ preheat_notified_available }}"
+                    then:
+                      - action: switch.turn_off
                         target:
-                          entity_id: "{{ sha_target_notified }}"
-                  - action: switch.turn_off
-                    target:
-                      entity_id: "{{ sha_preheat_notified }}"
+                          entity_id: "{{ sha_preheat_notified }}"
               - conditions:
                   - condition: template
                     value_template: "{{ trigger.to_state.state == 'off' }}"
                 sequence:
                   - if:
                       - condition: template
-                        value_template: "{{ notify_standby_effective and is_state(sha_standby_notified, 'off') }}"
+                        value_template: "{{ notify_standby_effective and not standby_notified_on }}"
                     then:
                       - action: system_log.write
                         data:
                           message: >-
                             SHA [{{ room_name }}] Notification sent: schedule_ended
                             (effective={{ notify_standby_effective }},
-                            already_sent={{ is_state(sha_standby_notified, 'on') }}).
+                            already_sent={{ standby_notified_on }}).
                           level: debug
                           logger: custom_components.smart_heating_advisor
                       - action: notify.notify
@@ -968,14 +1003,41 @@ action:
                                | replace('{{ room_temp }}', (room_temp | round(1) | string))
                                | replace('{{ default_hvac_mode }}', default_hvac_mode)
                                | replace('{{ default_temp }}', (default_temp | string)) }}
-                      - action: switch.turn_on
-                        target:
-                          entity_id: "{{ sha_standby_notified }}"
-                  - action: switch.turn_off
-                    target:
-                      entity_id:
-                        - "{{ sha_target_notified }}"
-                        - "{{ sha_preheat_notified }}"
+                      - if:
+                          - condition: template
+                            value_template: "{{ standby_notified_available }}"
+                        then:
+                          - action: switch.turn_on
+                            target:
+                              entity_id: "{{ sha_standby_notified }}"
+                  - if:
+                      - condition: template
+                        value_template: "{{ target_notified_available or preheat_notified_available }}"
+                    then:
+                      - choose:
+                          - conditions:
+                              - condition: template
+                                value_template: "{{ target_notified_available and preheat_notified_available }}"
+                            sequence:
+                              - action: switch.turn_off
+                                target:
+                                  entity_id:
+                                    - "{{ sha_target_notified }}"
+                                    - "{{ sha_preheat_notified }}"
+                          - conditions:
+                              - condition: template
+                                value_template: "{{ target_notified_available and not preheat_notified_available }}"
+                            sequence:
+                              - action: switch.turn_off
+                                target:
+                                  entity_id: "{{ sha_target_notified }}"
+                          - conditions:
+                              - condition: template
+                                value_template: "{{ preheat_notified_available and not target_notified_available }}"
+                            sequence:
+                              - action: switch.turn_off
+                                target:
+                                  entity_id: "{{ sha_preheat_notified }}"
           - if:
               - condition: template
                 value_template: "{{ not override_active_bool }}"
@@ -1224,7 +1286,7 @@ action:
             value_template: >
               {{ in_preheat_bool and
                  not windows_open_bool and
-                 is_state(sha_preheat_notified, 'off') }}
+                 not preheat_notified_on }}
         then:
           - action: system_log.write
             data:
@@ -1243,14 +1305,14 @@ action:
               {{ notify_preheat_effective and
                  in_preheat_bool and
                  not windows_open_bool and
-                 is_state(sha_preheat_notified, 'off') }}
+                 not preheat_notified_on }}
         then:
           - action: system_log.write
             data:
               message: >-
                 SHA [{{ room_name }}] Notification sent: preheat_started
                 (effective={{ notify_preheat_effective }}, in_preheat={{ in_preheat_bool }},
-                windows_open={{ windows_open_bool }}, already_sent={{ is_state(sha_preheat_notified, 'on') }}).
+                windows_open={{ windows_open_bool }}, already_sent={{ preheat_notified_on }}).
               level: debug
               logger: custom_components.smart_heating_advisor
           - action: notify.notify
@@ -1270,9 +1332,13 @@ action:
                    | replace('{{ target_temp }}', (preheat_temp | string))
                    | replace('{{ schedule_name }}', preheat_schedule_name if preheat_schedule_name else 'n/a')
                    | replace('{{ eta_minutes }}', preheat_schedule_mins | string) }}
-          - action: switch.turn_on
-            target:
-              entity_id: "{{ sha_preheat_notified }}"
+          - if:
+              - condition: template
+                value_template: "{{ preheat_notified_available }}"
+            then:
+              - action: switch.turn_on
+                target:
+                  entity_id: "{{ sha_preheat_notified }}"
 
       - if:
           - condition: template
@@ -1280,14 +1346,14 @@ action:
               {{ notify_preheat_effective and
                  in_preheat_bool and
                  windows_open_bool and
-                 is_state(sha_preheat_notified, 'off') }}
+                 not preheat_notified_on }}
         then:
           - action: system_log.write
             data:
               message: >-
                 SHA [{{ room_name }}] Notification sent: preheat_suspended
                 (effective={{ notify_preheat_effective }}, in_preheat={{ in_preheat_bool }},
-                windows_open={{ windows_open_bool }}, already_sent={{ is_state(sha_preheat_notified, 'on') }}).
+                windows_open={{ windows_open_bool }}, already_sent={{ preheat_notified_on }}).
               level: debug
               logger: custom_components.smart_heating_advisor
           - action: notify.notify
@@ -1308,23 +1374,27 @@ action:
                    | replace('{{ schedule_name }}', preheat_schedule_name if preheat_schedule_name else 'n/a')
                    | replace('{{ room_temp }}', (room_temp | round(1) | string))
                    | replace('{{ window_name }}', win_name) }}
-          - action: switch.turn_on
-            target:
-              entity_id: "{{ sha_preheat_notified }}"
+          - if:
+              - condition: template
+                value_template: "{{ preheat_notified_available }}"
+            then:
+              - action: switch.turn_on
+                target:
+                  entity_id: "{{ sha_preheat_notified }}"
 
       - if:
           - condition: template
             value_template: >
               {{ notify_target_effective and
                  target_reached and
-                 is_state(sha_target_notified, 'off') }}
+                 not target_notified_on }}
         then:
           - action: system_log.write
             data:
               message: >-
                 SHA [{{ room_name }}] Notification sent: target_reached
                 (effective={{ notify_target_effective }}, target_reached={{ target_reached }},
-                already_sent={{ is_state(sha_target_notified, 'on') }}).
+                already_sent={{ target_notified_on }}).
               level: debug
               logger: custom_components.smart_heating_advisor
           - action: notify.notify
@@ -1344,9 +1414,13 @@ action:
                    | replace('{{ schedule_name }}', active_schedule_name if active_schedule_name else 'n/a')
                    | replace('{{ time }}', now().strftime('%H:%M'))
                    | replace('{{ target_temp }}', (comfort_temp | string)) }}
-          - action: switch.turn_on
-            target:
-              entity_id: "{{ sha_target_notified }}"
+          - if:
+              - condition: template
+                value_template: "{{ target_notified_available }}"
+            then:
+              - action: switch.turn_on
+                target:
+                  entity_id: "{{ sha_target_notified }}"
 
       - if:
           - condition: template
@@ -1356,7 +1430,7 @@ action:
                  not in_preheat_bool and
                  not vacation_active_bool and
                  not windows_open_bool and
-                 is_state(sha_standby_notified, 'off') }}
+                 not standby_notified_on }}
         then:
           - action: system_log.write
             data:
@@ -1364,7 +1438,7 @@ action:
                 SHA [{{ room_name }}] Notification sent: standby
                 (effective={{ notify_standby_effective }}, in_comfort={{ in_comfort_bool }},
                 in_preheat={{ in_preheat_bool }}, vacation={{ vacation_active_bool }},
-                windows_open={{ windows_open_bool }}, already_sent={{ is_state(sha_standby_notified, 'on') }}).
+                windows_open={{ windows_open_bool }}, already_sent={{ standby_notified_on }}).
               level: debug
               logger: custom_components.smart_heating_advisor
           - action: notify.notify
@@ -1383,9 +1457,13 @@ action:
                    | replace('{{ room_temp }}', (room_temp | round(1) | string))
                    | replace('{{ default_hvac_mode }}', default_hvac_mode)
                    | replace('{{ default_temp }}', (default_temp | string)) }}
-          - action: switch.turn_on
-            target:
-              entity_id: "{{ sha_standby_notified }}"
+          - if:
+              - condition: template
+                value_template: "{{ standby_notified_available }}"
+            then:
+              - action: switch.turn_on
+                target:
+                  entity_id: "{{ sha_standby_notified }}"
 
       - if:
           - condition: template
@@ -1432,21 +1510,29 @@ action:
           - condition: template
             value_template: >
               {{ vacation_active_bool and
-                 is_state(sha_vacation_notified, 'off') }}
+                 not vacation_notified_on }}
         then:
-          - action: switch.turn_on
-            target:
-              entity_id: "{{ sha_vacation_notified }}"
+          - if:
+              - condition: template
+                value_template: "{{ vacation_notified_available }}"
+            then:
+              - action: switch.turn_on
+                target:
+                  entity_id: "{{ sha_vacation_notified }}"
 
       - if:
           - condition: template
             value_template: >
               {{ not vacation_active_bool and
-                 is_state(sha_vacation_notified, 'on') }}
+                 vacation_notified_on }}
         then:
-          - action: switch.turn_off
-            target:
-              entity_id: "{{ sha_vacation_notified }}"
+          - if:
+              - condition: template
+                value_template: "{{ vacation_notified_available }}"
+            then:
+              - action: switch.turn_off
+                target:
+                  entity_id: "{{ sha_vacation_notified }}"
 
 mode: queued
 max: 10

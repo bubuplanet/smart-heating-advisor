@@ -4,6 +4,47 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## v0.0.2 — 2026-04-07
+
+### Architecture changes
+- Replaced blueprint-driven room registration (`sha.register_room`) with Area-based room discovery in the config flow — rooms are now configured once during SHA setup by selecting HA Areas, with no manual automation creation required.
+- SHA automatically registers all rooms in its internal registry during `async_setup_entry`, without waiting for a blueprint automation to run.
+- SHA automatically creates all helper entities (number, switch, sensor) per room immediately on setup.
+- SHA automatically creates a disabled blueprint automation per room, pre-filled with the room name and the auto-detected temperature sensor and TRVs from the selected HA Area.
+- `sha.register_room` service retained for backwards compatibility but is no longer called by the blueprint.
+
+### New config flow steps
+- **Step 3 — Select rooms:** multi-select HA Areas using the Area registry; skips gracefully if no areas exist.
+- **Step 4 — Room entities:** per-room entity confirmation form (iterates once per selected area), showing auto-detected temperature sensor and TRVs; user can override or leave blank.
+- **Step 5 — Weather entity:** unchanged functionality, renumbered from step 3.
+- **Options flow extended:** new `add_rooms` / `add_room_entities` sub-flow to add rooms after initial setup; new `remove_rooms` sub-flow to remove rooms; changes are saved to `entry.data` and trigger an integration reload automatically.
+
+### New entities per room
+- `switch.sha_ROOM_window_timeout_notified` — deduplication flag for window open/close notifications.
+- `switch.sha_ROOM_preheat_notifications_enabled` — runtime toggle for pre-heat notifications.
+- `switch.sha_ROOM_target_notifications_enabled` — runtime toggle for target-reached notifications.
+- `switch.sha_ROOM_standby_notifications_enabled` — runtime toggle for standby notifications.
+- `switch.sha_ROOM_window_notifications_enabled` — runtime toggle for window open/close notifications.
+- `switch.sha_ROOM_override_notifications_enabled` — runtime toggle for override notifications.
+
+### New services
+- `sha.unregister_room` — remove a room from the persistent registry; helper entities disappear after the next reload.
+
+### Fixed
+- `target_temperature` floored at `4.0°C` across all blueprint branches (comfort, preheat, vacation frost, default) — prevents invalid TRV set-point values.
+- `schedule_changed` added to the override skip list — schedule transitions no longer incorrectly stop an active override.
+- Vacation mode now sends a `notify.notify` user notification before setting the `sha_vacation_notified` flag, so the notification is guaranteed to fire on activation.
+- `window_timeout_notified` switch was missing from the entity platform — window-close resume notifications were never firing and window-open deduplication was broken.
+- Log level on disable changed from `logging.WARNING` to `logging.NOTSET` — SHA `INFO`-level logs (room discovery, analysis results, etc.) are now visible when debug mode is off.
+- `room_id` derivation aligned between blueprint Jinja2 template and `coordinator._room_name_to_id()` — entity IDs now always match between the automation and the integration.
+
+### Blueprint
+- Version bumped to **0.0.6** (triggers auto-update with backup on existing installs).
+- `register_room` action removed from blueprint `action:` block — rooms are now fully managed by the config flow.
+- Setup description updated to reflect the new Area-based wizard flow.
+
+---
+
 ## v0.0.2 — 2026-04-06
 
 ### Audit: Full Compliance Review — All 34 checks passed ✅

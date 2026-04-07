@@ -24,17 +24,16 @@ Smart Heating Advisor is configured and ready.
 {bp_msg}
 
 Setup checklist:
-1. Go to Settings -> Automations -> Blueprints
-2. Open Smart Heating Advisor blueprint
-3. Create one automation per room
-4. Use schedule names that end with temperature (example: Morning Shower 26C)
-5. Run each new room automation once (this registers the room in SHA)
-6. Reload Smart Heating Advisor integration to create room entities
-7. Optional check: Developer Tools -> States and search for sha_
-   You should see entities like number.sha_room_heating_rate and switch.sha_room_override
+1. Your rooms are pre-configured from the setup wizard
+2. SHA has created disabled blueprint automations for each room
+3. Open each room automation (Settings → Automations) and add Schedule helpers
+   Example schedule name: "Morning Shower 26C"
+4. Enable each automation when ready
+5. Optional: Developer Tools → States → search for "sha_" to verify entities
 
 Notes:
-- If you change schedules later: save automation, run once, then reload SHA
+- To add or remove rooms later: Settings → Integrations → Smart Heating Advisor → Configure
+- If you change schedules later: edit the automation and save
 - Upgrading from older versions: open and re-save each room automation so it uses the latest blueprint
 
 Daily AI analysis runs at 00:01

@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Smart Heating Advisor — Ollama",
-        "description": "Step 1 of 3 — Configure your local Ollama AI instance",
+        "description": "Step 1 of 5 — Configure your local Ollama AI instance",
         "data": {
           "ollama_url": "Ollama URL",
           "ollama_model": "Ollama Model Name"
@@ -11,7 +11,7 @@
       },
       "influxdb": {
         "title": "Smart Heating Advisor — InfluxDB",
-        "description": "Step 2 of 3 — Configure your InfluxDB 2.x connection",
+        "description": "Step 2 of 5 — Configure your InfluxDB 2.x connection",
         "data": {
           "influxdb_url": "InfluxDB URL",
           "influxdb_token": "InfluxDB API Token",
@@ -19,11 +19,27 @@
           "influxdb_bucket": "InfluxDB Bucket"
         }
       },
+      "rooms": {
+        "title": "Smart Heating Advisor — Select Rooms",
+        "description": "Step 3 of 5 — Select the rooms (HA Areas) you want SHA to manage. SHA will auto-detect temperature sensors and TRVs assigned to each area. Leave empty to skip and configure rooms later.",
+        "data": {
+          "selected_areas": "Rooms to manage"
+        }
+      },
+      "room_entities": {
+        "title": "Smart Heating Advisor — {room_name} Entities",
+        "description": "Step 4 of 5 — Confirm the entities detected for **{room_name}**. SHA will create helper entities and a blueprint automation for this room. Leave sensors blank if none were detected — you can configure them in the automation later.",
+        "data": {
+          "room_name": "Room display name",
+          "temp_sensor": "Temperature sensor",
+          "trvs": "Radiator thermostats"
+        }
+      },
       "entities": {
         "title": "Smart Heating Advisor — HA Entities",
-        "description": "Step 3 of 3 — Configure Home Assistant entities",
+        "description": "Step 5 of 5 — Configure global HA entities used for weather context in AI analysis.",
         "data": {
-          "weather_entity": "Weather Entity"
+          "weather_entity": "Weather entity"
         }
       }
     },
@@ -40,11 +56,37 @@
     "step": {
       "init": {
         "title": "Smart Heating Advisor — Options",
+        "description": "{rooms_summary}",
         "data": {
-          "debug_logging": "Enable debug logging"
+          "debug_logging": "Enable debug logging",
+          "action": "Room management"
         },
         "data_description": {
-          "debug_logging": "Writes detailed logs for entity creation, room discovery, InfluxDB queries, Ollama prompts and responses, and heating rate updates. Disable when not actively debugging."
+          "debug_logging": "Writes detailed logs for entity creation, room discovery, InfluxDB queries, Ollama prompts and responses, and heating rate updates. Disable when not actively debugging.",
+          "action": "Choose an action to perform in addition to saving settings."
+        }
+      },
+      "add_rooms": {
+        "title": "Smart Heating Advisor — Add Rooms",
+        "description": "Select the HA Areas you want to add as new rooms. SHA will auto-detect temperature sensors and TRVs.",
+        "data": {
+          "selected_areas": "Areas to add"
+        }
+      },
+      "add_room_entities": {
+        "title": "Smart Heating Advisor — {room_name} Entities",
+        "description": "Confirm the entities detected for **{room_name}**.",
+        "data": {
+          "room_name": "Room display name",
+          "temp_sensor": "Temperature sensor",
+          "trvs": "Radiator thermostats"
+        }
+      },
+      "remove_rooms": {
+        "title": "Smart Heating Advisor — Remove Rooms",
+        "description": "Select the rooms you want to remove from SHA management. Helper entities will be removed after the next reload.",
+        "data": {
+          "rooms_to_remove": "Rooms to remove"
         }
       }
     }

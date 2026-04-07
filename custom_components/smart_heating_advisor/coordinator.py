@@ -302,7 +302,7 @@ class SmartHeatingCoordinator:
         if not rooms:
             _LOGGER.warning(
                 "SHA room registry is empty. "
-                "Run a SHA blueprint automation once to auto-register the room."
+                "Add rooms via Settings → Integrations → Smart Heating Advisor → Configure."
             )
 
         return rooms

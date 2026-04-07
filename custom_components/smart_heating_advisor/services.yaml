@@ -56,10 +56,11 @@ unregister_room:
         text:
 
 register_room:
-  name: Register Room
+  name: Register Room (deprecated)
   description: >
-    Register or update a room in SHA's internal room registry.
-    Called by the SHA blueprint automation to avoid scanning automation files.
+    Deprecated. Rooms are now configured via the SHA setup wizard
+    (Settings → Integrations → Smart Heating Advisor → Configure).
+    This service is kept for backwards compatibility only.
   fields:
     room_name:
       name: Room Name

@@ -2,7 +2,10 @@
 import logging
 import re
 import shutil
+import uuid
 from pathlib import Path
+
+import yaml
 
 from homeassistant.components.persistent_notification import async_create as pn_async_create
 from homeassistant.config_entries import ConfigEntry
@@ -14,6 +17,7 @@ from .const import (
     BLUEPRINT_FILENAME,
     BLUEPRINT_RELATIVE_PATH,
     CONF_DEBUG_LOGGING,
+    CONF_ROOM_CONFIGS,
     DAILY_ANALYSIS_HOUR,
     DAILY_ANALYSIS_MINUTE,
     WEEKLY_ANALYSIS_WEEKDAY,
@@ -36,10 +40,8 @@ def _apply_debug_logging(enabled: bool) -> None:
     """Set the SHA package log level based on the debug toggle."""
     _LOGGER.info("SHA debug logging %s", "enabled" if enabled else "disabled")
     level = logging.DEBUG if enabled else logging.NOTSET
-    # _LOGGER is the package-level logger (custom_components.smart_heating_advisor),
-    # which is the parent of all SHA submodule loggers (coordinator, ollama, sensor…).
-    # Setting its level here propagates the effective level across the entire package.
     _LOGGER.setLevel(level)
+
 
 BLUEPRINT_SOURCE = Path(__file__).parent / BLUEPRINT_RELATIVE_PATH / BLUEPRINT_FILENAME
 
@@ -138,6 +140,131 @@ async def async_install_blueprint(hass: HomeAssistant) -> dict:
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Automation creation
+# ──────────────────────────────────────────────────────────────────────
+
+def _do_create_room_automation(
+    config_dir: str,
+    room_name: str,
+    temp_sensor: str,
+    trvs: list[str],
+) -> bool:
+    """Write a disabled SHA blueprint automation to automations.yaml.
+
+    Runs in executor (blocking I/O).
+    Returns True if the automation was created, False if it already existed or
+    automations.yaml was not found / not writable.
+    """
+    alias = f"SHA — {room_name}"
+    automations_file = Path(config_dir) / "automations.yaml"
+
+    if not automations_file.exists():
+        _LOGGER.warning(
+            "automations.yaml not found at %s — cannot create automation for '%s'. "
+            "Create the automation manually from Settings → Automations → Blueprints.",
+            automations_file,
+            room_name,
+        )
+        return False
+
+    try:
+        content = automations_file.read_text(encoding="utf-8")
+        loaded = yaml.safe_load(content)
+        automations: list = loaded if isinstance(loaded, list) else []
+    except Exception as exc:
+        _LOGGER.error("Failed to read automations.yaml: %s", exc)
+        return False
+
+    # Idempotency check
+    for existing in automations:
+        if isinstance(existing, dict) and existing.get("alias") == alias:
+            _LOGGER.debug("Automation '%s' already exists — skipping creation", alias)
+            return False
+
+    new_automation = {
+        "id": str(uuid.uuid4()),
+        "alias": alias,
+        "description": (
+            f"Smart Heating Advisor automation for {room_name}. "
+            "Add your Schedule helpers (e.g. 'Morning Shower 26C') then enable."
+        ),
+        "use_blueprint": {
+            "path": "smart_heating_advisor/smart_heating_advisor.yaml",
+            "input": {
+                "room_name": room_name,
+                "temperature_sensor": temp_sensor if temp_sensor else "",
+                "radiator_thermostats": trvs if trvs else [],
+                "schedules": [],
+            },
+        },
+        "mode": "queued",
+        "max": 10,
+        "enabled": False,
+    }
+    automations.append(new_automation)
+
+    try:
+        automations_file.write_text(
+            yaml.dump(
+                automations,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        _LOGGER.info("Created disabled SHA automation for room '%s'", room_name)
+        return True
+    except Exception as exc:
+        _LOGGER.error("Failed to write automations.yaml for room '%s': %s", room_name, exc)
+        return False
+
+
+async def _async_ensure_room_automations(
+    hass: HomeAssistant,
+    room_configs: list[dict],
+) -> list[dict]:
+    """Create blueprint automations for any room that doesn't already have one.
+
+    Returns list of room_configs for which a new automation was created.
+    """
+    if not room_configs:
+        return []
+
+    config_dir = hass.config.config_dir
+    newly_created: list[dict] = []
+
+    for room_config in room_configs:
+        room_name = room_config.get("room_name", "")
+        if not room_name:
+            continue
+        temp_sensor = room_config.get("temp_sensor", "")
+        trvs = room_config.get("trvs", [])
+
+        created = await hass.async_add_executor_job(
+            _do_create_room_automation,
+            config_dir,
+            room_name,
+            temp_sensor,
+            trvs,
+        )
+        if created:
+            newly_created.append(room_config)
+
+    if newly_created:
+        try:
+            await hass.services.async_call("automation", "reload")
+            _LOGGER.info(
+                "SHA: automation.reload called after creating %d automation(s)",
+                len(newly_created),
+            )
+        except Exception as exc:
+            _LOGGER.warning("SHA: automation.reload failed: %s", exc)
+
+    return newly_created
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Setup
 # ──────────────────────────────────────────────────────────────────────
 
@@ -157,13 +284,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Install / upgrade blueprint
     blueprint_result = await async_install_blueprint(hass)
 
-    # Create coordinator
+    # Create coordinator and load the persistent room registry
     coordinator = SmartHeatingCoordinator(hass, entry)
     await coordinator.async_load_room_registry()
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # Set up sensor platform
+    # ── Populate room registry from config data ──────────────────────
+    # Rooms selected in the config / options flow are stored in entry.data.
+    # Register each one that is not already in the persistent store so that
+    # entity platforms can immediately discover them on setup.
+    room_configs: list[dict] = entry.data.get(CONF_ROOM_CONFIGS, [])
+    for room_config in room_configs:
+        room_name = room_config.get("room_name", "").strip()
+        temp_sensor = room_config.get("temp_sensor", "").strip()
+        if not room_name or not temp_sensor:
+            continue
+        room_id = _room_name_to_id(room_name)
+        if room_id not in coordinator._room_registry:
+            # Room not yet in persistent store — register it now.
+            # Pass schedules=[] so we don't overwrite schedules that may have
+            # been added by the user via the blueprint previously.
+            await coordinator.async_register_room(
+                room_name=room_name,
+                temp_sensor=temp_sensor,
+                schedules=[],
+                daily_report_enabled=True,
+                weekly_report_enabled=True,
+            )
+            _LOGGER.info("SHA: registered new room '%s' from config data", room_name)
+        else:
+            _LOGGER.debug(
+                "SHA: room '%s' already in registry — skipping initial registration",
+                room_name,
+            )
+
+    # Set up sensor / switch / number platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # ── Register services ────────────────────────────────────────────
@@ -179,13 +335,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await coordinator.async_run_weekly_analysis()
 
     async def handle_start_override(call):
-        """sha.start_override — starts the override switch for a room with a duration.
-
-        Called by the blueprint instead of timer.start.
-        Data:
-          room_name (str): the room name matching the blueprint input.
-          duration_minutes (int, optional): override duration in minutes (default 120).
-        """
+        """sha.start_override — starts the override switch for a room with a duration."""
         room_name = call.data.get("room_name", "")
         duration_minutes = int(call.data.get("duration_minutes", 120))
         _LOGGER.debug("sha.start_override called: room='%s', duration=%d min", room_name, duration_minutes)
@@ -200,11 +350,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         else:
             _LOGGER.warning(
                 "sha.start_override: no override switch for room '%s' "
-                "(reload the integration after adding new blueprint automations)", room_name
+                "(reload the integration after adding new rooms)", room_name
             )
 
     async def handle_register_room(call):
-        """sha.register_room — persist room config reported by blueprint automation."""
+        """sha.register_room — backwards-compat service (deprecated)."""
         room_name = str(call.data.get("room_name", "")).strip()
         temp_sensor = str(call.data.get("temperature_sensor", "")).strip()
         schedules = call.data.get("schedules", [])
@@ -223,13 +373,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "sha.register_room called: room='%s', sensor='%s', schedules=%s, daily_report=%s, weekly_report=%s, updated=%s",
-                room_name,
-                temp_sensor,
-                schedules,
-                daily_report_enabled,
-                weekly_report_enabled,
-                updated,
+                "sha.register_room called: room='%s', sensor='%s', schedules=%s, updated=%s",
+                room_name, temp_sensor, schedules, updated,
             )
 
     async def handle_unregister_room(call):
@@ -273,9 +418,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hour=WEEKLY_ANALYSIS_HOUR, minute=WEEKLY_ANALYSIS_MINUTE, second=0,
     )
 
-    # ── Weekly catch-up on startup ───────────────────────────────────────
-    # If HA was down when the weekly analysis was scheduled, run it now if
-    # more than 7 days have elapsed since the last run.
+    # ── Weekly catch-up on startup ───────────────────────────────────
     from datetime import datetime as _dt, timezone as _tz
     last_weekly_raw = entry.data.get("last_weekly_analysis")
     if last_weekly_raw:
@@ -297,9 +440,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry.async_on_unload(entry.add_update_listener(_options_updated))
 
-    # ── Setup notification (first install of this config entry only) ───
+    # ── Create blueprint automations for new rooms ───────────────────
+    newly_created_rooms = await _async_ensure_room_automations(hass, room_configs)
+
+    # ── Setup / room notification ────────────────────────────────────
     action = blueprint_result["action"]
+
     if not entry.data.get("setup_notification_sent"):
+        # First-time setup notification (blueprint install status + checklist)
         texts = await async_load_messages(hass)
         source_ver = blueprint_result["source_version"]
         dest_ver = blueprint_result["dest_version"]
@@ -317,6 +465,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         hass.config_entries.async_update_entry(
             entry, data={**entry.data, "setup_notification_sent": True}
+        )
+
+    if newly_created_rooms:
+        # Send a follow-up notification listing the newly created automations
+        rooms_list = "\n".join(
+            f"- **{r['room_name']}**: Settings → Automations → SHA — {r['room_name']}"
+            for r in newly_created_rooms
+        )
+        pn_async_create(
+            hass,
+            (
+                f"SHA has created {len(newly_created_rooms)} room automation(s).\n\n"
+                "**Next steps for each room:**\n"
+                "1. Open the room's automation (links below)\n"
+                "2. Add your Schedule helpers (e.g. 'Morning Shower 26C')\n"
+                "3. Configure window sensors, vacation mode etc.\n"
+                "4. Enable the automation\n\n"
+                f"**Room automations created:**\n{rooms_list}\n\n"
+                "SHA will start AI analysis after the first schedule runs."
+            ),
+            title="✅ Smart Heating Advisor — Room Automations Created",
+            notification_id="sha_rooms_created",
         )
 
     _LOGGER.info("Smart Heating Advisor setup complete")

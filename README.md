@@ -74,8 +74,8 @@ SHA Daily analysis at 00:01 AM
 | 📅 **Unlimited schedules** | Any number of HA Schedule helpers per room |
 | 🌡️ **Per-schedule temperatures** | Target temp encoded in schedule name (e.g. `Morning Shower 26C`) |
 | 🏠 **Multi-room support** | Unlimited rooms — each with independent heating rate |
-| 🔍 **Registry-based room discovery** | Rooms are persisted in SHA internal registry (no automation file scanning) |
-| 🛠️ **Auto helper creation** | Helper entities are created from registered rooms on integration reload |
+| 🏠 **Area-based room setup** | Select rooms from HA Areas in the setup wizard — no manual YAML needed |
+| 🛠️ **Auto helper creation** | Helper entities and blueprint automations created immediately on setup |
 | 🔥 **Fixed TRV support** | Optional fixed-temp TRVs (towel rails, floor heating) |
 | 🏖️ **Vacation mode** | Calendar-based frost protection |
 | 🪟 **Window detection** | Pauses heating when windows open |
@@ -124,9 +124,7 @@ After restarting Home Assistant:
 1. Go to **Settings → Devices & Services**
 2. Click **+ Add Integration** in the bottom-right corner
 3. Search for **Smart Heating Advisor** and select it
-4. Complete the 3-step setup wizard — see [Configuration](#configuration) for details
-
-> 💡 SHA only creates a persistent setup notification if there is a setup error.
+4. Complete the 5-step setup wizard — see [Configuration](#configuration) for details
 
 ### Manual
 
@@ -140,7 +138,7 @@ After restarting Home Assistant:
 
 ## ⚙️ Configuration
 
-The setup wizard has 3 steps:
+The setup wizard has 5 steps:
 
 ### Step 1 — Ollama
 
@@ -162,7 +160,25 @@ SHA tests the connection and verifies the model exists before proceeding.
 
 SHA tests the connection before proceeding.
 
-### Step 3 — HA Entities
+### Step 3 — Select Rooms
+
+Select the HA Areas you want SHA to manage. SHA auto-detects temperature sensors and TRVs from each area. You can skip this step and add rooms later via **Configure**.
+
+> 💡 Make sure your TRVs and temperature sensors are assigned to their Areas first — see [Room Setup](#room-setup).
+
+### Step 4 — Confirm Room Entities
+
+For each selected area, confirm or change the auto-detected entities:
+
+| Field | Description |
+|---|---|
+| Room display name | Pre-filled from the area name — edit if needed |
+| Temperature sensor | Auto-detected from the area |
+| Radiator thermostats | Auto-detected climate entities from the area |
+
+Proceed even if no entities were detected — you can configure them later in the automation.
+
+### Step 5 — HA Entities
 
 | Field | Example |
 |---|---|
@@ -184,7 +200,30 @@ This lets you customize wording without touching Python files.
 
 ## 🏠 Room Setup
 
-### Step 1 — Create Schedule helpers
+SHA uses your existing HA Areas to set up rooms automatically.
+
+### Step 1 — Assign devices to Areas in HA
+
+Make sure your TRVs and temperature sensors are assigned to the correct Area:
+
+1. Go to **Settings → Devices & Services**
+2. Find your device (thermostat, TRV, temperature sensor)
+3. Click the device → **Edit** → set the **Area**
+
+Repeat for all devices in each room you want SHA to manage.
+
+### Step 2 — Run the SHA setup wizard
+
+**Settings → Devices & Services → + Add Integration → Smart Heating Advisor**
+
+The wizard will:
+1. Connect to Ollama
+2. Connect to InfluxDB
+3. Ask you to select which rooms (Areas) to manage
+4. Auto-detect temperature sensors and TRVs per room for your confirmation
+5. Create helper entities and disabled automations automatically
+
+### Step 3 — Add Schedule helpers
 
 Go to **Settings → Helpers → + Create Helper → Schedule** and create one schedule per heating period:
 
@@ -196,52 +235,32 @@ Go to **Settings → Helpers → + Create Helper → Schedule** and create one s
 
 > ⚠️ The temperature **must** be at the end of the name followed by `C` with no space.
 
-### Step 2 — Create an automation from the blueprint
+### Step 4 — Configure and enable each room automation
 
-The blueprint is installed automatically when you install SHA. To create a room automation:
+SHA creates a **disabled** automation for each room. Open each one and:
 
-1. Go to **Settings → Automations → Blueprints → Smart Heating Advisor**
-2. Click **Create Automation**
-3. Fill in the form:
-   - **Room Name**: e.g. `Bathroom` (used for entities and notifications)
-   - **Room Temperature Sensor**: your temperature sensor
-   - **Radiator Thermostat**: one or more TRVs
-   - **Schedule Helpers**: select the schedules you created in Step 1
-4. Save
+1. Go to **Settings → Automations** → find `SHA — {Room Name}`
+2. Add your Schedule helpers in the **Schedules** section
+3. Configure window sensors, vacation mode, notification preferences etc.
+4. **Enable** the automation
 
-### Step 3 — Run the automation once (required)
+**That's it.** SHA will start learning from the first schedule run.
 
-After saving the automation, run it once manually so it can call `smart_heating_advisor.register_room` and store room data in SHA's internal registry.
+### Adding a room later
 
-1. Open the created automation
-2. Click **Run**
+**Settings → Integrations → Smart Heating Advisor → Configure → Add new room(s)**
 
-### Step 4 — Reload SHA integration
+Select the new area, confirm the detected entities, then open the created automation to add schedules and enable it.
 
-After the first room registration run, reload SHA so entities are created from the registry.
+### Removing a room
 
-1. Go to **Settings → Devices & Services**
-2. Open **Smart Heating Advisor**
-3. Click **⋮ → Reload**
+**Settings → Integrations → Smart Heating Advisor → Configure → Remove room(s)**
 
-**That's it.** Repeat for each additional room: create automation, run once, then reload SHA.
+Select the rooms to remove. Helper entities disappear after the next reload.
 
-> 💡 This registry-first flow is intentional and avoids scanning `automations.yaml` or HA storage files at runtime.
+### Changing schedules
 
-### Changing schedules later (after automation already exists)
-
-If you need to change room timing or targets after initial setup:
-
-1. Go to **Settings → Helpers** and edit existing schedule helpers, or create new ones
-2. Go to **Settings → Automations →** open your room automation created from SHA blueprint
-3. Click **Edit in UI** and update the **Schedule Helpers** selection
-4. Save the automation
-5. Run the automation once manually
-6. Reload SHA integration from **Settings → Devices & Services → Smart Heating Advisor → ⋮ → Reload**
-
-Why this is needed:
-- The manual run re-sends room data through `smart_heating_advisor.register_room`
-- Reload makes SHA re-create/use entities from the latest registry data
+Edit the automation directly in **Settings → Automations → SHA — {Room Name}** and update the Schedule Helpers selection. No reload required.
 
 ---
 
@@ -372,7 +391,8 @@ Name each **HA Schedule helper** with the target temperature at the end:
 | `smart_heating_advisor.run_daily_analysis` | Manually trigger daily AI analysis for all rooms |
 | `smart_heating_advisor.run_weekly_analysis` | Manually trigger weekly report for all rooms |
 | `smart_heating_advisor.start_override` | Start a timed manual override for a room |
-| `smart_heating_advisor.register_room` | Register or update a room in SHA internal room registry (normally called by blueprint) |
+| `smart_heating_advisor.register_room` | _(deprecated)_ Register a room manually — use the Configure wizard instead |
+| `smart_heating_advisor.unregister_room` | Remove a room from SHA's internal registry |
 
 ---
 
@@ -446,18 +466,15 @@ SHA is ready
 ### 2 — Room setup (per room)
 
 ```
-User creates Schedule helpers ("Morning Shower 26C")
+User assigns TRVs + temperature sensors to HA Areas
         │
         ▼
-User creates automation from SHA blueprint
-Blueprint run calls: smart_heating_advisor.register_room
-SHA stores: room_name, temperature_sensor, schedules in internal registry
+SHA setup wizard: user selects rooms (Areas)
+SHA auto-detects temperature sensors and TRVs per area
+SHA registers rooms in internal registry
         │
         ▼
-SHA reloads → discovers rooms from internal registry
-        │
-        ▼
-SHA creates helper entities per room:
+SHA creates helper entities per room immediately:
   number.sha_ROOM_heating_rate           (AI-calibrated, default 0.15°C/min)
   switch.sha_ROOM_override               (manual override state)
   switch.sha_ROOM_airing_mode            (window open tracking)
@@ -468,6 +485,14 @@ SHA creates helper entities per room:
   switch.sha_ROOM_vacation_notified
         │
         ▼
+SHA creates a disabled blueprint automation per room:
+  alias: "SHA — {room_name}"
+  pre-filled: room_name, temperature_sensor, radiator_thermostats
+  schedules: [] (user adds these manually)
+  enabled: false
+        │
+        ▼
+User opens each automation, adds Schedule helpers, enables it
 Automation runs normally ✅
 ```
 
@@ -598,15 +623,13 @@ Repeats daily — system gets smarter over time
 
 ### SHA not finding my rooms
 
-SHA discovers rooms from its internal room registry.
+SHA discovers rooms from its internal room registry, populated during setup.
 
 Check:
-1. Is the automation created from the **Smart Heating Advisor** blueprint?
-2. Does the automation have a **Room Name** and **Temperature Sensor** set?
-3. Run the automation once manually after creation (this registers the room).
-4. Reload SHA via **Settings → Devices & Services → Smart Heating Advisor → ⋮ → Reload**.
-5. Check logs for registry lines:
-        - `sha.register_room payload`
+1. Were rooms selected during the setup wizard? If not, go to **Settings → Integrations → Smart Heating Advisor → Configure → Add new room(s)**.
+2. Reload SHA via **Settings → Devices & Services → Smart Heating Advisor → ⋮ → Reload**.
+3. Check logs for registry lines:
+        - `SHA: registered new room`
         - `Room registry updated`
         - `Room discovery (registry)`
 
@@ -656,7 +679,8 @@ If setup appears correct but behavior is wrong, verify entity states directly:
         - `sensor.sha_ROOM_confidence`
         - `sensor.sha_ROOM_weekly_report`
 4. If entities are missing:
-        - Run room automation once
+        - Go to Settings → Integrations → Smart Heating Advisor → Configure
+        - Add the room if it is not already listed
         - Reload SHA integration
         - Re-check states
 

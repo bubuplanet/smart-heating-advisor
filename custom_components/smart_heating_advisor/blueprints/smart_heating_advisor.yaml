@@ -2,7 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    **version: 0.0.5**
+    **version: 0.0.6**
 
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
@@ -32,10 +32,12 @@ blueprint:
     If no temperature is found in the name, the configured fallback temperature is used.
 
     🛠️ Setup
-    Install the SHA integration first, then create one automation per room
-    from this blueprint. Use the exact room name you configured in SHA.
-    On first run, each room is auto-registered in SHA's internal registry.
-    Reload SHA once after first run to create helper entities for new rooms.
+    Install SHA via HACS, then complete the setup wizard:
+    1. Connect Ollama and InfluxDB
+    2. Select your rooms from HA Areas
+    3. SHA creates helper entities and automations automatically
+    4. Open each room's automation and add your Schedule helpers
+    5. Enable the automation
 
     Required entities (auto-created by SHA):
     - number.sha_ROOM_heating_rate
@@ -715,14 +717,6 @@ triggers:
 conditions: []
 
 action:
-
-  - action: smart_heating_advisor.register_room
-    data:
-      room_name: !input room_name
-      temperature_sensor: !input temperature_sensor
-      schedules: !input schedules
-      daily_report_enabled: !input notify_daily_report
-      weekly_report_enabled: !input notify_weekly_report
 
   - choose:
 

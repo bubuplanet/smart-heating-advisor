@@ -39,6 +39,22 @@ start_override:
           max: 1440
           unit_of_measurement: min
 
+unregister_room:
+  name: Unregister Room
+  description: >
+    Remove a room from SHA's internal room registry.
+    Use this when you delete a room's blueprint automation and want SHA to
+    stop tracking it. The room's helper entities (switches, number) will
+    disappear after the next SHA reload.
+  fields:
+    room_name:
+      name: Room Name
+      description: The room name exactly as it was registered.
+      required: true
+      example: "Living Room"
+      selector:
+        text:
+
 register_room:
   name: Register Room
   description: >

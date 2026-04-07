@@ -35,7 +35,7 @@ PLATFORMS = ["sensor", "switch", "number"]
 def _apply_debug_logging(enabled: bool) -> None:
     """Set the SHA package log level based on the debug toggle."""
     _LOGGER.info("SHA debug logging %s", "enabled" if enabled else "disabled")
-    level = logging.DEBUG if enabled else logging.WARNING
+    level = logging.DEBUG if enabled else logging.NOTSET
     # _LOGGER is the package-level logger (custom_components.smart_heating_advisor),
     # which is the parent of all SHA submodule loggers (coordinator, ollama, sensor…).
     # Setting its level here propagates the effective level across the entire package.
@@ -232,10 +232,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 updated,
             )
 
+    async def handle_unregister_room(call):
+        """sha.unregister_room — remove a room from SHA's registry."""
+        room_name = str(call.data.get("room_name", "")).strip()
+        if not room_name:
+            _LOGGER.warning("sha.unregister_room called without room_name")
+            return
+        removed = await coordinator.async_unregister_room(room_name)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("sha.unregister_room: room='%s', removed=%s", room_name, removed)
+
     hass.services.async_register(DOMAIN, "run_daily_analysis", handle_daily_analysis)
     hass.services.async_register(DOMAIN, "run_weekly_analysis", handle_weekly_analysis)
     hass.services.async_register(DOMAIN, "start_override", handle_start_override)
     hass.services.async_register(DOMAIN, "register_room", handle_register_room)
+    hass.services.async_register(DOMAIN, "unregister_room", handle_unregister_room)
 
     # ── Scheduled analysis ───────────────────────────────────────────
 
@@ -247,6 +258,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if now.weekday() == WEEKLY_ANALYSIS_WEEKDAY:
             _LOGGER.info("Running scheduled weekly analysis")
             await coordinator.async_run_weekly_analysis()
+            from datetime import datetime as _dt, timezone as _tz
+            hass.config_entries.async_update_entry(
+                entry,
+                data={**entry.data, "last_weekly_analysis": _dt.now(_tz.utc).isoformat()},
+            )
 
     async_track_time_change(
         hass, run_daily_analysis,
@@ -256,6 +272,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, run_weekly_analysis,
         hour=WEEKLY_ANALYSIS_HOUR, minute=WEEKLY_ANALYSIS_MINUTE, second=0,
     )
+
+    # ── Weekly catch-up on startup ───────────────────────────────────────
+    # If HA was down when the weekly analysis was scheduled, run it now if
+    # more than 7 days have elapsed since the last run.
+    from datetime import datetime as _dt, timezone as _tz
+    last_weekly_raw = entry.data.get("last_weekly_analysis")
+    if last_weekly_raw:
+        try:
+            last_weekly_ts = _dt.fromisoformat(last_weekly_raw)
+            elapsed_days = (_dt.now(_tz.utc) - last_weekly_ts).days
+            if elapsed_days >= 7:
+                _LOGGER.info(
+                    "Weekly analysis catch-up: last run was %d days ago — running now",
+                    elapsed_days,
+                )
+                hass.async_create_task(coordinator.async_run_weekly_analysis())
+        except (ValueError, TypeError):
+            _LOGGER.debug("Weekly catch-up: could not parse last_weekly_analysis timestamp")
 
     # React to options changes (e.g. debug toggle) without requiring a reload
     async def _options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -298,4 +332,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, "run_weekly_analysis")
         hass.services.async_remove(DOMAIN, "start_override")
         hass.services.async_remove(DOMAIN, "register_room")
+        hass.services.async_remove(DOMAIN, "unregister_room")
     return unload_ok

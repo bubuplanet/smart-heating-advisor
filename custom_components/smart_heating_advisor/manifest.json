@@ -1,7 +1,7 @@
 {
   "domain": "smart_heating_advisor",
   "name": "Smart Heating Advisor",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "documentation": "https://github.com/bubuplanet/smart-heating-advisor",
   "issue_tracker": "https://github.com/bubuplanet/smart-heating-advisor/issues",
   "dependencies": [],

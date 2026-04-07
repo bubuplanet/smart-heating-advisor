@@ -240,6 +240,20 @@ class SmartHeatingCoordinator:
         )
         return True
 
+    async def async_unregister_room(self, room_name: str) -> bool:
+        """Remove a room from the persistent registry.
+
+        Returns True when a room was removed.
+        """
+        room_id = _room_name_to_id(room_name.strip())
+        if room_id not in self._room_registry:
+            _LOGGER.debug("Room registry unregister: room_id='%s' not found", room_id)
+            return False
+        del self._room_registry[room_id]
+        await self._room_registry_store.async_save({"rooms": self._room_registry})
+        _LOGGER.info("Room registry: removed room '%s' (room_id=%s)", room_name, room_id)
+        return True
+
     def discover_rooms(self) -> list[RoomConfig]:
         """Build RoomConfig list from persistent SHA room registry."""
         rooms: list[RoomConfig] = []

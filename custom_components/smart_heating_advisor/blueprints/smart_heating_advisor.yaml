@@ -2,7 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    **version: 0.0.2**
+    **version: 0.0.5**
 
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
@@ -161,9 +161,9 @@ blueprint:
           name: Pre-heat Started — Message Body
           description: "Sent when pre-heating begins. Variables: {{ room_name }}, {{ room_temp }}, {{ target_temp }}, {{ schedule_name }}, {{ eta_minutes }}"
           default: >-
-            Pre-heating {{ '{{ room_name }}' }} for "{{ '{{ schedule_name }}' }}".
-            Target: {{ '{{ target_temp }}' }}°C — ETA {{ '{{ eta_minutes }}' }} min.
-            Current: {{ '{{ room_temp }}' }}°C.
+            Starting pre-heat in {{ '{{ room_name }}' }} for "{{ '{{ schedule_name }}' }}".
+            Room is {{ '{{ room_temp }}' }}°C — heating to {{ '{{ target_temp }}' }}°C.
+            Expected ready in {{ '{{ eta_minutes }}' }} min.
           selector:
             text:
               multiline: true
@@ -172,9 +172,9 @@ blueprint:
           name: Pre-heat Suspended — Message Body
           description: "Sent when pre-heat is due but blocked by an open window. Variables: {{ room_name }}, {{ room_temp }}, {{ target_temp }}, {{ schedule_name }}, {{ window_name }}"
           default: >-
-            {{ '{{ window_name }}' }} is open in {{ '{{ room_name }}' }}, skipping pre-heating
-            for "{{ '{{ schedule_name }}' }}". Target: {{ '{{ target_temp }}' }}°C.
-            Current: {{ '{{ room_temp }}' }}°C.
+            Pre-heat skipped in {{ '{{ room_name }}' }} — {{ '{{ window_name }}' }} is open.
+            Schedule "{{ '{{ schedule_name }}' }}" starts soon but heating is paused.
+            Close the window to resume. Current: {{ '{{ room_temp }}' }}°C.
           selector:
             text:
               multiline: true
@@ -202,7 +202,7 @@ blueprint:
           description: "Sent when a schedule activates. Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}, {{ target_temp }}"
           default: >-
             "{{ '{{ schedule_name }}' }}" is now active in {{ '{{ room_name }}' }}.
-            Current: {{ '{{ room_temp }}' }}°C.
+            Heating to {{ '{{ target_temp }}' }}°C. Current: {{ '{{ room_temp }}' }}°C.
           selector:
             text:
               multiline: true
@@ -211,7 +211,7 @@ blueprint:
           name: Target Reached — Message Body
           description: "Sent when the room reaches its target temperature. Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}, {{ time }}, {{ target_temp }}"
           default: >-
-            {{ '{{ room_name }}' }} reached {{ '{{ room_temp }}' }}°C
+            {{ '{{ room_name }}' }} is ready — reached {{ '{{ room_temp }}' }}°C
             for "{{ '{{ schedule_name }}' }}" at {{ '{{ time }}' }}.
           selector:
             text:
@@ -221,8 +221,9 @@ blueprint:
           name: Schedule Finished — Message Body
           description: "Sent when a schedule ends and heating returns to default. Variables: {{ room_name }}, {{ room_temp }}, {{ default_hvac_mode }}, {{ default_temp }}"
           default: >-
-            Schedule ended in {{ '{{ room_name }}' }}.
-            Switching to {{ '{{ default_hvac_mode }}' }} at {{ '{{ default_temp }}' }}°C.
+            "{{ '{{ schedule_name }}' }}" ended in {{ '{{ room_name }}' }}.
+            {% if default_hvac_mode == 'off' %}Heating off.{% else %}
+            Maintaining {{ '{{ default_temp }}' }}°C standby.{% endif %}
             Current: {{ '{{ room_temp }}' }}°C.
           selector:
             text:
@@ -283,7 +284,8 @@ blueprint:
           description: "Sent when no schedule is active and heating enters standby. Variables: {{ room_name }}, {{ room_temp }}, {{ default_hvac_mode }}, {{ default_temp }}"
           default: >-
             No active schedule in {{ '{{ room_name }}' }}.
-            Heating set to {{ '{{ default_hvac_mode }}' }} at {{ '{{ default_temp }}' }}°C.
+            {% if default_hvac_mode == 'off' %}Heating is off.{% else %}
+            Standby at {{ '{{ default_temp }}' }}°C.{% endif %}
             Current: {{ '{{ room_temp }}' }}°C.
           selector:
             text:
@@ -340,9 +342,9 @@ blueprint:
             Sent when heating is paused because a window has been open longer than the reaction time.
             Variables: {{ room_name }}, {{ window_name }}, {{ room_temp }}
           default: >-
-            Heating in {{ '{{ room_name }}' }} has been paused because a window is open.
-            It will resume automatically when all windows are closed.
-            Current temperature: {{ '{{ room_temp }}' }}°C.
+            {{ '{{ window_name }}' }} has been open too long in {{ '{{ room_name }}' }}.
+            Heating paused to save energy. It will resume when all windows are closed.
+            Current: {{ '{{ room_temp }}' }}°C.
           selector:
             text:
               multiline: true
@@ -353,9 +355,8 @@ blueprint:
             Sent only when windows close after a pause was previously triggered.
             Variables: {{ room_name }}, {{ window_name }}, {{ room_temp }}, {{ resume_mode }}
           default: >-
-            All windows in {{ '{{ room_name }}' }} are now closed.
-            Heating resumed ({{ '{{ resume_mode }}' }}).
-            Current temperature: {{ '{{ room_temp }}' }}°C.
+            All windows in {{ '{{ room_name }}' }} are closed — heating resumed.
+            Mode: {{ '{{ resume_mode }}' }}. Current: {{ '{{ room_temp }}' }}°C.
           selector:
             text:
               multiline: true
@@ -448,9 +449,9 @@ blueprint:
           name: Override Active — Message Body
           description: "Sent when a manual TRV change triggers an override. Variables: {{ room_name }}, {{ device_name }}, {{ override_minutes }}, {{ resume_time }}, {{ room_temp }}"
           default: >-
-            Manual override on {{ '{{ device_name }}' }} in {{ '{{ room_name }}' }}.
-            Resumes in {{ '{{ override_minutes }}' }} min ({{ '{{ resume_time }}' }}).
-            Current: {{ '{{ room_temp }}' }}°C.
+            Manual adjustment detected on {{ '{{ device_name }}' }} in {{ '{{ room_name }}' }}.
+            Smart heating paused for {{ '{{ override_minutes }}' }} min.
+            Auto-resume at {{ '{{ resume_time }}' }}. Current: {{ '{{ room_temp }}' }}°C.
           selector:
             text:
               multiline: true
@@ -459,8 +460,8 @@ blueprint:
           name: Override Ended — Message Body
           description: "Sent when the override expires and smart heating resumes. Variables: {{ room_name }}, {{ room_temp }}, {{ target_temp }}"
           default: >-
-            Override in {{ '{{ room_name }}' }} has ended.
-            Resuming scheduled heating.
+            Manual override in {{ '{{ room_name }}' }} has ended.
+            Smart heating has resumed control.
             Current: {{ '{{ room_temp }}' }}°C.
           selector:
             text:
@@ -530,7 +531,8 @@ variables:
     {{ room_name | lower
                  | replace("'", '')
                  | replace(' ', '_')
-                 | replace('-', '_') }}
+                 | replace('-', '_')
+                 | regex_replace('[^a-z0-9_]', '') }}
 
   sha_heating_rate:      "number.sha_{{ room_id }}_heating_rate"
   sha_override_switch:   "switch.sha_{{ room_id }}_override"
@@ -648,13 +650,13 @@ variables:
 
   target_temperature: >
     {% if vacation_active_bool and vacation_mode == 'frost' %}
-      {{ vacation_temperature | float }}
+      {{ [vacation_temperature | float, 4.0] | max }}
     {% elif in_comfort_bool %}
-      {{ comfort_temp }}
+      {{ [comfort_temp | float, 4.0] | max }}
     {% elif in_preheat_bool %}
-      {{ preheat_temp }}
+      {{ [preheat_temp | float, 4.0] | max }}
     {% else %}
-      {{ default_temp | float }}
+      {{ [default_temp | float, 4.0] | max }}
     {% endif %}
 
   target_mode: >
@@ -706,6 +708,8 @@ triggers:
 
   - trigger: event
     event_type: sha_override_ended
+    event_data:
+      room_id: "{{ room_id }}"
     id: override_ended
 
 conditions: []
@@ -983,7 +987,11 @@ action:
                              not in_preheat_bool and
                              not in_comfort_bool and
                              not vacation_active_bool and
-                             not windows_open_bool }}
+                             not windows_open_bool and
+                             (schedules | select('string') | list
+                              | select('match', '.+')
+                              | map('states') | select('eq', 'on')
+                              | list | count == 0) }}
                     then:
                       - action: system_log.write
                         data:
@@ -1201,7 +1209,8 @@ action:
             value_template: >
               {{ override_active_bool and
                  trigger.id not in ['override_ended', 'manual_override',
-                                    'window_airing_start', 'window_airing_end'] }}
+                                    'window_airing_start', 'window_airing_end',
+                                    'schedule_changed'] }}
         sequence:
           - stop: "Override active — skipping control loop."
 
@@ -1518,6 +1527,18 @@ action:
               {{ vacation_active_bool and
                  not vacation_notified_on }}
         then:
+          - action: notify.notify
+            data:
+              title: "🏖️ {{ room_name }} — Vacation Mode Active"
+              message: >
+                {% if vacation_mode == 'frost' %}
+                  Vacation mode is active in {{ room_name }}.
+                  Maintaining frost protection at {{ vacation_temperature }}°C.
+                  Smart heating schedules are suspended.
+                {% else %}
+                  Vacation mode is active in {{ room_name }}.
+                  Heating is off. Smart heating schedules are suspended.
+                {% endif %}
           - if:
               - condition: template
                 value_template: "{{ vacation_notified_available }}"

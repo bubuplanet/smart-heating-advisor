@@ -84,7 +84,7 @@ class SHABaseSensor(SensorEntity):
             "name": f"SHA — {self.room_name}",
             "manufacturer": "Smart Heating Advisor",
             "model": "AI Heating Optimizer",
-            "sw_version": "0.0.1",
+            "sw_version": "0.0.2",
         }
 
     def _room_state(self) -> dict:
@@ -103,7 +103,7 @@ class RoomHeatingRateSensor(SHABaseSensor):
 
     @property
     def name(self) -> str:
-        return "Heating Rate"
+        return "Heating Rate (Analysis)"
 
     @property
     def native_value(self) -> float:

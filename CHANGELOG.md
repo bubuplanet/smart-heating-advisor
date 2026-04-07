@@ -4,6 +4,86 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [Unreleased]
+
+### Added
+- Area-based room discovery in config flow — select rooms from
+  HA Areas instead of manually creating automations
+- Config flow Step 3: multi-select HA Areas for room management
+- Config flow Step 4: per-room entity confirmation with
+  auto-detected temperature sensor and TRVs from the selected area
+- Config flow Step 5: weather entity (moved from Step 3)
+- Options flow: add or remove rooms after initial setup via
+  Settings → Integrations → SHA → Configure
+- Options flow Add Room: area selection + entity confirmation
+  creates entities and blueprint automation without HA restart
+- Options flow Remove Room: multi-select rooms to remove with
+  full cleanup of entities, registry and automation
+- SHA automatically creates all helper entities per room on setup
+  without waiting for blueprint automation to run first
+- SHA automatically creates a disabled blueprint automation per
+  room pre-filled with auto-detected entities from the selected area
+- switch.sha_ROOM_window_timeout_notified entity per room
+- switch.sha_ROOM_preheat_notifications_enabled entity per room
+- switch.sha_ROOM_target_notifications_enabled entity per room
+- switch.sha_ROOM_standby_notifications_enabled entity per room
+- switch.sha_ROOM_window_notifications_enabled entity per room
+- switch.sha_ROOM_override_notifications_enabled entity per room
+- sha.unregister_room service — removes a room from SHA registry,
+  disables its blueprint automation and removes all SHA entities
+- messages.md — notification message templates file
+- Weekly analysis catch-up on HA restart if last run was
+  over 7 days ago
+- Persistent notification on room removal confirming what was
+  cleaned up and linking to the disabled automation
+
+### Changed
+- Room registration no longer requires blueprint automation to
+  run first — rooms are populated from config flow on setup
+- sha.register_room service kept for backwards compatibility only
+  and marked as deprecated in services.yaml
+- Blueprint setup description updated to reflect new Area-based
+  setup flow
+- Log level changed from logging.WARNING to logging.NOTSET so
+  SHA INFO logs are visible without enabling debug mode
+- room_id derivation aligned between blueprint Jinja and
+  coordinator Python — both now strip all non-alphanumeric
+  characters using regex
+- Weather entity moved to Step 5 of config flow
+- sha.unregister_room now also disables the room automation
+  and removes all entities — not just the registry entry
+- Sensor "Heating Rate" renamed to "Heating Rate (Analysis)"
+  to avoid duplicate name on device page
+
+### Fixed
+- Blueprint automation creation error: removed invalid 'enabled'
+  key from automation dict passed to HA blueprint API
+  (extra keys not allowed @ data['enabled'])
+- target_temperature floored at 4.0°C — prevents invalid value
+  error on TRVs when heating rate helper is unavailable
+- schedule_changed added to override skip exclusion list —
+  prevents schedule state changes from overwriting manual TRV
+  settings during an active override
+- Vacation mode now sends notify.notify when activated —
+  previously only flipped the switch silently with no user
+  notification
+- window_timeout_notified switch now created per room — fixes:
+  (a) window-open notification firing every 5 min with no dedup
+  (b) window-closed notification never firing
+- Blueprint filename constant corrected in const.py — was
+  sha_unified_heating.yaml, now smart_heating_advisor.yaml
+- FileNotFoundError on startup caused by missing messages.md
+- Cannot add new room after initial setup — options flow now
+  fully implements add and remove room flows
+- Stale rooms remaining in registry after automation deletion —
+  unregister_room now fully cleans up all associated entities
+
+### Removed
+- register_room call from blueprint first action — rooms are
+  now managed exclusively by the config and options flow
+
+---
+
 ## v0.0.2 — 2026-04-07
 
 ### Architecture changes

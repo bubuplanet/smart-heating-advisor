@@ -40,18 +40,22 @@ start_override:
           unit_of_measurement: min
 
 unregister_room:
-  name: Unregister Room
+  name: Remove Room
   description: >
-    Remove a room from SHA's internal room registry.
-    Use this when you delete a room's blueprint automation and want SHA to
-    stop tracking it. The room's helper entities (switches, number) will
-    disappear after the next SHA reload.
+    Remove a room from Smart Heating Advisor. This will:
+    - Stop SHA from analysing and managing that room
+    - Disable the room's blueprint automation
+    - Remove all SHA helper entities for that room
+    The room's automation is disabled but not deleted —
+    you can delete it manually from Settings → Automations.
   fields:
     room_name:
       name: Room Name
-      description: The room name exactly as it was registered.
+      description: >
+        Exact room name as shown in SHA.
+        Examples: Bathroom, Office, Bedroom Alessio
       required: true
-      example: "Living Room"
+      example: "Bathroom"
       selector:
         text:
 

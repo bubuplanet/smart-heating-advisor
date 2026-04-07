@@ -562,11 +562,30 @@ class SHAOptionsFlow(config_entries.OptionsFlow):
         """Merge room changes into entry.data, trigger reload, complete flow."""
         current_rooms = list(self._config_entry.data.get(CONF_ROOM_CONFIGS, []))
 
-        # Remove requested rooms
+        # ── Remove requested rooms ────────────────────────────────────
+        # Delegate to the sha.unregister_room service which handles
+        # coordinator cleanup, entity registry removal, automation
+        # disable, and the user notification in one place.
         if removed_names:
-            current_rooms = [r for r in current_rooms if r.get("room_name") not in removed_names]
+            for name in removed_names:
+                try:
+                    await self.hass.services.async_call(
+                        DOMAIN,
+                        "unregister_room",
+                        {"room_name": name},
+                        blocking=True,
+                    )
+                except Exception as exc:
+                    _LOGGER.warning(
+                        "SHA options: failed to call unregister_room for '%s': %s",
+                        name, exc,
+                    )
+            current_rooms = [
+                r for r in current_rooms
+                if r.get("room_name") not in removed_names
+            ]
 
-        # Add new rooms (deduplicate by room_name)
+        # ── Add new rooms (deduplicate by room_name) ──────────────────
         existing_names = {r.get("room_name") for r in current_rooms}
         for new_room in added:
             if new_room.get("room_name") not in existing_names:

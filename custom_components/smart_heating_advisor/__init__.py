@@ -10,6 +10,7 @@ import yaml
 from homeassistant.components.persistent_notification import async_create as pn_async_create
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_time_change
 
 from .const import (
@@ -199,7 +200,6 @@ def _do_create_room_automation(
         },
         "mode": "queued",
         "max": 10,
-        "enabled": False,
     }
     automations.append(new_automation)
 
@@ -253,15 +253,119 @@ async def _async_ensure_room_automations(
 
     if newly_created:
         try:
-            await hass.services.async_call("automation", "reload")
+            await hass.services.async_call("automation", "reload", blocking=True)
             _LOGGER.info(
                 "SHA: automation.reload called after creating %d automation(s)",
                 len(newly_created),
             )
         except Exception as exc:
             _LOGGER.warning("SHA: automation.reload failed: %s", exc)
+            return newly_created
+
+        # Disable each newly created automation — `enabled: False` is not
+        # allowed in blueprint automation dicts (HA rejects it at load time),
+        # so we disable via service call after the reload has registered them.
+        for room_config in newly_created:
+            alias = f"SHA — {room_config.get('room_name', '')}"
+            entity_id = None
+            for state in hass.states.async_all("automation"):
+                if state.attributes.get("friendly_name") == alias:
+                    entity_id = state.entity_id
+                    break
+            if entity_id:
+                try:
+                    await hass.services.async_call(
+                        "automation", "turn_off",
+                        {"entity_id": entity_id},
+                        blocking=True,
+                    )
+                    _LOGGER.info(
+                        "SHA: disabled automation '%s' (%s) — enable it after adding schedules",
+                        alias, entity_id,
+                    )
+                except Exception as exc:
+                    _LOGGER.warning(
+                        "SHA: could not disable automation '%s': %s", alias, exc
+                    )
+            else:
+                _LOGGER.warning(
+                    "SHA: could not find automation entity for alias '%s' — "
+                    "disable it manually in Settings → Automations",
+                    alias,
+                )
 
     return newly_created
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Room removal helpers
+# ──────────────────────────────────────────────────────────────────────
+
+async def _async_remove_room_entities(
+    hass: HomeAssistant, entry_id: str, room_id: str
+) -> None:
+    """Remove all SHA entity registry entries for a room.
+
+    Covers both unique_id prefixes used by SHA:
+      - sha_{room_id}_*   (switches, number)
+      - {entry_id}_{room_id}_*  (sensors)
+
+    Filtered by config_entry_id so we never touch unrelated integrations.
+    """
+    ent_reg = er.async_get(hass)
+    to_remove = [
+        entry.entity_id
+        for entry in ent_reg.entities.values()
+        if entry.config_entry_id == entry_id
+        and (
+            entry.unique_id.startswith(f"sha_{room_id}_")
+            or entry.unique_id.startswith(f"{entry_id}_{room_id}_")
+        )
+    ]
+    for entity_id in to_remove:
+        ent_reg.async_remove(entity_id)
+        _LOGGER.debug("SHA: removed entity '%s' for room_id='%s'", entity_id, room_id)
+    if to_remove:
+        _LOGGER.info(
+            "SHA: removed %d entity/entities for room_id='%s'", len(to_remove), room_id
+        )
+    else:
+        _LOGGER.info(
+            "SHA: no entities found for room_id='%s' — nothing to remove", room_id
+        )
+
+
+async def _async_disable_room_automation(hass: HomeAssistant, room_name: str) -> None:
+    """Find and disable the SHA blueprint automation for a room.
+
+    The automation is disabled rather than deleted so the user can inspect
+    or re-enable it manually from Settings → Automations.
+    """
+    alias = f"SHA — {room_name}"
+    entity_id = None
+    for state in hass.states.async_all("automation"):
+        if state.attributes.get("friendly_name") == alias:
+            entity_id = state.entity_id
+            break
+
+    if entity_id:
+        try:
+            await hass.services.async_call(
+                "automation", "turn_off",
+                {"entity_id": entity_id},
+                blocking=True,
+            )
+            _LOGGER.info(
+                "SHA: disabled automation '%s' (%s)", alias, entity_id
+            )
+        except Exception as exc:
+            _LOGGER.warning(
+                "SHA: could not disable automation '%s': %s", alias, exc
+            )
+    else:
+        _LOGGER.info(
+            "SHA: automation '%s' not found — may have been deleted manually", alias
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -378,14 +482,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
     async def handle_unregister_room(call):
-        """sha.unregister_room — remove a room from SHA's registry."""
+        """sha.unregister_room — fully remove a room from SHA."""
         room_name = str(call.data.get("room_name", "")).strip()
         if not room_name:
             _LOGGER.warning("sha.unregister_room called without room_name")
             return
-        removed = await coordinator.async_unregister_room(room_name)
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("sha.unregister_room: room='%s', removed=%s", room_name, removed)
+
+        room_id = await coordinator.async_unregister_room(room_name)
+        if not room_id:
+            _LOGGER.warning(
+                "sha.unregister_room: room '%s' not found in registry", room_name
+            )
+            return
+
+        await _async_remove_room_entities(hass, entry.entry_id, room_id)
+        await _async_disable_room_automation(hass, room_name)
+
+        pn_async_create(
+            hass,
+            (
+                f"Room **{room_name}** has been removed from Smart Heating Advisor.\n\n"
+                f"The automation **SHA — {room_name}** has been disabled.\n\n"
+                f"All SHA entities for this room have been removed.\n\n"
+                f"You can delete the automation manually from "
+                f"Settings → Automations if it is no longer needed."
+            ),
+            title=f"🗑️ SHA — {room_name} Removed",
+            notification_id=f"sha_removed_{room_id}",
+        )
+        _LOGGER.info("sha.unregister_room: room '%s' removed successfully", room_name)
 
     hass.services.async_register(DOMAIN, "run_daily_analysis", handle_daily_analysis)
     hass.services.async_register(DOMAIN, "run_weekly_analysis", handle_weekly_analysis)

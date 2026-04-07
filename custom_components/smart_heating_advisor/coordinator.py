@@ -240,19 +240,29 @@ class SmartHeatingCoordinator:
         )
         return True
 
-    async def async_unregister_room(self, room_name: str) -> bool:
-        """Remove a room from the persistent registry.
+    async def async_unregister_room(self, room_name: str) -> str | None:
+        """Remove a room from the persistent registry and in-memory state.
 
-        Returns True when a room was removed.
+        Returns the room_id when a room was removed, None if not found.
         """
         room_id = _room_name_to_id(room_name.strip())
         if room_id not in self._room_registry:
-            _LOGGER.debug("Room registry unregister: room_id='%s' not found", room_id)
-            return False
+            _LOGGER.warning(
+                "Room registry unregister: room_id='%s' not found — already removed?",
+                room_id,
+            )
+            return None
+
         del self._room_registry[room_id]
         await self._room_registry_store.async_save({"rooms": self._room_registry})
+
+        # Clean up in-memory state so nothing lingers until the next reload.
+        self.room_states.pop(room_id, None)
+        self._override_switches.pop(room_id, None)
+        self.heating_rate_entities.pop(room_id, None)
+
         _LOGGER.info("Room registry: removed room '%s' (room_id=%s)", room_name, room_id)
-        return True
+        return room_id
 
     def discover_rooms(self) -> list[RoomConfig]:
         """Build RoomConfig list from persistent SHA room registry."""

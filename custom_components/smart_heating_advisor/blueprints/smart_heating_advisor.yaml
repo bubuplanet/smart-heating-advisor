@@ -1228,8 +1228,7 @@ action:
             override_eff={{ notify_override_effective }}, in_preheat={{ in_preheat_bool }},
             windows_open={{ windows_open_bool }}, target_reached={{ target_reached }},
             preheat_sent={{ states(sha_preheat_notified) }}, target_sent={{ states(sha_target_notified) }},
-            standby_sent={{ states(sha_standby_notified) }}, window_sent={{ states(sha_window_timeout_notified) }},
-            trigger={{ trigger.id }}.
+            standby_sent={{ states(sha_standby_notified) }}, window_sent={{ states(sha_window_timeout_notified) }}.
           level: debug
           logger: custom_components.smart_heating_advisor
 

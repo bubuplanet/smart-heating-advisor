@@ -172,8 +172,8 @@ blueprint:
           name: Pre-heat Suspended — Message Body
           description: "Sent when pre-heat is due but blocked by an open window. Variables: {{ room_name }}, {{ room_temp }}, {{ target_temp }}, {{ schedule_name }}, {{ window_name }}"
           default: >-
-            Pre-heating for "{{ '{{ schedule_name }}' }}" in {{ '{{ room_name }}' }} is suspended
-            while a window is open. Target: {{ '{{ target_temp }}' }}°C.
+            {{ '{{ window_name }}' }} is open in {{ '{{ room_name }}' }}, skipping pre-heating
+            for "{{ '{{ schedule_name }}' }}". Target: {{ '{{ target_temp }}' }}°C.
             Current: {{ '{{ room_temp }}' }}°C.
           selector:
             text:
@@ -1373,7 +1373,7 @@ action:
               message: >
                 {% set body_tpl = tpl_preheat_suspended_body | trim %}
                 {% set win_name = expand(window_sensors) | selectattr('state', 'in', ['on', 'open']) | map(attribute='attributes.friendly_name') | list | join(', ') | default('a window') %}
-                {% set body_base = body_tpl if body_tpl else "Pre-heating for \"{{ schedule_name }}\" in {{ room_name }} is suspended while a window is open. Target: {{ target_temp }}°C. Current: {{ room_temp }}°C." %}
+                {% set body_base = body_tpl if body_tpl else "{{ window_name }} is open in {{ room_name }}, skipping pre-heating for \"{{ schedule_name }}\". Target: {{ target_temp }}°C. Current: {{ room_temp }}°C." %}
                 {{ body_base
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ target_temp }}', (preheat_temp | string))
@@ -1432,6 +1432,7 @@ action:
           - condition: template
             value_template: >
               {{ notify_standby_effective and
+                 standby_notified_available and
                  not in_comfort_bool and
                  not in_preheat_bool and
                  not vacation_active_bool and

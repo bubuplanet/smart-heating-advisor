@@ -6,3 +6,16 @@
 *.zip
 MANUAL_TEST_SCENARIOS.md
 __pycache__
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+*.log
+*.bak
+*.tmp
+*.swp
+*.swo
+*.DS_Store
+dist
+build

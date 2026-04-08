@@ -197,3 +197,105 @@ grep "SHA \[Bathroom\]" /config/home-assistant.log
 - [ ] New blueprint actions that represent state transitions include a `system_log.write` at `info` level
 - [ ] Control loop or high-frequency blueprint actions use `debug` level only
 - [ ] `_mask_secret()` is used for any token or credential that must appear in a debug trace
+
+
+---
+
+## Branch strategy
+
+| Branch | Purpose |
+|---|---|
+| `dev` | Active development — all daily work |
+| `master` | Stable releases only — never commit directly |
+
+---
+
+## Commit message format
+
+| Prefix | When to use |
+|---|---|
+| `feat:` | New feature |
+| `fix:` | Bug fix |
+| `chore:` | Maintenance |
+| `docs:` | Documentation only |
+| `refactor:` | Code restructure, no behaviour change |
+| `test:` | Test plan or dry-run scenario changes |
+| `wip:` | Work in progress |
+
+Example:
+  fix(blueprint): add schedule_changed to override skip list
+
+---
+
+## Before every commit
+
+  ./scripts/verify_sha.sh
+
+All checks must pass.
+
+---
+
+## Before every merge to master
+
+- All Phase 1–6 tests in docs/test-plan.md pass
+- Dry-run scenarios in docs/dry-run-scenarios.md pass
+- No errors in HA logs for 48 hours on production
+- Version bumped in manifest.json
+- Blueprint version bumped in description block
+- CHANGELOG.md [Unreleased] section updated
+
+---
+
+## Release process
+
+  git checkout master
+  git merge dev
+  git push origin master
+  git tag -a v0.0.1 -m "First stable release"
+  git push origin v0.0.1
+  # Create GitHub Release in UI
+  git checkout dev
+  git merge master
+
+---
+
+## AI assistance
+
+SHA uses Claude for development. See docs/claude-prompts.md
+for all reusable prompts and rules.
+
+Key rules:
+- Start a new chat for every major architectural change
+- Run ./scripts/verify_sha.sh after every Claude session
+- Run the reality check prompt before every commit
+- Review git diff before committing
+- Document major decisions in docs/architecture.md
+
+## Keeping docs/claude-prompts.md up to date
+
+At the end of any Claude session that produced a new reusable prompt
+or improved an existing one paste this into the chat:
+
+  Review this entire conversation and identify any prompts that
+  were used or created that are not yet in docs/claude-prompts.md.
+
+  Read docs/claude-prompts.md first to understand the existing
+  structure and format.
+
+  For each new prompt found in this conversation:
+  - Give it a clear number and title
+  - Add a one-line description of when to use it
+  - Add the full prompt text in a code block
+  - Place it in the correct section or create a new section
+
+  Also update any existing prompts if this session produced an
+  improved version of something already there.
+
+  Do not remove any existing prompts.
+  Do not change the format or structure of existing entries.
+  Only add or improve.
+
+  Then commit:
+  git add docs/claude-prompts.md
+  git commit -m "docs: update claude prompts from session YYYY-MM-DD"
+  git push origin dev

@@ -2,7 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    **version: 0.0.6**
+    **version: 0.0.1**
 
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 

@@ -37,6 +37,7 @@ async def async_setup_entry(
         ("window_notifications_enabled",   "Window Notifications Enabled",      "mdi:window-open", True,  EntityCategory.CONFIG),
         ("override_notifications_enabled", "Override Notifications Enabled",    "mdi:hand-back-right", True, EntityCategory.CONFIG),
         ("preheat_notified",               "Preheat Notification Sent",         "mdi:bell",        False, EntityCategory.DIAGNOSTIC),
+        ("schedule_notified",              "Schedule Notification Sent",        "mdi:bell-check",  False, EntityCategory.DIAGNOSTIC),
         ("target_notified",                "Target Notification Sent",          "mdi:check-circle", False, EntityCategory.DIAGNOSTIC),
         ("standby_notified",               "Standby Notification Sent",         "mdi:sleep",       False, EntityCategory.DIAGNOSTIC),
         ("vacation_notified",              "Vacation Notification Sent",        "mdi:beach",       False, EntityCategory.DIAGNOSTIC),

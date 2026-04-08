@@ -258,3 +258,181 @@ Produce a summary table:
 List any bugs or unexpected behaviours you found while tracing
 through the logic. Be specific about which line or condition
 caused the issue.
+
+---
+
+## Scenarios added after v0.0.1 dry run
+
+---
+
+## Scenario 7 — Pre-heat suspended then window closes after schedule starts
+
+Current time: 05:55
+Room temperature: 20.0°C
+Schedule "Morning Shower 26C": starts at 06:00
+preheat_notified: off
+Window: opens at 05:55 (already past reaction time — airing_mode already on)
+
+1. At 05:55 control_loop fires. Is in_preheat_bool true?
+   Show mins_needed and mins_to_start calculation.
+2. Is pre-heat suspended notification sent? Which switch states change?
+3. At 06:00 schedule turns on — schedule_changed/on fires.
+   What is preheat_notified state at this point?
+   Is sha_preheat_notified reset? By which branch?
+4. Window closes at 06:05 — window_airing_end fires.
+   Is the window closed notification sent? What condition allows it?
+5. Heating resumes — what mode and temperature?
+
+---
+
+## Scenario 8 — Room already at target when schedule starts
+
+Current time: 06:00 (schedule_changed/on)
+Room temperature: 25.8°C (above comfort_temp - 0.3 = 25.7)
+Schedule "Morning Shower 26C": just turned on
+sha_schedule_notified: off
+sha_target_notified: off
+
+1. schedule_changed/on fires — "Heating Started" notification guard?
+   Does it fire? Which switch turns on?
+2. Control loop fires at 06:05.
+   What does target_reached evaluate to?
+   Is "Target Reached" notification sent? Which switch is checked?
+3. Show that both can now fire independently (B1 fix verification).
+
+---
+
+## Scenario 9 — Two windows open — one closes, one stays open
+
+Current time: 06:10
+Room temperature: 22.0°C
+airing_mode: on (both windows triggered reaction time earlier)
+window_timeout_notified: on
+Two window sensors: sensor_A (open), sensor_B (open)
+
+Step A — sensor_B closes at 06:10:
+1. window_airing_end fires. What is the all-closed check result?
+   expand(window_sensors) with sensor_A still open → count still > 0
+2. Does airing_mode turn off?
+3. Is window closed notification sent?
+4. Does heating resume?
+
+Step B — sensor_A closes at 06:15:
+5. window_airing_end fires again. What is the all-closed check now?
+6. Does airing_mode turn off?
+7. Is window closed notification sent now? Why?
+8. Does heating resume?
+
+---
+
+## Scenario 10 — heating_rate entity unavailable
+
+Current time: 05:30
+Room temperature: 20.5°C
+sha_bathroom_heating_rate: state = 'unavailable'
+Schedule "Morning Shower 26C": starts at 06:00
+
+1. What does heating_rate variable evaluate to?
+   Show: states(sha_heating_rate) | float(0.15)
+2. What is the fallback value used?
+3. Calculate mins_needed with fallback rate 0.15:
+   (26 - 20.5) / 0.15 = ?
+4. Does pre-heat trigger?
+5. Is this correct behaviour?
+
+---
+
+## Scenario 11 — Schedule name with no C suffix (fallback temp)
+
+Current time: 05:30
+Room temperature: 20.0°C
+Schedule name: "Morning Routine" (no temperature suffix)
+schedule_fallback_temp: 21
+Next event: 06:00
+
+1. What does the regex_findall return for "Morning Routine"?
+2. What is target_temp?
+3. Calculate mins_needed: (21 - 20.0) / 0.13 = ?
+   Apply max(..., 5) → ?
+   Apply temp_delta > 0.5 guard: 1.0 > 0.5 → ?
+4. Does pre-heat trigger at 05:30 (30 min to start)?
+5. Is this correct?
+
+---
+
+## Scenario 12 — Override active when window opens
+
+Current time: 06:20
+Override: active (sha_override_switch = on)
+Schedule "Morning Shower 26C": active
+Window: opens — reaction time passes at 06:25
+
+1. window_airing_start fires at 06:25.
+   What sequence runs?
+2. airing_mode turns on — what is target_mode now?
+3. TRV commanded to off by window_airing_start branch.
+4. Control loop fires at 06:30.
+   override_active_bool = true, trigger.id = control_loop →
+   Does the override skip condition match?
+5. Is the manual_override trigger ever fired by the TRV off command?
+   Show: trigger.to_state.context.parent_id check.
+6. State summary: airing_mode=on, override=on. What controls the TRV?
+
+---
+
+## Scenario 13 — Vacation mode becomes active mid-schedule
+
+Current time: 06:30
+Schedule "Morning Shower 26C": active, in_comfort_bool = true
+vacation_enabled: true
+vacation_calendar: calendar.home
+vacation_mode: off
+Calendar event: starts at 06:30, title "vacation week"
+
+1. Control loop at 06:30 — vacation_active_bool evaluates to?
+   Show the regex_search check.
+2. What is target_mode?
+   windows_open=false, vacation_active=true, vacation_mode='off' → ?
+3. TRV action?
+4. Is vacation_notified_on false? Is notification sent?
+5. What switch states change?
+6. Control loop at 06:35 — vacation still active.
+   Is another vacation notification sent? Why or why not?
+
+---
+
+## Scenario 14 — Override expires while window is open
+
+Current time: 08:20
+Override timer expires → sha_override_ended event fires
+airing_mode: on (window still open)
+No schedule active
+
+1. trigger.id = override_ended. Which outer choose condition matches?
+   (Not "different room", not window/schedule triggers → default branch)
+2. What is target_mode?
+   windows_open_bool = true → ?
+3. TRV action?
+4. Override ended notification — does it fire?
+5. Does the window open notification re-fire? Why or why not?
+
+---
+
+## Scenario 15 — Room already overheated when schedule starts
+
+Current time: 06:00 (schedule_changed/on)
+Room temperature: 27.5°C (above comfort_temp = 26.0)
+Schedule "Morning Shower 26C": just turned on
+sha_schedule_notified: off
+sha_target_notified: off
+
+1. schedule_changed/on: "Heating Started" fires — sha_schedule_notified → on.
+2. TRV commanded: heat at 26°C (schedule triggers heat regardless of room temp).
+3. Control loop at 06:05:
+   target_reached = in_comfort_bool AND 27.5 >= 25.7 → true.
+   sha_target_notified is off (independent from sha_schedule_notified) →
+   "Target Reached" notification fires immediately.
+4. Are both notifications sent in the same schedule period?
+   Confirm B1 fix is effective.
+5. Is the TRV being commanded to heat when room is already above target
+   a problem? What would correct this?

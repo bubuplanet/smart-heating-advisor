@@ -2,7 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    **version: 0.0.1**
+    **version: 0.0.2**
 
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
@@ -538,9 +538,10 @@ variables:
 
   sha_heating_rate:      "number.sha_{{ room_id }}_heating_rate"
   sha_override_switch:   "switch.sha_{{ room_id }}_override"
-  sha_preheat_notified:  "switch.sha_{{ room_id }}_preheat_notified"
-  sha_target_notified:   "switch.sha_{{ room_id }}_target_notified"
-  sha_standby_notified:  "switch.sha_{{ room_id }}_standby_notified"
+  sha_preheat_notified:   "switch.sha_{{ room_id }}_preheat_notified"
+  sha_schedule_notified:  "switch.sha_{{ room_id }}_schedule_notified"
+  sha_target_notified:    "switch.sha_{{ room_id }}_target_notified"
+  sha_standby_notified:   "switch.sha_{{ room_id }}_standby_notified"
   sha_vacation_notified:         "switch.sha_{{ room_id }}_vacation_notified"
   sha_window_timeout_notified:   "switch.sha_{{ room_id }}_window_timeout_notified"
   sha_notify_preheat_enabled:  "switch.sha_{{ room_id }}_preheat_notifications_enabled"
@@ -555,16 +556,19 @@ variables:
   override_active: "{{ is_state(sha_override_switch, 'on') }}"
   windows_open:    "{{ is_state('switch.sha_' ~ room_id ~ '_airing_mode', 'on') }}"
   preheat_notified_state: "{{ states(sha_preheat_notified) }}"
+  schedule_notified_state: "{{ states(sha_schedule_notified) }}"
   target_notified_state: "{{ states(sha_target_notified) }}"
   standby_notified_state: "{{ states(sha_standby_notified) }}"
   window_timeout_notified_state: "{{ states(sha_window_timeout_notified) }}"
   vacation_notified_state: "{{ states(sha_vacation_notified) }}"
   preheat_notified_available: "{{ preheat_notified_state not in ['unknown', 'unavailable'] }}"
+  schedule_notified_available: "{{ schedule_notified_state not in ['unknown', 'unavailable'] }}"
   target_notified_available: "{{ target_notified_state not in ['unknown', 'unavailable'] }}"
   standby_notified_available: "{{ standby_notified_state not in ['unknown', 'unavailable'] }}"
   window_timeout_notified_available: "{{ window_timeout_notified_state not in ['unknown', 'unavailable'] }}"
   vacation_notified_available: "{{ vacation_notified_state not in ['unknown', 'unavailable'] }}"
   preheat_notified_on: "{{ preheat_notified_state == 'on' }}"
+  schedule_notified_on: "{{ schedule_notified_state == 'on' }}"
   target_notified_on: "{{ target_notified_state == 'on' }}"
   standby_notified_on: "{{ standby_notified_state == 'on' }}"
   window_timeout_notified_on: "{{ window_timeout_notified_state == 'on' }}"
@@ -626,9 +630,10 @@ variables:
           {% if nev %}
             {% set temps = fname | regex_findall('(\d+(?:\.\d+)?)C$', ignorecase=True) %}
             {% set target_temp = temps | first | float(schedule_fallback_temp) if temps else schedule_fallback_temp | float %}
-            {% set mins_needed = [((target_temp - room_temp) / heating_rate) | int(10), 5] | max %}
+            {% set temp_delta = target_temp - room_temp %}
+            {% set mins_needed = [(temp_delta / heating_rate) | int(10), 5] | max %}
             {% set mins_to_start = ((as_datetime(nev) - now()).total_seconds() / 60) | int(0) %}
-            {% if 0 <= mins_to_start <= mins_needed %}
+            {% if temp_delta > 0.5 and 0 <= mins_to_start <= mins_needed %}
               {% set ns.found = true %}
               {% set ns.temp = target_temp %}
               {% set ns.name = fname %}
@@ -926,14 +931,14 @@ action:
                             - "{{ sha_standby_notified }}"
                   - if:
                       - condition: template
-                        value_template: "{{ notify_target_effective and not target_notified_on }}"
+                        value_template: "{{ notify_target_effective and not schedule_notified_on }}"
                     then:
                       - action: system_log.write
                         data:
                           message: >-
                             SHA [{{ room_name }}] Notification sent: schedule_started
                             (effective={{ notify_target_effective }},
-                            already_sent={{ target_notified_on }}).
+                            already_sent={{ schedule_notified_on }}).
                           level: debug
                           logger: custom_components.smart_heating_advisor
                       - action: notify.notify
@@ -955,11 +960,11 @@ action:
                                | replace('{{ target_temp }}', (comfort_temp | string)) }}
                       - if:
                           - condition: template
-                            value_template: "{{ target_notified_available }}"
+                            value_template: "{{ schedule_notified_available }}"
                         then:
                           - action: switch.turn_on
                             target:
-                              entity_id: "{{ sha_target_notified }}"
+                              entity_id: "{{ sha_schedule_notified }}"
                   - if:
                       - condition: template
                         value_template: "{{ preheat_notified_available }}"
@@ -1018,6 +1023,13 @@ action:
                               entity_id: "{{ sha_standby_notified }}"
                   - if:
                       - condition: template
+                        value_template: "{{ schedule_notified_available }}"
+                    then:
+                      - action: switch.turn_off
+                        target:
+                          entity_id: "{{ sha_schedule_notified }}"
+                  - if:
+                      - condition: template
                         value_template: "{{ target_notified_available }}"
                     then:
                       - action: switch.turn_off
@@ -1043,6 +1055,8 @@ action:
                     {% elif vacation_active_bool and vacation_mode == 'off' %}
                       off
                     {% elif new_state == 'on' %}
+                      heat
+                    {% elif in_comfort_bool %}
                       heat
                     {% elif default_hvac_mode == 'heat' %}
                       heat

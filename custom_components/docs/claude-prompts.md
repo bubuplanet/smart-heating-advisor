@@ -125,25 +125,36 @@ now before I commit.
 
 ## Prompt 3 — Dry run test invocation
 
-Use after any blueprint change. Requires `docs/dry-run-scenarios.md`.
+Read docs/dry-run-scenarios.md and blueprints/smart_heating_advisor.yaml completely before starting.
 
 ```
-Read docs/dry-run-scenarios.md and
-blueprints/smart_heating_advisor.yaml carefully.
-
-The blueprint may have changed since the scenarios were last run.
-Run all scenarios in dry-run-scenarios.md against the current
-blueprint version.
+Run all scenarios defined in docs/dry-run-scenarios.md against
+the current blueprint version.
 
 For each scenario:
-- Trace the logic using the values defined in the scenario
-- Show your working at each step
-- Flag any result that differs from the expected outcome
-- Flag any scenario that is no longer valid due to blueprint changes
-- Suggest new scenarios for any new features added since last run
+- Use the exact room configuration and values defined at the top
+  of the file
+- Trace through every variable calculation step by step
+- Show your working at each step using actual numbers
+- State clearly what action would be sent to the TRV
+- State clearly which notifications would fire and why
+- State clearly which switch states would change
 
-Produce a test run report showing pass/fail per scenario.
-List any bugs or unexpected behaviours found while tracing.
+After completing all scenarios produce a summary table:
+
+| Scenario | Variables correct | Actions correct | Notifications correct | Issues found |
+|---|---|---|---|---|
+
+Then list any bugs or unexpected behaviours found while tracing.
+Be specific about which variable, condition or line caused the issue.
+
+Finally suggest any new scenarios that should be added to cover:
+- New features added since the scenarios were written
+- Edge cases discovered during this run
+- Regression cases for any bugs found
+
+Do not modify any files during this run.
+Report findings only.
 ```
 
 ---
@@ -349,3 +360,36 @@ Read all files and verify the following release checklist:
 For any item not confirmed as ready explain what is missing.
 Do not make changes — report only.
 ```
+
+## Prompt 11 — Align all version numbers
+
+Use when: you want to ensure all version references across the entire project are consistent before a release or after bumping the version.
+
+```
+Read all files in the project carefully before making any changes.
+
+Find every place where a version number is mentioned across all files and align them all to [TARGET VERSION].
+
+Search in these locations:
+1. manifest.json — field: "version"
+2. blueprints/smart_heating_advisor.yaml — **version: X.X.X** in the description block
+3. const.py — any VERSION constant if it exists
+4. README.md — any version badges or version references
+5. hacs.json — check for version field
+6. CHANGELOG.md — do NOT change, version history must stay as-is
+
+For each file found with a version number show me:
+- File path
+- Current version found
+- Line number
+- What it will be changed to
+```
+All versions must be exactly: [TARGET VERSION]
+No other format acceptable (not v0.0.1, not 0.0.1-dev).
+
+After showing me the list wait for my confirmation before making any edits.
+
+Once confirmed apply all changes then verify no syntax errors.
+Show me the final state of each changed line before committing.
+
+Replace [TARGET VERSION] with the version you want to align to before using this prompt.

@@ -1,11 +1,33 @@
-I want you to simulate several heating scenarios by tracing through
-the blueprint logic step by step. Do not modify any files.
+# SHA Blueprint — Dry Run Scenarios
 
-Read blueprints/smart_heating_advisor.yaml completely before starting.
+Version: 0.0.1
+Last updated: 2026-04-08
+Last run against: blueprint v0.0.X
+Status: ✅ = verified ⚠️ = needs recheck ❌ = failed
 
-For each scenario below trace through every variable calculation,
-every condition check and every action that would fire. Show your
-working at each step. Use realistic values I provide.
+---
+
+## How to use this file
+
+Paste this invocation prompt into Claude VS Code extension:
+
+  Read docs/dry-run-scenarios.md and
+  blueprints/smart_heating_advisor.yaml carefully.
+  Run all scenarios against the current blueprint version.
+  For each scenario trace the logic using the defined values.
+  Flag any result that differs from the expected outcome.
+  Flag any scenario no longer valid due to blueprint changes.
+  Suggest new scenarios for any new features added since last run.
+  Produce a pass/fail report and list any issues found.
+
+---
+
+## Known edge cases not yet covered
+
+- [ ] Two windows open — one closes before the other
+- [ ] Pre-heat starts but heating_rate entity is unavailable
+- [ ] Schedule fallback temp used when name has no C suffix
+- [ ] Ollama returns valid JSON but heating_rate is out of range
 
 ---
 

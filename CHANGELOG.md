@@ -105,10 +105,11 @@ All notable changes to this project will be documented in this file.
   registry entry in `async_added_to_hass` using the HA-native
   `entity_registry.async_update_entity()` API
 - Room deletion via ⋮ → Delete now fully cleans up entities and the
-  room device automatically — HA removes all entity registry entries
-  linked to the deleted subentry via `config_subentry_id`; orphan
-  detection in `async_setup_entry` handles coordinator unregistration
-  and automation deletion only (no manual entity removal needed)
+  room device — HA removes entity registry entries linked to the
+  deleted subentry via `config_subentry_id`; Phase 2 orphan detection
+  in `async_setup_entry` explicitly removes the room device from the
+  device registry (HA does not do this automatically) then handles
+  coordinator unregistration and automation deletion
 - Blueprint automation creation error: removed invalid 'enabled'
   key from automation dict passed to HA blueprint API
   (extra keys not allowed @ data['enabled'])

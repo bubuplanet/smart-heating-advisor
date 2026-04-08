@@ -556,6 +556,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await coordinator.async_unregister_room(room_name)
         # Entity registry cleanup is automatic: HA removed all entries linked
         # to the deleted subentry via config_subentry_id before this reload.
+
+        # Explicit device cleanup — HA does not automatically remove the device
+        # when subentry entities are deleted. Look up by the SHA device identifier
+        # and remove if no entities remain on it.
+        ent_reg = er.async_get(hass)
+        dev_reg = dr.async_get(hass)
+        device = dev_reg.async_get_device(
+            identifiers={(DOMAIN, f"{entry.entry_id}_{room_id}")}
+        )
+        if device:
+            remaining = [e for e in ent_reg.entities.values() if e.device_id == device.id]
+            if not remaining:
+                dev_reg.async_remove_device(device.id)
+                _LOGGER.info(
+                    "SHA: removed device '%s' for room_id='%s'", device.name, room_id
+                )
+            else:
+                _LOGGER.warning(
+                    "SHA: device '%s' still has %d entity/entities — not removing",
+                    device.name, len(remaining),
+                )
+
         await _async_delete_room_automation(hass, room_name)
         pn_async_create(
             hass,

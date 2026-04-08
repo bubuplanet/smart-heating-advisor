@@ -10,6 +10,7 @@ import yaml
 from homeassistant.components.persistent_notification import async_create as pn_async_create
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_time_change
 
@@ -304,27 +305,35 @@ async def _async_ensure_room_automations(
 async def _async_remove_room_entities(
     hass: HomeAssistant, entry_id: str, room_id: str
 ) -> None:
-    """Remove all SHA entity registry entries for a room.
+    """Remove all SHA entity registry entries and the room device for a room.
 
     Covers both unique_id prefixes used by SHA:
       - sha_{room_id}_*   (switches, number)
       - {entry_id}_{room_id}_*  (sensors)
 
     Filtered by config_entry_id so we never touch unrelated integrations.
+    After all entities are removed the room device is deleted if it has no
+    remaining entities (device identifier: (DOMAIN, "{entry_id}_{room_id}")).
     """
     ent_reg = er.async_get(hass)
-    to_remove = [
-        entry.entity_id
-        for entry in ent_reg.entities.values()
-        if entry.config_entry_id == entry_id
-        and (
+    dev_reg = dr.async_get(hass)
+
+    # Collect matching entities and their device IDs before removal
+    to_remove: list[str] = []
+    device_ids: set[str] = set()
+    for entry in ent_reg.entities.values():
+        if entry.config_entry_id == entry_id and (
             entry.unique_id.startswith(f"sha_{room_id}_")
             or entry.unique_id.startswith(f"{entry_id}_{room_id}_")
-        )
-    ]
+        ):
+            to_remove.append(entry.entity_id)
+            if entry.device_id:
+                device_ids.add(entry.device_id)
+
     for entity_id in to_remove:
         ent_reg.async_remove(entity_id)
         _LOGGER.debug("SHA: removed entity '%s' for room_id='%s'", entity_id, room_id)
+
     if to_remove:
         _LOGGER.info(
             "SHA: removed %d entity/entities for room_id='%s'", len(to_remove), room_id
@@ -333,6 +342,19 @@ async def _async_remove_room_entities(
         _LOGGER.info(
             "SHA: no entities found for room_id='%s' — nothing to remove", room_id
         )
+
+    # Remove the room device if it has no remaining entities
+    for device_id in device_ids:
+        device = dev_reg.async_get(device_id)
+        if device is None:
+            continue
+        remaining = [e for e in ent_reg.entities.values() if e.device_id == device_id]
+        if not remaining:
+            dev_reg.async_remove_device(device_id)
+            _LOGGER.info(
+                "SHA: removed device '%s' (id=%s) for room_id='%s'",
+                device.name, device_id, room_id,
+            )
 
 
 def _do_delete_room_automation(config_dir: str, room_name: str) -> bool:

@@ -74,7 +74,7 @@ SHA Daily analysis at 00:01 AM
 | 📅 **Unlimited schedules** | Any number of HA Schedule helpers per room |
 | 🌡️ **Per-schedule temperatures** | Target temp encoded in schedule name (e.g. `Morning Shower 26C`) |
 | 🏠 **Multi-room support** | Unlimited rooms — each with independent heating rate |
-| 🏠 **Area-based room setup** | Select rooms from HA Areas in the setup wizard — no manual YAML needed |
+| 🗺️ **Area-based room setup** | Select rooms from HA Areas in the setup wizard — no manual YAML needed |
 | 🛠️ **Auto helper creation** | Helper entities and blueprint automations created immediately on setup |
 | 🔥 **Fixed TRV support** | Optional fixed-temp TRVs (towel rails, floor heating) |
 | 🏖️ **Vacation mode** | Calendar-based frost protection |
@@ -136,7 +136,7 @@ After restarting Home Assistant:
 
 <a id="configuration"></a>
 
-## ⚙️ Configuration
+## 🎛️ Configuration
 
 The setup wizard has 5 steps:
 
@@ -286,7 +286,7 @@ Name each **HA Schedule helper** with the target temperature at the end:
 
 ## 🎛️ Blueprint Configuration
 
-### 🏠 Room Section _(collapsed)_
+### Room Section _(collapsed)_
 
 | Field | Description | Example |
 |---|---|---|
@@ -296,7 +296,7 @@ Name each **HA Schedule helper** with the target temperature at the end:
 | **Fixed Radiator Thermostat** | Optional TRVs always heating to a fixed temp | `climate.bathroom_heated_towel_rail` |
 | **Fixed Radiator Temperature** | Temperature for fixed TRVs when active | `30°C` |
 
-### 📅 Schedules Section _(collapsed)_
+### Schedules Section _(collapsed)_
 
 | Field | Description | Default / Example |
 |---|---|---|
@@ -310,7 +310,7 @@ Name each **HA Schedule helper** with the target temperature at the end:
 | **Target Reached — Message Body** | Sent when the room reaches its target temp. Variables: `{{ room_name }}`, `{{ room_temp }}`, `{{ schedule_name }}`, `{{ time }}` | — |
 | **Schedule Finished — Message Body** | Sent when a schedule ends. Variables: `{{ room_name }}`, `{{ room_temp }}`, `{{ default_hvac_mode }}`, `{{ default_temp }}` | — |
 
-### 🌡️ Default Section _(collapsed)_
+### Default Section _(collapsed)_
 
 | Field | Description | Default |
 |---|---|---|
@@ -320,18 +320,18 @@ Name each **HA Schedule helper** with the target temperature at the end:
 | **Standby Notification Header** | Variables: `{{ room_name }}`, `{{ status }}` | `🔔 {{ room_name }} — {{ status }}` |
 | **Standby — Message Body** | Variables: `{{ room_name }}`, `{{ room_temp }}`, `{{ default_hvac_mode }}`, `{{ default_temp }}` | — |
 
-### 🪟 Window Detection Section _(collapsed)_
+### Window Detection Section _(collapsed)_
 
 | Field | Description | Default |
 |---|---|---|
 | **Window & Door Sensors** | Binary sensors for windows/doors | _(empty)_ |
 | **Open Reaction Time** | Delay before pausing heating | `5 min` |
 | **Notify when heating is paused by a window** | Notification on window-triggered pause and resume | `true` |
-| **Window Notification Header** | Variables: `{{ room_name }}`, `{{ window_name }}`, `{{ status }}` | `🪟 {{ room_name }} - {{ window_name }} {{ status }}` |
+| **Window Notification Header** | Variables: `{{ room_name }}`, `{{ window_name }}`, `{{ status }}` | `🪟 {{ room_name }} — {{ window_name }} is {{ status }}` |
 | **Window Paused — Message Body** | Sent when heating pauses. Variables: `{{ room_name }}`, `{{ window_name }}`, `{{ room_temp }}` | — |
 | **Window Closed — Message Body** | Sent when all windows close after a pause. Variables: `{{ room_name }}`, `{{ window_name }}`, `{{ room_temp }}`, `{{ resume_mode }}` | — |
 
-### 🏖️ Vacation Section _(collapsed)_
+### Vacation Section _(collapsed)_
 
 | Field | Description | Default |
 |---|---|---|
@@ -341,17 +341,17 @@ Name each **HA Schedule helper** with the target temperature at the end:
 | **Vacation Behavior** | Off or Frost protection | `Off` |
 | **Vacation Frost Temperature** | Temp during frost protection | `12°C` |
 
-### ✋ Override Section _(collapsed)_
+### Override Section _(collapsed)_
 
 | Field | Description | Default |
 |---|---|---|
 | **Override Duration** | Minutes to pause after manual TRV change | `120 min` |
 | **Notify when override is activated or ended** | Notification on manual TRV change and resume | `true` |
-| **Override Notification Header** | Variables: `{{ room_name }}`, `{{ status }}` | `🔔 {{ room_name }} — {{ status }}` |
+| **Override Notification Header** | Variables: `{{ room_name }}`, `{{ status }}` | `✋ Manual Override in {{ room_name }} — {{ status }}` |
 | **Override Active — Message Body** | Variables: `{{ room_name }}`, `{{ device_name }}`, `{{ override_minutes }}`, `{{ resume_time }}`, `{{ room_temp }}` | — |
 | **Override Ended — Message Body** | Variables: `{{ room_name }}`, `{{ room_temp }}` | — |
 
-### 🤖 AI Report Section _(collapsed)_
+### AI Report Section _(collapsed)_
 
 | Field | Description | Default |
 |---|---|---|
@@ -373,12 +373,12 @@ Name each **HA Schedule helper** with the target temperature at the end:
 | Standby | `🔔 Room — Standby` | No schedule active, heating at default | Once per standby transition |
 | Window paused | `🪟 Room - Window Open` | Window open longer than reaction time | Once per opening event |
 | Window resumed | `🪟 Room - Window Closed` | All windows close after a pause | Once per closing event |
-| Override active | `🔔 Room — Override Active` | Manual TRV change detected | On each manual change |
-| Override ended | `🔔 Room — Override Ended` | Override expires | On each resume |
+| Override active | `✋ Manual Override in Room — Override Active` | Manual TRV change detected | On each manual change |
+| Override ended | `✋ Manual Override in Room — Override Ended` | Override expires | On each resume |
 | Daily report | _(persistent notification)_ | Daily AI analysis completes | Once per room per run |
 | Weekly report | _(persistent notification)_ | Weekly AI analysis completes | Once per room per run |
 
-> The title is generated from the header template (configurable per section). Default: `🔔 {{ room_name }} — {{ status }}` for schedule/default/override; `🪟 {{ room_name }} - {{ window_name }} {{ status }}` for window.
+> The title is generated from the header template (configurable per section). Default: `🔔 {{ room_name }} — {{ status }}` for schedule/default; `✋ Manual Override in {{ room_name }} — {{ status }}` for override; `🪟 {{ room_name }} — {{ window_name }} is {{ status }}` for window.
 
 ---
 

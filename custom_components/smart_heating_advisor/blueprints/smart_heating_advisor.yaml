@@ -55,7 +55,7 @@ blueprint:
   input:
 
     room_section:
-      name: "⚠️ 🏠 Room — Mandatory"
+      name: "🏠 Room — Mandatory"
       icon: mdi:radiator
       collapsed: true
       description: Required. Room name, temperature sensor, and TRV thermostats.
@@ -117,7 +117,7 @@ blueprint:
               unit_of_measurement: "°C"
 
     schedule_section:
-      name: "⚠️ 📅 Schedules — Mandatory"
+      name: "📅 Schedules — Mandatory"
       icon: mdi:clock-outline
       collapsed: true
       description: Required. Schedule helpers, fallback temperature, and notification templates.
@@ -223,7 +223,7 @@ blueprint:
           name: Schedule Finished — Message Body
           description: "Sent when a schedule ends and heating returns to default. Variables: {{ room_name }}, {{ room_temp }}, {{ default_hvac_mode }}, {{ default_temp }}"
           default: >-
-            Schedule "{{ '{{ schedule_name }}' }}" ended in {{ '{{ room_name }}' }}.
+            Schedule ended in {{ '{{ room_name }}' }}.
             {% if default_hvac_mode == 'off' %}Heating off.{% else %}
             Maintaining {{ '{{ default_temp }}' }}°C standby.{% endif %}
             Current: {{ '{{ room_temp }}' }}°C.
@@ -334,7 +334,7 @@ blueprint:
           description: >
             Header for window notifications.
             Variables: {{ room_name }}, {{ window_name }}, {{ status }}
-          default: "🪟 {{ '{{ room_name }}' }} - {{ '{{ window_name }}' }} is {{ '{{ status }}' }}"
+          default: "🪟 {{ '{{ room_name }}' }} — {{ '{{ window_name }}' }} is {{ '{{ status }}' }}"
           selector:
             text:
 
@@ -443,7 +443,7 @@ blueprint:
           description: >
             Header for override active and override ended notifications.
             Variables: {{ room_name }}, {{ status }}
-          default: "🔔 Manual Override in {{ '{{ room_name }}' }} — {{ '{{ status }}' }}"
+          default: "✋ Manual Override in {{ '{{ room_name }}' }} — {{ '{{ status }}' }}"
           selector:
             text:
 
@@ -757,7 +757,7 @@ action:
                   title: >
                     {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
                     {% set tpl = tpl_window_header | trim %}
-                    {% set base = tpl if tpl else "🪟 {{ room_name }} - {{ window_name }} {{ status }}" %}
+                    {% set base = tpl if tpl else "🪟 {{ room_name }} — {{ window_name }} is {{ status }}" %}
                     {{ base
                        | replace('{{ room_name }}', room_name)
                        | replace('{{ window_name }}', win_name)
@@ -809,7 +809,7 @@ action:
                       title: >
                         {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
                         {% set tpl = tpl_window_header | trim %}
-                        {% set base = tpl if tpl else "🪟 {{ room_name }} - {{ window_name }} {{ status }}" %}
+                        {% set base = tpl if tpl else "🪟 {{ room_name }} — {{ window_name }} is {{ status }}" %}
                         {{ base
                            | replace('{{ room_name }}', room_name)
                            | replace('{{ window_name }}', win_name)
@@ -1018,32 +1018,19 @@ action:
                               entity_id: "{{ sha_standby_notified }}"
                   - if:
                       - condition: template
-                        value_template: "{{ target_notified_available or preheat_notified_available }}"
+                        value_template: "{{ target_notified_available }}"
                     then:
-                      - choose:
-                          - conditions:
-                              - condition: template
-                                value_template: "{{ target_notified_available and preheat_notified_available }}"
-                            sequence:
-                              - action: switch.turn_off
-                                target:
-                                  entity_id:
-                                    - "{{ sha_target_notified }}"
-                                    - "{{ sha_preheat_notified }}"
-                          - conditions:
-                              - condition: template
-                                value_template: "{{ target_notified_available and not preheat_notified_available }}"
-                            sequence:
-                              - action: switch.turn_off
-                                target:
-                                  entity_id: "{{ sha_target_notified }}"
-                          - conditions:
-                              - condition: template
-                                value_template: "{{ preheat_notified_available and not target_notified_available }}"
-                            sequence:
-                              - action: switch.turn_off
-                                target:
-                                  entity_id: "{{ sha_preheat_notified }}"
+                      - action: switch.turn_off
+                        target:
+                          entity_id: "{{ sha_target_notified }}"
+                  - if:
+                      - condition: template
+                        value_template: >
+                          {{ preheat_notified_available and not in_preheat_bool }}
+                    then:
+                      - action: switch.turn_off
+                        target:
+                          entity_id: "{{ sha_preheat_notified }}"
           - if:
               - condition: template
                 value_template: "{{ not override_active_bool }}"
@@ -1181,7 +1168,7 @@ action:
                     data:
                       title: >
                         {% set tpl = tpl_override_header | trim %}
-                        {% set base = tpl if tpl else "🔔 {{ room_name }} — {{ status }}" %}
+                        {% set base = tpl if tpl else "✋ {{ room_name }} — {{ status }}" %}
                         {{ base
                            | replace('{{ room_name }}', room_name)
                            | replace('{{ status }}', 'Override Active') }}
@@ -1366,7 +1353,7 @@ action:
             data:
               title: >
                 {% set tpl = tpl_schedule_header | trim %}
-                {% set base = tpl if tpl else "🔔 {{ room_name }} — {{ status }}" %}
+                {% set base = tpl if tpl else "🪟 {{ room_name }} — {{ status }}" %}
                 {{ base
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ status }}', 'Pre-heat Suspended') }}
@@ -1501,7 +1488,7 @@ action:
             data:
               title: >
                 {% set tpl = tpl_override_header | trim %}
-                {% set base = tpl if tpl else "🔔 {{ room_name }} — {{ status }}" %}
+                {% set base = tpl if tpl else "✋ {{ room_name }} — {{ status }}" %}
                 {{ base
                    | replace('{{ room_name }}', room_name)
                    | replace('{{ status }}', 'Override Ended') }}

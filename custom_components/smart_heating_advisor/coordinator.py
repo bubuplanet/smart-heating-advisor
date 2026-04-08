@@ -627,7 +627,7 @@ from(bucket: "{bucket}")
 
         if not await self.ollama.async_test_connection():
             await self._async_notify(
-                "⚠️ Smart Heating Advisor",
+                "⚠️ SHA — Daily Analysis Failed",
                 "Daily analysis skipped — cannot connect to Ollama.",
             )
             return
@@ -785,7 +785,7 @@ from(bucket: "{bucket}")
 
         if not await self.ollama.async_test_connection():
             await self._async_notify(
-                "⚠️ Smart Heating Advisor",
+                "⚠️ SHA — Weekly Report Failed",
                 "Weekly report skipped — cannot connect to Ollama.",
             )
             return

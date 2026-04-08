@@ -99,6 +99,16 @@ All notable changes to this project will be documented in this file.
   to avoid duplicate name on device page
 
 ### Fixed
+- Entities now appear under their correct room subentry card instead of
+  "Devices that don't belong to a sub-entry" — all SHA entity classes
+  (sensor, switch, number) stamp `config_subentry_id` on their entity
+  registry entry in `async_added_to_hass` using the HA-native
+  `entity_registry.async_update_entity()` API
+- Room deletion via ⋮ → Delete now fully cleans up entities and the
+  room device automatically — HA removes all entity registry entries
+  linked to the deleted subentry via `config_subentry_id`; orphan
+  detection in `async_setup_entry` handles coordinator unregistration
+  and automation deletion only (no manual entity removal needed)
 - Blueprint automation creation error: removed invalid 'enabled'
   key from automation dict passed to HA blueprint API
   (extra keys not allowed @ data['enabled'])

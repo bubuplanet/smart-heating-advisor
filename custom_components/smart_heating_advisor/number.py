@@ -7,10 +7,12 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN, DEFAULT_HEATING_RATE, MIN_HEATING_RATE, MAX_HEATING_RATE
+from .coordinator import _room_name_to_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,9 +36,15 @@ async def async_setup_entry(
         rooms = coordinator.discover_rooms()
         _LOGGER.info("number platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms] if _LOGGER.isEnabledFor(logging.INFO) else "")
 
+        room_id_to_subentry: dict[str, str] = {
+            _room_name_to_id(s.data["room_name"]): s.subentry_id
+            for s in entry.subentries.values()
+            if s.data.get("room_name")
+        }
+
         entities: list[SHAHeatingRateNumber] = []
         for room in rooms:
-            entity = SHAHeatingRateNumber(room.room_name, room.room_id, entry.entry_id)
+            entity = SHAHeatingRateNumber(room.room_name, room.room_id, entry.entry_id, room_id_to_subentry.get(room.room_id))
             entities.append(entity)
             coordinator.register_heating_rate_entity(room.room_id, entity)
             _LOGGER.debug(
@@ -71,10 +79,11 @@ class SHAHeatingRateNumber(NumberEntity, RestoreEntity):
     _attr_mode = NumberMode.BOX
     _attr_icon = "mdi:thermometer-auto"
 
-    def __init__(self, room_name: str, room_id: str, entry_id: str) -> None:
+    def __init__(self, room_name: str, room_id: str, entry_id: str, subentry_id: str | None = None) -> None:
         self._room_name = room_name
         self._room_id = room_id
         self._entry_id = entry_id
+        self._subentry_id = subentry_id
         self._value = DEFAULT_HEATING_RATE
 
         self._attr_name = "Heating Rate"
@@ -124,3 +133,7 @@ class SHAHeatingRateNumber(NumberEntity, RestoreEntity):
                 )
         else:
             _LOGGER.debug("[%s] No previous state found — using default %.3f °C/min", self._room_name, self._value)
+        if self._subentry_id:
+            er.async_get(self.hass).async_update_entity(
+                self.entity_id, config_subentry_id=self._subentry_id
+            )

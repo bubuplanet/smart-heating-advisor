@@ -7,12 +7,14 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
+from .coordinator import _room_name_to_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,8 +52,15 @@ async def async_setup_entry(
         rooms = coordinator.discover_rooms()
         _LOGGER.info("switch platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms] if _LOGGER.isEnabledFor(logging.INFO) else "")
 
+        room_id_to_subentry: dict[str, str] = {
+            _room_name_to_id(s.data["room_name"]): s.subentry_id
+            for s in entry.subentries.values()
+            if s.data.get("room_name")
+        }
+
         entities: list = []
         for room in rooms:
+            subentry_id = room_id_to_subentry.get(room.room_id)
             for purpose, label, icon, default_on, entity_category in boolean_defs:
                 e = SHABooleanSwitch(
                     room.room_name,
@@ -62,6 +71,7 @@ async def async_setup_entry(
                     icon,
                     default_on=default_on,
                     entity_category=entity_category,
+                    subentry_id=subentry_id,
                 )
                 entities.append(e)
                 _LOGGER.debug(
@@ -71,7 +81,7 @@ async def async_setup_entry(
                     purpose,
                     room.room_name,
                 )
-            override = SHAOverrideSwitch(room.room_name, room.room_id, entry.entry_id)
+            override = SHAOverrideSwitch(room.room_name, room.room_id, entry.entry_id, subentry_id=subentry_id)
             entities.append(override)
             coordinator._override_switches[room.room_id] = override
             _LOGGER.debug(
@@ -106,6 +116,7 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
         icon: str,
         default_on: bool = False,
         entity_category: EntityCategory | None = None,
+        subentry_id: str | None = None,
     ) -> None:
         self._room_name = room_name
         self._room_id = room_id
@@ -113,6 +124,7 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
         self._purpose = purpose
         self._is_on = default_on
         self._default_on = default_on
+        self._subentry_id = subentry_id
 
         self._attr_name = purpose_label
         self._attr_unique_id = f"sha_{room_id}_{purpose}"
@@ -167,6 +179,10 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
             _LOGGER.debug("%s: restored state → %s", self.entity_id, last.state)
         else:
             _LOGGER.debug("%s: no previous state, using default=%s", self.entity_id, self._default_on)
+        if self._subentry_id:
+            er.async_get(self.hass).async_update_entity(
+                self.entity_id, config_subentry_id=self._subentry_id
+            )
 
 
 class SHAOverrideSwitch(SwitchEntity, RestoreEntity):
@@ -180,12 +196,13 @@ class SHAOverrideSwitch(SwitchEntity, RestoreEntity):
     _attr_should_poll = False
     _attr_has_entity_name = True
 
-    def __init__(self, room_name: str, room_id: str, entry_id: str) -> None:
+    def __init__(self, room_name: str, room_id: str, entry_id: str, subentry_id: str | None = None) -> None:
         self._room_name = room_name
         self._room_id = room_id
         self._entry_id = entry_id
         self._is_on = False
         self._cancel_timer = None
+        self._subentry_id = subentry_id
 
         self._attr_name = "Manual Override (Pause Automation)"
         self._attr_unique_id = f"sha_{room_id}_override"
@@ -253,6 +270,10 @@ class SHAOverrideSwitch(SwitchEntity, RestoreEntity):
         await super().async_added_to_hass()
         # Override does not resume after HA restart — heating resumes immediately.
         self._is_on = False
+        if self._subentry_id:
+            er.async_get(self.hass).async_update_entity(
+                self.entity_id, config_subentry_id=self._subentry_id
+            )
 
     async def async_will_remove_from_hass(self) -> None:
         if self._cancel_timer:

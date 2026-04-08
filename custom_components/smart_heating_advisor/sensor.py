@@ -5,10 +5,11 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, Sen
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .coordinator import SmartHeatingCoordinator
+from .coordinator import SmartHeatingCoordinator, _room_name_to_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,18 +31,26 @@ async def async_setup_entry(
         rooms = coordinator.discover_rooms()
         _LOGGER.info("sensor platform: discovered %d room(s): %s", len(rooms), [r.room_name for r in rooms] if _LOGGER.isEnabledFor(logging.INFO) else "")
 
+        room_id_to_subentry: dict[str, str] = {
+            _room_name_to_id(s.data["room_name"]): s.subentry_id
+            for s in entry.subentries.values()
+            if s.data.get("room_name")
+        }
+
         entities = []
         for room in rooms:
+            subentry_id = room_id_to_subentry.get(room.room_id)
             _LOGGER.debug(
-                "sensor platform: preparing sensor entities for room='%s' room_id='%s'",
+                "sensor platform: preparing sensor entities for room='%s' room_id='%s' subentry_id=%s",
                 room.room_name,
                 room.room_id,
+                subentry_id,
             )
             entities.extend([
-                RoomHeatingRateSensor(coordinator, entry, room.room_id, room.room_name),
-                RoomLastAnalysisSensor(coordinator, entry, room.room_id, room.room_name),
-                RoomConfidenceSensor(coordinator, entry, room.room_id, room.room_name),
-                RoomWeeklyReportSensor(coordinator, entry, room.room_id, room.room_name),
+                RoomHeatingRateSensor(coordinator, entry, room.room_id, room.room_name, subentry_id),
+                RoomLastAnalysisSensor(coordinator, entry, room.room_id, room.room_name, subentry_id),
+                RoomConfidenceSensor(coordinator, entry, room.room_id, room.room_name, subentry_id),
+                RoomWeeklyReportSensor(coordinator, entry, room.room_id, room.room_name, subentry_id),
             ])
 
         if not entities:
@@ -71,11 +80,20 @@ class SHABaseSensor(SensorEntity):
         entry: ConfigEntry,
         room_id: str,
         room_name: str,
+        subentry_id: str | None = None,
     ):
         self.coordinator = coordinator
         self.entry = entry
         self.room_id = room_id
         self.room_name = room_name
+        self._subentry_id = subentry_id
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self._subentry_id:
+            er.async_get(self.hass).async_update_entity(
+                self.entity_id, config_subentry_id=self._subentry_id
+            )
 
     @property
     def device_info(self):

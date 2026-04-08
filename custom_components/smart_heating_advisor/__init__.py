@@ -532,7 +532,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             room_name, room_id,
         )
         await coordinator.async_unregister_room(room_name)
-        await _async_remove_room_entities(hass, entry.entry_id, room_id)
+        # Entity registry cleanup is automatic: HA removed all entries linked
+        # to the deleted subentry via config_subentry_id before this reload.
         await _async_delete_room_automation(hass, room_name)
         pn_async_create(
             hass,

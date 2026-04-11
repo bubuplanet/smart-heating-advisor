@@ -30,7 +30,7 @@ async def async_setup_entry(
     coordinator: SmartHeatingCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     boolean_defs = [
-        ("airing_mode",                    "Airing Mode (Window Pause)",       "mdi:window-open", False, None),
+        ("airing_mode",                    "Airing Mode",                      "mdi:window-open", False, None),
         ("preheat_notifications_enabled",  "Preheat Notifications Enabled",     "mdi:bell-ring",   True,  EntityCategory.CONFIG),
         ("target_notifications_enabled",   "Target Notifications Enabled",      "mdi:check-circle", True, EntityCategory.CONFIG),
         ("standby_notifications_enabled",  "Standby Notifications Enabled",     "mdi:sleep",       True,  EntityCategory.CONFIG),

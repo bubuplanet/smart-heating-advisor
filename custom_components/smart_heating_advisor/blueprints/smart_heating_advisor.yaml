@@ -2,7 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    **version: 0.0.6**
+    **version: 0.0.7**
 
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
@@ -84,7 +84,11 @@ blueprint:
         radiator_thermostats:
           name: Radiator Thermostat
           description: >
-            One or more TRVs that follow the schedule target temperature.
+            Main room radiators that follow the schedule target temperature.
+            These are commanded to the schedule comfort temperature (e.g. 26°C)
+            during pre-heat and comfort phases.
+            Do NOT add towel rails or fixed-temperature devices here —
+            use the Fixed Radiator Thermostats input for those.
           selector:
             entity:
               filter:
@@ -94,9 +98,11 @@ blueprint:
         fixed_radiator_thermostats:
           name: Fixed Radiator Thermostat (optional)
           description: >
-            Optional. TRVs that always heat to a fixed temperature
-            regardless of schedule (e.g. towel rail, floor heating).
-            Leave empty if not needed.
+            Optional. Devices that always heat to a fixed temperature when heating
+            is active — typically heated towel rails.
+            These are NOT controlled by the schedule temperature.
+            Set their target temperature using the Fixed Radiator Temperature input
+            below. Leave empty if you have no fixed-temperature devices.
           default: []
           selector:
             entity:
@@ -107,7 +113,10 @@ blueprint:
         fixed_radiator_temperature:
           name: Fixed Radiator Temperature (optional)
           description: >
-            Temperature applied to fixed radiator thermostats when heating is active.
+            Target temperature for fixed radiator thermostats such as heated towel
+            rails. This value is used during pre-heat, comfort and window-close
+            resume phases. Ignored if Fixed Radiator Thermostats is empty.
+            Typical value: 30–35°C.
           default: 30
           selector:
             number:
@@ -907,6 +916,14 @@ action:
                                 value_template: >
                                   {{ fixed_radiator_thermostats | list | count > 0 }}
                             then:
+                              - action: system_log.write
+                                data:
+                                  message: |
+                                    SHA [{{ room_name }}] Fixed TRV — commanding heat on window close resume
+                                    Target: {{ fixed_radiator_temperature | float(30) }}°C
+                                    Entities: {{ fixed_radiator_thermostats }}
+                                  level: info
+                                  logger: custom_components.smart_heating_advisor
                               - action: climate.set_hvac_mode
                                 target:
                                   entity_id: "{{ fixed_radiator_thermostats }}"
@@ -916,7 +933,7 @@ action:
                                 target:
                                   entity_id: "{{ fixed_radiator_thermostats }}"
                                 data:
-                                  temperature: "{{ fixed_radiator_temperature | float }}"
+                                  temperature: "{{ fixed_radiator_temperature | float(30) }}"
                   - if:
                       - condition: template
                         value_template: "{{ fixed_radiator_thermostats | list | count > 0 and resume_target_mode == 'off' }}"
@@ -1173,7 +1190,7 @@ action:
                             target:
                               entity_id: "{{ fixed_radiator_thermostats }}"
                             data:
-                              temperature: "{{ fixed_radiator_temperature | float }}"
+                              temperature: "{{ fixed_radiator_temperature | float(30) }}"
 
       - conditions:
           - condition: template
@@ -1316,6 +1333,15 @@ action:
                     value_template: >
                       {{ fixed_radiator_thermostats | list | count > 0 }}
                 then:
+                  - action: system_log.write
+                    data:
+                      message: |
+                        SHA [{{ room_name }}] Fixed TRV — commanding heat (control loop)
+                        Phase: {{ 'comfort' if in_comfort_bool else ('pre-heat' if in_preheat_bool else 'default') }}
+                        Target: {{ fixed_radiator_temperature | float(30) }}°C
+                        Entities: {{ fixed_radiator_thermostats }}
+                      level: info
+                      logger: custom_components.smart_heating_advisor
                   - action: climate.set_hvac_mode
                     target:
                       entity_id: "{{ fixed_radiator_thermostats }}"
@@ -1325,7 +1351,7 @@ action:
                     target:
                       entity_id: "{{ fixed_radiator_thermostats }}"
                     data:
-                      temperature: "{{ fixed_radiator_temperature | float }}"
+                      temperature: "{{ fixed_radiator_temperature | float(30) }}"
 
       - if:
           - condition: template

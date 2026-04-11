@@ -2,7 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    **version: 0.0.3**
+    **version: 0.0.4**
 
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
@@ -1435,13 +1435,16 @@ action:
                    | replace('{{ schedule_name }}', active_schedule_name if active_schedule_name else 'n/a')
                    | replace('{{ time }}', now().strftime('%H:%M'))
                    | replace('{{ target_temp }}', (comfort_temp | string)) }}
-          - if:
-              - condition: template
-                value_template: "{{ target_notified_available }}"
-            then:
-              - action: switch.turn_on
-                target:
-                  entity_id: "{{ sha_target_notified }}"
+      - if:
+          - condition: template
+            value_template: >
+              {{ target_reached and
+                 target_notified_available and
+                 not target_notified_on }}
+        then:
+          - action: switch.turn_on
+            target:
+              entity_id: "{{ sha_target_notified }}"
 
       - if:
           - condition: template

@@ -2,7 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    **version: 0.0.13**
+    **version: 0.0.14**
 
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
@@ -983,7 +983,7 @@ action:
                       slot_end_time: >
                         {% set nev = state_attr(trigger.entity_id, 'next_event') %}
                         {% if nev %}
-                          {{ as_datetime(nev) | as_local | strftime('%H:%M') }}
+                          {{ (as_datetime(nev) | as_local).strftime('%H:%M') }}
                         {% else %}
                           unknown
                         {% endif %}
@@ -1318,8 +1318,8 @@ action:
             preheat={{ 'SEND' if (notify_preheat_effective and in_preheat_bool and not preheat_notified_on) else 'skip' }}
             target={{ 'SEND' if (notify_target_effective and target_reached and not target_notified_on) else 'skip' }}
             standby={{ 'SEND' if (notify_standby_effective and not in_comfort_bool and not in_preheat_bool and not standby_notified_on) else 'skip' }}
-            window={{ 'SEND' if (notify_window_effective and not window_timeout_notified_on) else 'skip' }}
-            override={{ 'SEND' if notify_override_effective else 'skip' }}
+            window={{ 'SEND' if (notify_window_effective and windows_open_bool and not window_timeout_notified_on) else 'skip' }}
+            override={{ 'SEND' if (notify_override_effective and override_active_bool) else 'skip' }}
           level: debug
           logger: custom_components.smart_heating_advisor
 
@@ -1483,13 +1483,18 @@ action:
                    | replace('{{ target_temp }}', (preheat_temp | string))
                    | replace('{{ schedule_name }}', preheat_schedule_name if preheat_schedule_name else 'n/a')
                    | replace('{{ eta_minutes }}', preheat_schedule_mins | string) }}
-          - if:
-              - condition: template
-                value_template: "{{ preheat_notified_available }}"
-            then:
-              - action: switch.turn_on
-                target:
-                  entity_id: "{{ sha_preheat_notified }}"
+
+      - if:
+          - condition: template
+            value_template: >
+              {{ in_preheat_bool and
+                 not windows_open_bool and
+                 preheat_notified_available and
+                 not preheat_notified_on }}
+        then:
+          - action: switch.turn_on
+            target:
+              entity_id: "{{ sha_preheat_notified }}"
 
       - if:
           - condition: template
@@ -1528,13 +1533,18 @@ action:
                    | replace('{{ schedule_name }}', preheat_schedule_name if preheat_schedule_name else 'n/a')
                    | replace('{{ room_temp }}', (room_temp | round(1) | string))
                    | replace('{{ window_name }}', win_name) }}
-          - if:
-              - condition: template
-                value_template: "{{ preheat_notified_available }}"
-            then:
-              - action: switch.turn_on
-                target:
-                  entity_id: "{{ sha_preheat_notified }}"
+
+      - if:
+          - condition: template
+            value_template: >
+              {{ in_preheat_bool and
+                 windows_open_bool and
+                 preheat_notified_available and
+                 not preheat_notified_on }}
+        then:
+          - action: switch.turn_on
+            target:
+              entity_id: "{{ sha_preheat_notified }}"
 
       - if:
           - condition: template
@@ -1585,7 +1595,6 @@ action:
           - condition: template
             value_template: >
               {{ notify_standby_effective and
-                 standby_notified_available and
                  not in_comfort_bool and
                  not in_preheat_bool and
                  not vacation_active_bool and
@@ -1618,13 +1627,20 @@ action:
                    | replace('{{ room_temp }}', (room_temp | round(1) | string))
                    | replace('{{ default_hvac_mode }}', default_hvac_mode)
                    | replace('{{ default_temp }}', (default_temp | string)) }}
-          - if:
-              - condition: template
-                value_template: "{{ standby_notified_available }}"
-            then:
-              - action: switch.turn_on
-                target:
-                  entity_id: "{{ sha_standby_notified }}"
+
+      - if:
+          - condition: template
+            value_template: >
+              {{ not in_comfort_bool and
+                 not in_preheat_bool and
+                 not vacation_active_bool and
+                 not windows_open_bool and
+                 standby_notified_available and
+                 not standby_notified_on }}
+        then:
+          - action: switch.turn_on
+            target:
+              entity_id: "{{ sha_standby_notified }}"
 
       - if:
           - condition: template

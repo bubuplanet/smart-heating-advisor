@@ -93,8 +93,8 @@ Section 10 — Confidence assessment
 Rate each section: High / Medium / Low with notes.
 
 Do not make any changes. Audit and report only.
-````
 
+````
 ---
 
 ## Prompt 2 — Reality check after every session

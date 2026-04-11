@@ -2,7 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    **version: 0.0.7**
+    **version: 0.0.13**
 
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
@@ -365,10 +365,17 @@ blueprint:
           name: Window Closed — Message Body
           description: >
             Sent only when windows close after a pause was previously triggered.
-            Variables: {{ room_name }}, {{ window_name }}, {{ room_temp }}, {{ resume_mode }}
-          default: >-
-            All windows in {{ '{{ room_name }}' }} are closed — heating resumed.
-            Mode: {{ '{{ resume_mode }}' }}. Current: {{ '{{ room_temp }}' }}°C.
+            Variables: {{ room_name }}, {{ window_name }}, {{ room_temp }},
+            {{ resume_mode }} (Pre-heat / Schedule / Standby),
+            {{ phase_detail }} (phase-aware context — schedule name and target in
+            comfort phase, pre-heat target in pre-heat phase, standby temperature
+            otherwise). Also available: {{ in_comfort_bool }}, {{ in_preheat_bool }},
+            {{ active_schedule_name }}, {{ comfort_temp }},
+            {{ preheat_schedule_name }}, {{ preheat_temp }}, {{ default_temp }}.
+          default: |
+            All windows closed in {{ '{{ room_name }}' }}. Heating resumed.
+            {{ '{{ phase_detail }}' }}
+            Current: {{ '{{ room_temp }}' }}°C.
           selector:
             text:
               multiline: true
@@ -801,13 +808,9 @@ action:
                        | replace('{{ room_name }}', room_name)
                        | replace('{{ window_name }}', win_name)
                        | replace('{{ room_temp }}', (room_temp | round(1) | string)) }}
-          - if:
-              - condition: template
-                value_template: "{{ window_timeout_notified_available }}"
-            then:
-              - action: switch.turn_on
-                target:
-                  entity_id: "{{ sha_window_timeout_notified }}"
+          - action: switch.turn_on
+            target:
+              entity_id: "{{ sha_window_timeout_notified }}"
 
       - conditions:
           - condition: template
@@ -849,11 +852,13 @@ action:
                         {% set body_tpl = tpl_window_closed_body | trim %}
                         {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
                         {% set resume_mode = 'Pre-heat' if in_preheat_bool else ('Schedule' if in_comfort_bool else 'Standby') %}
+                        {% set phase_detail = ('Schedule "' ~ active_schedule_name ~ '" active — target ' ~ (comfort_temp | round(1) | string) ~ '°C.') if in_comfort_bool else ('Pre-heating for "' ~ preheat_schedule_name ~ '" — target ' ~ (preheat_temp | round(1) | string) ~ '°C.' if in_preheat_bool else ('Returning to standby at ' ~ (default_temp | string) ~ '°C.')) %}
                         {% set body_base = body_tpl if body_tpl else "All windows in {{ room_name }} are now closed. Heating resumed ({{ resume_mode }}). Current temperature: {{ room_temp }}°C." %}
                         {{ body_base
                            | replace('{{ room_name }}', room_name)
                            | replace('{{ window_name }}', win_name)
                            | replace('{{ resume_mode }}', resume_mode)
+                           | replace('{{ phase_detail }}', phase_detail)
                            | replace('{{ room_temp }}', (room_temp | round(1) | string)) }}
                   - if:
                       - condition: template
@@ -1040,8 +1045,7 @@ action:
                         value_template: >
                           {{ notify_standby_effective and
                              not standby_notified_on and
-                             not in_preheat_bool and
-                             not in_comfort_bool and
+                             schedule_notified_on and
                              not vacation_active_bool and
                              not windows_open_bool and
                              (schedules | select('string') | list
@@ -1130,15 +1134,21 @@ action:
                     {% else %}
                       {{ default_temp | float }}
                     {% endif %}
-              - action: system_log.write
-                data:
-                  message: |
-                    SHA [{{ room_name }}] {{ 'SCHEDULE STARTED' if trigger.to_state.state == 'on' else 'SCHEDULE ENDED' }}
-                    Schedule: "{{ trigger.to_state.attributes.friendly_name | default(trigger.entity_id) }}"
-                    Room: {{ room_temp | round(1) }}°C
-                    {{ 'Commanding heat to ' ~ schedule_trigger_temp ~ '°C (mode: ' ~ schedule_trigger_mode ~ ').' if trigger.to_state.state == 'on' else 'Returning to ' ~ default_hvac_mode ~ ' at ' ~ default_temp ~ '°C.' }}
-                  level: info
-                  logger: custom_components.smart_heating_advisor
+              - if:
+                  - condition: template
+                    value_template: >
+                      {{ trigger.to_state.state == 'on' or
+                         schedule_notified_on }}
+                then:
+                  - action: system_log.write
+                    data:
+                      message: |
+                        SHA [{{ room_name }}] {{ 'SCHEDULE STARTED' if trigger.to_state.state == 'on' else 'SCHEDULE ENDED' }}
+                        Schedule: "{{ trigger.to_state.attributes.friendly_name | default(trigger.entity_id) }}"
+                        Room: {{ room_temp | round(1) }}°C
+                        {{ 'Commanding heat to ' ~ schedule_trigger_temp ~ '°C (mode: ' ~ schedule_trigger_mode ~ ').' if trigger.to_state.state == 'on' else 'Returning to ' ~ default_hvac_mode ~ ' at ' ~ default_temp ~ '°C.' }}
+                      level: info
+                      logger: custom_components.smart_heating_advisor
               - choose:
                   - conditions:
                       - condition: template
@@ -1279,10 +1289,19 @@ action:
       - action: system_log.write
         data:
           message: |
+            {%- set _scheds = schedules | select('match', '.+') | list -%}
+            {%- set _ns = namespace(slines=[]) -%}
+            {%- for s in _scheds -%}
+              {%- set _nev = state_attr(s, 'next_event') -%}
+              {%- set _nev_str = (_nev | string)[:16] if _nev else '—' -%}
+              {%- set _ns.slines = _ns.slines + ['  ' ~ s ~ ': ' ~ states(s) | upper ~ ' (next: ' ~ _nev_str ~ ')'] -%}
+            {%- endfor -%}
             SHA [{{ room_name }}] ─── Control loop ──────────────────────────────────────
             Room: {{ room_temp | round(1) }}°C
             Mode: {{ target_mode | upper }}  Target: {{ target_temperature | round(1) }}°C
-            Schedule: {{ active_schedule_name if in_comfort_bool else ('Pre-heat for ' ~ preheat_schedule_name if in_preheat_bool else 'none active') }}
+            Schedules ({{ _scheds | count }}):
+            {{ _ns.slines | join('\n') }}
+            Active now: {{ active_schedule_name if in_comfort_bool else ('Pre-heating for ' ~ preheat_schedule_name if in_preheat_bool else 'none') }}
             Pre-heat: {{ 'yes — ' ~ preheat_schedule_mins ~ ' min needed' if in_preheat_bool else 'no' }}
             Override: {{ 'yes' if override_active_bool else 'no' }}
             Windows: {{ 'open' if windows_open_bool else 'closed' }}
@@ -1303,6 +1322,52 @@ action:
             override={{ 'SEND' if notify_override_effective else 'skip' }}
           level: debug
           logger: custom_components.smart_heating_advisor
+
+      - if:
+          - condition: template
+            value_template: >
+              {% if in_preheat_bool or in_comfort_bool %}
+                {{ false }}
+              {% else %}
+                {% set ns = namespace(found=false) %}
+                {% for s in schedules if s != '' and is_state(s, 'off') %}
+                  {% set nev = state_attr(s, 'next_event') %}
+                  {% if nev and not ns.found %}
+                    {% set m = ((as_datetime(nev) - now()).total_seconds() / 60) | int(0) %}
+                    {% if 0 <= m <= 60 %}
+                      {% set ns.found = true %}
+                    {% endif %}
+                  {% endif %}
+                {% endfor %}
+                {{ ns.found }}
+              {% endif %}
+        then:
+          - action: system_log.write
+            data:
+              message: |
+                {%- set ns = namespace(mins=9999, name='', temp=0.0) -%}
+                {%- for s in schedules if s != '' and is_state(s, 'off') -%}
+                  {%- set nev = state_attr(s, 'next_event') -%}
+                  {%- if nev -%}
+                    {%- set m = ((as_datetime(nev) - now()).total_seconds() / 60) | int(0) -%}
+                    {%- if 0 <= m <= 60 and m < ns.mins -%}
+                      {%- set fname = state_attr(s, 'friendly_name') | default('') -%}
+                      {%- set temps = fname | regex_findall('(\d+(?:\.\d+)?)C$', ignorecase=True) -%}
+                      {%- set ns.mins = m -%}
+                      {%- set ns.name = fname -%}
+                      {%- set ns.temp = temps | first | float(schedule_fallback_temp) if temps else schedule_fallback_temp | float -%}
+                    {%- endif -%}
+                  {%- endif -%}
+                {%- endfor -%}
+                {%- set gap = (ns.temp - room_temp) | round(1) -%}
+                {%- set mins_needed = [(gap / heating_rate) | int(10), 5] | max if gap > 0.5 else 0 -%}
+                SHA [{{ room_name }}] Pre-heat countdown — {{ ns.mins }} min to schedule start
+                Schedule: "{{ ns.name }}"
+                Target: {{ ns.temp }}°C  Room now: {{ room_temp | round(1) }}°C  Gap: {{ gap }}°C
+                Heating rate: {{ heating_rate }}°C/min  Est. pre-heat needed: {{ mins_needed }} min
+                Status: {{ 'no pre-heat needed (room warm enough)' if gap <= 0.5 else ('overdue — pre-heat was due at ' ~ (now() - timedelta(minutes=(mins_needed - ns.mins))).strftime('%H:%M') if ns.mins < mins_needed else 'Pre-heat will start at: ' ~ (now() + timedelta(minutes=(ns.mins - mins_needed))).strftime('%H:%M')) }}
+              level: info
+              logger: custom_components.smart_heating_advisor
 
       - choose:
           - conditions:

@@ -2,7 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    **version: 0.0.4**
+    **version: 0.0.6**
 
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
@@ -201,10 +201,11 @@ blueprint:
 
         tpl_schedule_started_body:
           name: Schedule Started — Message Body
-          description: "Sent when a schedule activates. Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}, {{ target_temp }}"
+          description: "Sent when a schedule activates. Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}, {{ target_temp }}, {{ slot_end_time }}"
           default: >-
-            Schedule "{{ '{{ schedule_name }}' }}" is now active in {{ '{{ room_name }}' }}.
-            Heating to {{ '{{ target_temp }}' }}°C. Current: {{ '{{ room_temp }}' }}°C.
+            Starting Comfort Phase in {{ '{{ room_name }}' }}.
+            "{{ '{{ schedule_name }}' }}" active until {{ '{{ slot_end_time }}' }}.
+            Target: {{ '{{ target_temp }}' }}°C — Current: {{ '{{ room_temp }}' }}°C.
           selector:
             text:
               multiline: true
@@ -532,8 +533,7 @@ variables:
   room_id: >
     {{ room_name | lower
                  | replace("'", '')
-                 | replace(' ', '_')
-                 | replace('-', '_')
+                 | regex_replace('[\s\-]+', '_')
                  | regex_replace('[^a-z0-9_]', '') }}
 
   sha_heating_rate:      "number.sha_{{ room_id }}_heating_rate"
@@ -737,9 +737,12 @@ action:
         sequence:
           - action: system_log.write
             data:
-              message: >-
-                SHA [{{ room_name }}] Window open — heating paused.
-                Current: {{ room_temp | round(1) }}°C.
+              message: |
+                SHA [{{ room_name }}] WINDOW OPEN — HEATING SUSPENDED
+                Open sensor(s): {{ expand(window_sensors) | selectattr('state', 'in', ['on', 'open']) | map(attribute='name') | list | join(', ') }}
+                Room: {{ room_temp | round(1) }}°C
+                TRVs commanded off.
+                Heating will resume automatically when all windows close.
               level: info
               logger: custom_components.smart_heating_advisor
           - action: switch.turn_on
@@ -852,10 +855,12 @@ action:
                           entity_id: "{{ sha_window_timeout_notified }}"
               - action: system_log.write
                 data:
-                  message: >-
-                    SHA [{{ room_name }}] All windows closed — heating resumed
-                    ({{ 'Pre-heat' if in_preheat_bool else ('Schedule' if in_comfort_bool else 'Standby') }}).
-                    Current: {{ room_temp | round(1) }}°C.
+                  message: |
+                    SHA [{{ room_name }}] WINDOW CLOSED — HEATING RESUMED
+                    Room: {{ room_temp | round(1) }}°C
+                    Resume mode: {{ 'PRE-HEAT' if in_preheat_bool else ('SCHEDULE' if in_comfort_bool else 'STANDBY') }}
+                    Resume target: {{ target_temperature | round(1) }}°C
+                    {{ 'In comfort phase: ' ~ active_schedule_name if in_comfort_bool else ('In pre-heat for: ' ~ preheat_schedule_name if in_preheat_bool else 'Returning to standby.') }}
                   level: info
                   logger: custom_components.smart_heating_advisor
               - if:
@@ -897,24 +902,11 @@ action:
                               entity_id: !input radiator_thermostats
                             data:
                               temperature: "{{ target_temperature | float }}"
-                  - if:
-                      - condition: template
-                        value_template: "{{ fixed_radiator_thermostats | list | count > 0 }}"
-                    then:
-                      - choose:
-                          - conditions:
+                          - if:
                               - condition: template
-                                value_template: "{{ resume_target_mode == 'off' }}"
-                            sequence:
-                              - action: climate.set_hvac_mode
-                                target:
-                                  entity_id: "{{ fixed_radiator_thermostats }}"
-                                data:
-                                  hvac_mode: "off"
-                          - conditions:
-                              - condition: template
-                                value_template: "{{ resume_target_mode == 'heat' }}"
-                            sequence:
+                                value_template: >
+                                  {{ fixed_radiator_thermostats | list | count > 0 }}
+                            then:
                               - action: climate.set_hvac_mode
                                 target:
                                   entity_id: "{{ fixed_radiator_thermostats }}"
@@ -925,6 +917,28 @@ action:
                                   entity_id: "{{ fixed_radiator_thermostats }}"
                                 data:
                                   temperature: "{{ fixed_radiator_temperature | float }}"
+                  - if:
+                      - condition: template
+                        value_template: "{{ fixed_radiator_thermostats | list | count > 0 and resume_target_mode == 'off' }}"
+                    then:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: "{{ fixed_radiator_thermostats }}"
+                        data:
+                          hvac_mode: "off"
+                  - if:
+                      - condition: template
+                        value_template: >
+                          {{ notify_window_effective and
+                             window_timeout_notified_on }}
+                    then:
+                      - action: notify.notify
+                        data:
+                          title: "🪟 {{ room_name }} — Heating Resumed"
+                          message: >
+                            All windows closed. Heating resumed
+                            ({{ resume_target_mode }}) at {{ target_temperature | round(1) }}°C.
+                            Current: {{ room_temp | round(1) }}°C.
 
       - conditions:
           - condition: template
@@ -943,17 +957,30 @@ action:
                         target:
                           entity_id:
                             - "{{ sha_standby_notified }}"
+                  - variables:
+                      slot_end_time: >
+                        {% set nev = state_attr(trigger.entity_id, 'next_event') %}
+                        {% if nev %}
+                          {{ as_datetime(nev) | as_local | strftime('%H:%M') }}
+                        {% else %}
+                          unknown
+                        {% endif %}
                   - if:
                       - condition: template
                         value_template: "{{ notify_target_effective and not schedule_notified_on }}"
                     then:
                       - action: system_log.write
                         data:
-                          message: >-
-                            SHA [{{ room_name }}] Notification sent: schedule_started
-                            (effective={{ notify_target_effective }},
-                            already_sent={{ schedule_notified_on }}).
-                          level: debug
+                          message: |
+                            SHA [{{ room_name }}] STARTING COMFORT PHASE
+                            Schedule: "{{ state_attr(trigger.entity_id, 'friendly_name') | default('n/a') }}"
+                            Target: {{ comfort_temp }}°C
+                            Active until: {{ slot_end_time }}
+                            Room now: {{ room_temp | round(1) }}°C
+                            {{ 'Target already reached — maintaining.' if target_reached else 'Heating to reach target.' }}
+                            TRVs commanding: {{ radiator_thermostats }}
+                            Fixed TRVs at {{ fixed_radiator_temperature }}°C: {{ fixed_radiator_thermostats if fixed_radiator_thermostats | list | count > 0 else 'none' }}
+                          level: info
                           logger: custom_components.smart_heating_advisor
                       - action: notify.notify
                         data:
@@ -971,7 +998,8 @@ action:
                                | replace('{{ room_name }}', room_name)
                                | replace('{{ room_temp }}', (room_temp | round(1) | string))
                                | replace('{{ schedule_name }}', triggered_name)
-                               | replace('{{ target_temp }}', (comfort_temp | string)) }}
+                               | replace('{{ target_temp }}', (comfort_temp | string))
+                               | replace('{{ slot_end_time }}', slot_end_time) }}
                       - if:
                           - condition: template
                             value_template: "{{ schedule_notified_available }}"
@@ -1087,12 +1115,11 @@ action:
                     {% endif %}
               - action: system_log.write
                 data:
-                  message: >
-                    SHA [{{ room_name }}] Schedule
-                    '{{ trigger.to_state.attributes.friendly_name | default(trigger.entity_id) }}'
-                    {{ 'ON — commanding heat to ' ~ schedule_trigger_temp ~ '°C.' if trigger.to_state.state == 'on'
-                       else 'OFF — returning to default (' ~ default_hvac_mode ~ ', ' ~ default_temp ~ '°C).' }}
-                    Current: {{ room_temp | round(1) }}°C.
+                  message: |
+                    SHA [{{ room_name }}] {{ 'SCHEDULE STARTED' if trigger.to_state.state == 'on' else 'SCHEDULE ENDED' }}
+                    Schedule: "{{ trigger.to_state.attributes.friendly_name | default(trigger.entity_id) }}"
+                    Room: {{ room_temp | round(1) }}°C
+                    {{ 'Commanding heat to ' ~ schedule_trigger_temp ~ '°C (mode: ' ~ schedule_trigger_mode ~ ').' if trigger.to_state.state == 'on' else 'Returning to ' ~ default_hvac_mode ~ ' at ' ~ default_temp ~ '°C.' }}
                   level: info
                   logger: custom_components.smart_heating_advisor
               - choose:
@@ -1169,11 +1196,13 @@ action:
             then:
               - action: system_log.write
                 data:
-                  message: >-
-                    SHA [{{ room_name }}] Manual override on
-                    {{ trigger.to_state.attributes.friendly_name | default(trigger.entity_id) }} —
-                    pausing for {{ override_minutes }} min.
-                    Current: {{ room_temp | round(1) }}°C.
+                  message: |
+                    SHA [{{ room_name }}] MANUAL OVERRIDE ACTIVATED
+                    Changed by user on: {{ trigger.to_state.attributes.friendly_name | default(trigger.entity_id) }}
+                    Duration: {{ override_minutes }} min
+                    Auto-resume at: {{ (now() + timedelta(minutes=override_minutes | int)).strftime('%H:%M') }}
+                    Room: {{ room_temp | round(1) }}°C
+                    SHA heating suspended for {{ override_minutes }} min.
                   level: info
                   logger: custom_components.smart_heating_advisor
               - action: smart_heating_advisor.start_override
@@ -1219,32 +1248,42 @@ action:
                                     'window_airing_start', 'window_airing_end',
                                     'schedule_changed'] }}
         sequence:
+          - action: system_log.write
+            data:
+              message: |
+                SHA [{{ room_name }}] Control loop skipped — override active.
+                Room: {{ room_temp | round(1) }}°C
+              level: debug
+              logger: custom_components.smart_heating_advisor
           - stop: "Override active — skipping control loop."
 
     default:
 
       - action: system_log.write
         data:
-          message: >
-            SHA [{{ room_name }}] Control loop:
-            mode={{ target_mode }}, target={{ target_temperature | round(1) }}°C,
-            room={{ room_temp | round(1) }}°C,
-            in_comfort={{ in_comfort }}, in_preheat={{ in_preheat }},
-            override={{ override_active }}, windows={{ windows_open }},
-            vacation={{ vacation_active }}.
+          message: |
+            SHA [{{ room_name }}] ─── Control loop ──────────────────────────────────────
+            Room: {{ room_temp | round(1) }}°C
+            Mode: {{ target_mode | upper }}  Target: {{ target_temperature | round(1) }}°C
+            Schedule: {{ active_schedule_name if in_comfort_bool else ('Pre-heat for ' ~ preheat_schedule_name if in_preheat_bool else 'none active') }}
+            Pre-heat: {{ 'yes — ' ~ preheat_schedule_mins ~ ' min needed' if in_preheat_bool else 'no' }}
+            Override: {{ 'yes' if override_active_bool else 'no' }}
+            Windows: {{ 'open' if windows_open_bool else 'closed' }}
+            Vacation: {{ 'yes' if vacation_active_bool else 'no' }}
+            Heating rate: {{ heating_rate }}°C/min
+            ──────────────────────────────────────────────────────────────────────────────
           level: debug
           logger: custom_components.smart_heating_advisor
 
       - action: system_log.write
         data:
-          message: >
+          message: |
             SHA [{{ room_name }}] Notification gates:
-            preheat_eff={{ notify_preheat_effective }}, target_eff={{ notify_target_effective }},
-            standby_eff={{ notify_standby_effective }}, window_eff={{ notify_window_effective }},
-            override_eff={{ notify_override_effective }}, in_preheat={{ in_preheat_bool }},
-            windows_open={{ windows_open_bool }}, target_reached={{ target_reached }},
-            preheat_sent={{ states(sha_preheat_notified) }}, target_sent={{ states(sha_target_notified) }},
-            standby_sent={{ states(sha_standby_notified) }}, window_sent={{ states(sha_window_timeout_notified) }}.
+            preheat={{ 'SEND' if (notify_preheat_effective and in_preheat_bool and not preheat_notified_on) else 'skip' }}
+            target={{ 'SEND' if (notify_target_effective and target_reached and not target_notified_on) else 'skip' }}
+            standby={{ 'SEND' if (notify_standby_effective and not in_comfort_bool and not in_preheat_bool and not standby_notified_on) else 'skip' }}
+            window={{ 'SEND' if (notify_window_effective and not window_timeout_notified_on) else 'skip' }}
+            override={{ 'SEND' if notify_override_effective else 'skip' }}
           level: debug
           logger: custom_components.smart_heating_advisor
 
@@ -1272,25 +1311,11 @@ action:
                   entity_id: !input radiator_thermostats
                 data:
                   temperature: "{{ target_temperature | float }}"
-
-      - if:
-          - condition: template
-            value_template: "{{ fixed_radiator_thermostats | list | count > 0 }}"
-        then:
-          - choose:
-              - conditions:
+              - if:
                   - condition: template
-                    value_template: "{{ target_mode == 'off' }}"
-                sequence:
-                  - action: climate.set_hvac_mode
-                    target:
-                      entity_id: "{{ fixed_radiator_thermostats }}"
-                    data:
-                      hvac_mode: "off"
-              - conditions:
-                  - condition: template
-                    value_template: "{{ target_mode == 'heat' }}"
-                sequence:
+                    value_template: >
+                      {{ fixed_radiator_thermostats | list | count > 0 }}
+                then:
                   - action: climate.set_hvac_mode
                     target:
                       entity_id: "{{ fixed_radiator_thermostats }}"
@@ -1304,6 +1329,16 @@ action:
 
       - if:
           - condition: template
+            value_template: "{{ fixed_radiator_thermostats | list | count > 0 and target_mode == 'off' }}"
+        then:
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: "{{ fixed_radiator_thermostats }}"
+            data:
+              hvac_mode: "off"
+
+      - if:
+          - condition: template
             value_template: >
               {{ in_preheat_bool and
                  not windows_open_bool and
@@ -1311,12 +1346,16 @@ action:
         then:
           - action: system_log.write
             data:
-              message: >-
-                SHA [{{ room_name }}] Pre-heat started for
-                '{{ preheat_schedule_name }}' — target {{ preheat_temp }}°C,
-                ETA {{ preheat_schedule_mins }} min,
-                current {{ room_temp | round(1) }}°C,
-                rate {{ heating_rate }}°C/min.
+              message: |
+                SHA [{{ room_name }}] PRE-HEAT STARTED
+                Schedule: "{{ preheat_schedule_name }}"
+                Target: {{ preheat_temp }}°C
+                Room now: {{ room_temp | round(1) }}°C
+                Gap to close: {{ (preheat_temp - room_temp) | round(1) }}°C
+                Heating rate: {{ heating_rate }}°C/min
+                Estimated time needed: {{ preheat_schedule_mins }} min
+                TRVs commanding: {{ radiator_thermostats }}
+                Fixed TRVs: {{ fixed_radiator_thermostats if fixed_radiator_thermostats | list | count > 0 else 'none' }}
               level: info
               logger: custom_components.smart_heating_advisor
 
@@ -1371,11 +1410,14 @@ action:
         then:
           - action: system_log.write
             data:
-              message: >-
-                SHA [{{ room_name }}] Notification sent: preheat_suspended
-                (effective={{ notify_preheat_effective }}, in_preheat={{ in_preheat_bool }},
-                windows_open={{ windows_open_bool }}, already_sent={{ preheat_notified_on }}).
-              level: debug
+              message: |
+                SHA [{{ room_name }}] PRE-HEAT SUSPENDED — window open
+                Schedule: "{{ preheat_schedule_name }}"
+                Target: {{ preheat_temp }}°C
+                Room now: {{ room_temp | round(1) }}°C
+                Open window(s): {{ expand(window_sensors) | selectattr('state', 'in', ['on', 'open']) | map(attribute='name') | list | join(', ') }}
+                Pre-heat will resume when all windows are closed.
+              level: info
               logger: custom_components.smart_heating_advisor
           - action: notify.notify
             data:
@@ -1412,11 +1454,13 @@ action:
         then:
           - action: system_log.write
             data:
-              message: >-
-                SHA [{{ room_name }}] Notification sent: target_reached
-                (effective={{ notify_target_effective }}, target_reached={{ target_reached }},
-                already_sent={{ target_notified_on }}).
-              level: debug
+              message: |
+                SHA [{{ room_name }}] TARGET REACHED
+                Schedule: "{{ active_schedule_name }}"
+                Room: {{ room_temp | round(1) }}°C (target {{ comfort_temp }}°C)
+                Reached at: {{ now().strftime('%H:%M') }}
+                TRVs now holding temperature.
+              level: info
               logger: custom_components.smart_heating_advisor
           - action: notify.notify
             data:
@@ -1459,12 +1503,13 @@ action:
         then:
           - action: system_log.write
             data:
-              message: >-
-                SHA [{{ room_name }}] Notification sent: standby
-                (effective={{ notify_standby_effective }}, in_comfort={{ in_comfort_bool }},
-                in_preheat={{ in_preheat_bool }}, vacation={{ vacation_active_bool }},
-                windows_open={{ windows_open_bool }}, already_sent={{ standby_notified_on }}).
-              level: debug
+              message: |
+                SHA [{{ room_name }}] STANDBY MODE
+                No active schedule.
+                Room: {{ room_temp | round(1) }}°C
+                Maintaining {{ default_temp }}°C standby.
+                {{ 'Heating on.' if default_hvac_mode == 'heat' else 'Heating off.' }}
+              level: info
               logger: custom_components.smart_heating_advisor
           - action: notify.notify
             data:
@@ -1496,11 +1541,12 @@ action:
         then:
           - action: system_log.write
             data:
-              message: >-
-                SHA [{{ room_name }}] Override ended — resuming
-                {{ 'pre-heat' if in_preheat_bool else ('schedule' if in_comfort_bool else 'default') }}
-                ({{ target_mode }}, {{ target_temperature | round(1) }}°C).
-                Current: {{ room_temp | round(1) }}°C.
+              message: |
+                SHA [{{ room_name }}] OVERRIDE ENDED — RESUMING
+                Room: {{ room_temp | round(1) }}°C
+                Resuming: {{ 'comfort phase' if in_comfort_bool else ('pre-heat' if in_preheat_bool else 'standby') }}
+                Target: {{ target_temperature | round(1) }}°C
+                Mode: {{ target_mode | upper }}
               level: info
               logger: custom_components.smart_heating_advisor
 
@@ -1511,8 +1557,7 @@ action:
           - action: system_log.write
             data:
               message: >-
-                SHA [{{ room_name }}] Notification sent: override_ended
-                (effective={{ notify_override_effective }}, trigger={{ trigger.id }}).
+                SHA [{{ room_name }}] Notification sent: override_ended.
               level: debug
               logger: custom_components.smart_heating_advisor
           - action: notify.notify
@@ -1537,6 +1582,15 @@ action:
               {{ vacation_active_bool and
                  not vacation_notified_on }}
         then:
+          - action: system_log.write
+            data:
+              message: |
+                SHA [{{ room_name }}] VACATION MODE ACTIVE
+                Behavior: {{ vacation_mode | upper }}
+                {{ 'Frost protection at ' ~ vacation_temperature ~ '°C.' if vacation_mode == 'frost' else 'Heating off.' }}
+                Room: {{ room_temp | round(1) }}°C
+              level: info
+              logger: custom_components.smart_heating_advisor
           - action: notify.notify
             data:
               title: "🏖️ {{ room_name }} — Vacation Mode Active"

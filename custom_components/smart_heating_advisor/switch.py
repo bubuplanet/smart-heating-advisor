@@ -131,6 +131,9 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
         if entity_category is not None:
             self._attr_entity_category = entity_category
 
+        if purpose.endswith("_notifications_enabled") or entity_category == EntityCategory.DIAGNOSTIC:
+            self._attr_entity_registry_enabled_default = False
+
     @property
     def device_info(self) -> dict:
         return {

@@ -872,14 +872,16 @@ from(bucket: "{bucket}")
             load_prompt,
             "daily_analysis.md",
             {
+                # Current variable names (new bundled prompts)
                 "room_name": room.room_name,
-                "heating_rate": current_rate,
+                "heating_rate": round(current_rate, 3),
                 "analysis_days": 7,
                 "schedule_name": primary["name"],
                 "target_temp": primary["target_temp"],
                 "schedule_time": primary["schedule_time"],
                 "schedule_lines": build_schedule_lines(schedules),
                 "sessions_table": build_sessions_table(analysis),
+                "sessions_text": build_sessions_text(analysis),   # also for old prompts
                 "sessions_total": analysis.get("sessions_total", 0),
                 "sessions_on_target": analysis.get("sessions_on_target", 0),
                 "sessions_with_miss": analysis.get("sessions_with_miss", 0),
@@ -890,6 +892,12 @@ from(bucket: "{bucket}")
                 "tomorrow_min": weather["tomorrow_min"],
                 "tomorrow_max": weather["tomorrow_max"],
                 "season": season,
+                # Backward-compat aliases for old /config prompt files
+                "current_rate": round(current_rate, 3),
+                "days_analyzed": analysis.get("days_analyzed", 0),
+                "avg_rate": str(analysis.get("avg_rate") or "n/a"),
+                "success_rate": analysis.get("success_rate", 0),
+                "avg_start_time": analysis.get("avg_start_time") or "n/a",
             },
             self.hass.config.config_dir,
         )
@@ -1045,8 +1053,9 @@ from(bucket: "{bucket}")
             load_prompt,
             "weekly_analysis.md",
             {
+                # Current variable names (new bundled prompts)
                 "room_name": room.room_name,
-                "heating_rate": current_rate,
+                "heating_rate": round(current_rate, 3),
                 "analysis_days": 30,
                 "schedule_name": primary["name"],
                 "target_temp": primary["target_temp"],
@@ -1061,9 +1070,15 @@ from(bucket: "{bucket}")
                 "miss_trend": analysis.get("miss_trend", "stable"),
                 "consecutive_misses": analysis.get("consecutive_misses", 0),
                 "rate_was_adjusted": rate_was_adjusted,
-                "previous_rate": previous_rate,
+                "previous_rate": round(previous_rate, 3),
                 "avg_outside_temp": weather["outside_temp"],
                 "season": season,
+                # Backward-compat aliases for old /config prompt files
+                "current_rate": round(current_rate, 3),
+                "days_analyzed": analysis.get("days_analyzed", 0),
+                "avg_rate": str(analysis.get("avg_rate") or "n/a"),
+                "success_rate": analysis.get("success_rate", 0),
+                "avg_start_time": analysis.get("avg_start_time") or "n/a",
             },
             self.hass.config.config_dir,
         )

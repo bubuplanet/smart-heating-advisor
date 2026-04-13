@@ -149,26 +149,27 @@ async def async_install_blueprint(hass: HomeAssistant) -> dict:
 def _do_copy_prompts(source_dir: Path, dest_dir: Path) -> list[str]:
     """Copy bundled prompt files to the user-editable location.
 
-    Only copies files that do not already exist at the destination so that
-    user edits are never overwritten. Runs in executor (blocking I/O).
+    Always overwrites existing files so that prompt changes made in the
+    integration are picked up on the next HA restart. To customise a prompt
+    permanently, add the modified file to a git-ignored location and restore
+    it after each update.
 
-    Returns the list of filenames that were newly copied.
+    Runs in executor (blocking I/O).
+    Returns the list of filenames that were copied or updated.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     copied: list[str] = []
     for src in source_dir.glob("*.md"):
         dst = dest_dir / src.name
-        if not dst.exists():
-            shutil.copy2(src, dst)
-            copied.append(src.name)
-            _LOGGER.info("SHA prompts: installed %s → %s", src.name, dst)
-        else:
-            _LOGGER.debug("SHA prompts: %s already exists — skipping (preserving user edits)", dst)
+        action = "updated" if dst.exists() else "installed"
+        shutil.copy2(src, dst)
+        copied.append(src.name)
+        _LOGGER.info("SHA prompts: %s %s → %s", action, src.name, dst)
     return copied
 
 
 async def async_install_prompts(hass: HomeAssistant) -> list[str]:
-    """Copy bundled prompts to /config/smart_heating_advisor/prompts/ if not present."""
+    """Copy bundled prompts to /config/smart_heating_advisor/prompts/."""
     dest_dir = Path(hass.config.config_dir) / "smart_heating_advisor" / "prompts"
     return await hass.async_add_executor_job(_do_copy_prompts, PROMPTS_SOURCE_DIR, dest_dir)
 

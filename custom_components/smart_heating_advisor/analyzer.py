@@ -5,6 +5,11 @@ from datetime import datetime
 
 _LOGGER = logging.getLogger(__name__)
 
+# Fix 2: minimum thresholds for a valid pre-heat / heating session
+_MIN_SESSION_RATE = 0.05          # °C/min — below this is background drift
+_MIN_SESSION_GAIN = 1.5           # °C — minimum temperature rise
+_MIN_SESSION_DURATION_MIN = 10    # minutes — drift events are hours-long, real heat is fast
+
 
 def get_season(month: int) -> str:
     """Return season name based on month."""
@@ -130,10 +135,41 @@ def build_weekly_accuracy_summary(analysis: dict) -> str:
     return lines
 
 
+def _lookup_temp_at_time(
+    readings: list[tuple],
+    date_str: str,
+    time_hhmm: str,
+    window_minutes: int = 30,
+) -> float | None:
+    """Find the temperature reading closest to time_hhmm on date_str.
+
+    Returns None when no reading falls within window_minutes of the target time.
+    """
+    try:
+        h, m = map(int, time_hhmm.split(":"))
+    except (ValueError, AttributeError):
+        return None
+
+    target_minutes = h * 60 + m
+    best_temp = None
+    best_diff = float("inf")
+
+    for ts, temp in readings:
+        if ts.strftime("%Y-%m-%d") != date_str:
+            continue
+        diff = abs(ts.hour * 60 + ts.minute - target_minutes)
+        if diff < best_diff and diff <= window_minutes:
+            best_diff = diff
+            best_temp = temp
+
+    return best_temp
+
+
 def analyze_heating_sessions(
     readings: list[tuple],
     schedules: list[dict] | None = None,
     fallback_temp: float = 21.0,
+    schedule_time_hhmm: str | None = None,
 ) -> dict:
     """Analyze temperature readings to extract heating session statistics.
 
@@ -141,17 +177,15 @@ def analyze_heating_sessions(
         readings: list of (datetime, float) temperature tuples
         schedules: list of dicts with keys: name, next_event, target_temp
         fallback_temp: default target temp if no schedules provided
+        schedule_time_hhmm: HH:MM of the primary schedule (e.g. "07:00").
+            When provided, ``temp_at_schedule_start`` is looked up from the
+            readings at that time on each session date (Fix 3).  Falls back
+            to the end-of-ramp temperature when no reading is found within
+            ±30 minutes of the schedule time.
 
     Returns dict with sessions, avg_rate, success_rate, avg_start_time,
     and target accuracy fields: sessions_total, sessions_with_miss,
     sessions_on_target, average_miss, consecutive_misses, miss_trend.
-
-    Note on temp_at_schedule_start:
-        Historical schedule event times are not available in InfluxDB sensor
-        data. ``temp_at_schedule_start`` is the temperature reached at the
-        end of the detected heating ramp — the closest proxy for "was the
-        room warm enough when the schedule activated?". A miss of 0 means
-        pre-heat worked perfectly; positive miss means room was too cold.
     """
     if len(readings) < 4:
         return {
@@ -209,18 +243,36 @@ def analyze_heating_sessions(
                 duration_min = (session_end - session_start).total_seconds() / 60
                 temp_gained = session_end_temp - session_start_temp
 
-                if duration_min > 5 and temp_gained > 1.0:
+                if (
+                    duration_min >= _MIN_SESSION_DURATION_MIN
+                    and temp_gained >= _MIN_SESSION_GAIN
+                ):
                     rate = temp_gained / duration_min
-                    # temp_at_schedule_start: best available proxy from InfluxDB —
-                    # the temperature reached at the end of the heating ramp.
-                    temp_at_schedule_start = round(session_end_temp, 1)
+
+                    # Fix 2: reject background drift — real pre-heat has rate ≥ 0.05°C/min
+                    if rate < _MIN_SESSION_RATE:
+                        consecutive_rises = 0
+                        session_start = None
+                        session_start_temp = None
+                        continue
+
+                    date_str = session_start.strftime("%Y-%m-%d")
+
+                    # Fix 3: look up actual temperature at schedule start time from readings.
+                    # Falls back to end-of-ramp temperature when no reading is available.
+                    if schedule_time_hhmm:
+                        looked_up = _lookup_temp_at_time(readings, date_str, schedule_time_hhmm)
+                        temp_at_schedule_start = round(looked_up, 1) if looked_up is not None else round(session_end_temp, 1)
+                    else:
+                        temp_at_schedule_start = round(session_end_temp, 1)
+
                     target_miss = round(primary_target - temp_at_schedule_start, 1)
                     # on-target = within 0.5°C of the comfort temperature
                     target_reached = abs(target_miss) <= 0.5
 
                     sessions.append(
                         {
-                            "date": session_start.strftime("%Y-%m-%d"),
+                            "date": date_str,
                             "start_time": session_start.strftime("%H:%M"),
                             "start_temp": round(session_start_temp, 1),
                             "end_temp": round(session_end_temp, 1),

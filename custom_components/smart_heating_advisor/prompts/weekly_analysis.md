@@ -1,6 +1,7 @@
 # SHA — Weekly Analysis Prompt
-# Variables: {room_name}, {heating_rate}, {analysis_days}, {schedule_lines},
-#            {sessions_text}, {weekly_accuracy_summary},
+# Variables: {room_name}, {heating_rate}, {analysis_days},
+#            {schedule_name}, {target_temp}, {schedule_time},
+#            {schedule_lines}, {sessions_text}, {weekly_accuracy_summary},
 #            {weekly_on_target}, {weekly_sessions_total}, {weekly_avg_temp},
 #            {weekly_average_miss}, {miss_trend}, {consecutive_misses},
 #            {rate_was_adjusted}, {previous_rate}, {avg_outside_temp}, {season}
@@ -12,6 +13,11 @@ Your audience is the homeowner — use plain, non-technical language.
 ## Room: {room_name}
 ## Current heating rate: {heating_rate}°C/min
 ## Analysis period: last {analysis_days} days
+
+## Primary Schedule
+- Schedule: {schedule_name}
+- Target temperature: {target_temp}°C
+- Schedule start time: {schedule_time}
 
 ## Active Schedules
 {schedule_lines}

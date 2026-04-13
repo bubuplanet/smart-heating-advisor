@@ -73,6 +73,54 @@ def _mask_secret(value: str, visible: int = 4) -> str:
     return "*" * (len(value) - visible) + value[-visible:]
 
 
+def _do_read_automation_inputs(config_dir: str, room_name: str) -> list[str]:
+    """Read schedule entity IDs from automations.yaml for a given room.
+
+    This is a blocking function — call via async_add_executor_job.
+    Returns an empty list when automations.yaml is missing, unreadable, or
+    when no matching automation is found.
+    """
+    import os
+    import yaml
+
+    automations_file = os.path.join(config_dir, "automations.yaml")
+    try:
+        with open(automations_file) as fh:
+            automations = yaml.safe_load(fh) or []
+    except Exception as exc:
+        _LOGGER.debug("Could not read automations.yaml: %s", exc)
+        return []
+
+    if not isinstance(automations, list):
+        return []
+
+    room_id = _room_name_to_id(room_name)
+
+    for automation in automations:
+        if not isinstance(automation, dict):
+            continue
+        blueprint = automation.get("use_blueprint", {})
+        if not isinstance(blueprint, dict):
+            continue
+        inputs = blueprint.get("input", {})
+        if not isinstance(inputs, dict):
+            continue
+
+        # Match by room_name field inside blueprint inputs
+        auto_room = inputs.get("room_name", "")
+        if _room_name_to_id(str(auto_room)) != room_id:
+            continue
+
+        schedules = inputs.get("schedules", [])
+        if isinstance(schedules, str):
+            return [schedules] if schedules.strip() else []
+        if isinstance(schedules, list):
+            return [str(s).strip() for s in schedules if str(s).strip()]
+        return []
+
+    return []
+
+
 class RoomConfig:
     """Holds configuration for a single room discovered from blueprint automations."""
 
@@ -438,6 +486,101 @@ from(bucket: "{bucket}")
             )
         return schedules
 
+    async def _async_get_schedule_info_with_fallback(
+        self, room: RoomConfig
+    ) -> list[dict]:
+        """Return schedule info for the room, falling back to automations.yaml.
+
+        When the room registry has no schedule entities (common because the
+        blueprint service call registers rooms with schedules=[]), this reads
+        entity IDs from automations.yaml and resolves their HA states.
+        """
+        schedules = self._get_schedule_info(room)
+        if schedules:
+            return schedules
+
+        _LOGGER.debug(
+            "[%s] Registry has no schedule entities — reading automations.yaml",
+            room.room_name,
+        )
+        entity_ids = await self.hass.async_add_executor_job(
+            _do_read_automation_inputs,
+            self.hass.config.config_dir,
+            room.room_name,
+        )
+
+        if not entity_ids:
+            _LOGGER.debug(
+                "[%s] No schedule entities found in automations.yaml", room.room_name
+            )
+            return []
+
+        _LOGGER.info(
+            "[%s] Found %d schedule(s) from automations.yaml: %s",
+            room.room_name,
+            len(entity_ids),
+            entity_ids,
+        )
+
+        result = []
+        for entity_id in entity_ids:
+            state = self.hass.states.get(entity_id)
+            if state is None:
+                _LOGGER.debug(
+                    "[%s] Schedule entity %s not in HA states", room.room_name, entity_id
+                )
+                # Entity not yet loaded — use entity_id as name so regex can
+                # still extract a temperature if the name encodes it.
+                result.append(
+                    {
+                        "entity_id": entity_id,
+                        "name": entity_id,
+                        "state": "unknown",
+                        "next_event": None,
+                    }
+                )
+                continue
+            result.append(
+                {
+                    "entity_id": entity_id,
+                    "name": state.attributes.get("friendly_name", entity_id),
+                    "state": state.state,
+                    "next_event": state.attributes.get("next_event"),
+                }
+            )
+
+        return result
+
+    def _primary_schedule_info(self, schedules: list[dict]) -> dict:
+        """Return name, target_temp, and schedule_time for the primary schedule.
+
+        The primary schedule is the one with the highest target temperature,
+        which is extracted from the schedule entity's friendly name using the
+        same regex as the blueprint (e.g. "Morning Shower 26C" → 26°C).
+        """
+        from .analyzer import extract_temp_from_schedule_name
+
+        if not schedules:
+            return {"name": "Default", "target_temp": 21.0, "schedule_time": "n/a"}
+
+        best = max(
+            schedules,
+            key=lambda s: extract_temp_from_schedule_name(s.get("name", ""), 21.0),
+        )
+        name = best.get("name", "Default")
+        target_temp = extract_temp_from_schedule_name(name, 21.0)
+
+        schedule_time = "n/a"
+        next_event = best.get("next_event")
+        if next_event:
+            try:
+                dt = datetime.fromisoformat(str(next_event).replace("Z", "+00:00"))
+                schedule_time = dt.strftime("%H:%M")
+            except (ValueError, TypeError):
+                pass
+
+        return {"name": name, "target_temp": target_temp, "schedule_time": schedule_time}
+
     # ──────────────────────────────────────────────────────────────────
     # Weather
     # ──────────────────────────────────────────────────────────────────
@@ -685,10 +828,19 @@ from(bucket: "{bucket}")
             )
             return
 
-        schedules = self._get_schedule_info(room)
+        schedules = await self._async_get_schedule_info_with_fallback(room)
+        primary = self._primary_schedule_info(schedules)
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("[%s] Schedules found: %d — %s", room.room_name, len(schedules), [s["name"] for s in schedules])
-        analysis = analyze_heating_sessions(readings, schedules)
+            _LOGGER.debug(
+                "[%s] Schedules found: %d — %s | primary: %s target=%.1f°C time=%s",
+                room.room_name, len(schedules), [s["name"] for s in schedules],
+                primary["name"], primary["target_temp"], primary["schedule_time"],
+            )
+        analysis = analyze_heating_sessions(
+            readings,
+            schedules,
+            schedule_time_hhmm=primary["schedule_time"] if primary["schedule_time"] != "n/a" else None,
+        )
         _LOGGER.debug(
             "[%s] Analysis: %d session(s), success_rate=%s%%, avg_rate=%s",
             room.room_name,
@@ -723,6 +875,9 @@ from(bucket: "{bucket}")
                 "room_name": room.room_name,
                 "heating_rate": current_rate,
                 "analysis_days": 7,
+                "schedule_name": primary["name"],
+                "target_temp": primary["target_temp"],
+                "schedule_time": primary["schedule_time"],
                 "schedule_lines": build_schedule_lines(schedules),
                 "sessions_table": build_sessions_table(analysis),
                 "sessions_total": analysis.get("sessions_total", 0),
@@ -859,8 +1014,13 @@ from(bucket: "{bucket}")
             )
             return
 
-        schedules = self._get_schedule_info(room)
-        analysis = analyze_heating_sessions(readings, schedules)
+        schedules = await self._async_get_schedule_info_with_fallback(room)
+        primary = self._primary_schedule_info(schedules)
+        analysis = analyze_heating_sessions(
+            readings,
+            schedules,
+            schedule_time_hhmm=primary["schedule_time"] if primary["schedule_time"] != "n/a" else None,
+        )
 
         state = self.hass.states.get(room.heating_rate_helper)
         current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
@@ -888,6 +1048,9 @@ from(bucket: "{bucket}")
                 "room_name": room.room_name,
                 "heating_rate": current_rate,
                 "analysis_days": 30,
+                "schedule_name": primary["name"],
+                "target_temp": primary["target_temp"],
+                "schedule_time": primary["schedule_time"],
                 "schedule_lines": build_schedule_lines(schedules),
                 "sessions_text": build_sessions_text(analysis, weekly=True),
                 "weekly_accuracy_summary": build_weekly_accuracy_summary(analysis),

@@ -1,13 +1,15 @@
 # SHA — Daily Analysis Prompt
-# Variables: {room_name}, {heating_rate}, {analysis_days}, {schedule_lines},
-#            {sessions_table}, {sessions_total}, {sessions_on_target},
-#            {sessions_with_miss}, {average_miss}, {consecutive_misses},
-#            {miss_trend}, {outside_temp}, {tomorrow_min}, {tomorrow_max}, {season}
+# Variables: {room_name}, {heating_rate}, {analysis_days},
+#            {schedule_name}, {target_temp}, {schedule_time},
+#            {schedule_lines}, {sessions_table}, {sessions_total},
+#            {sessions_on_target}, {sessions_with_miss}, {average_miss},
+#            {consecutive_misses}, {miss_trend},
+#            {outside_temp}, {tomorrow_min}, {tomorrow_max}, {season}
 # Called by: coordinator.py _async_run_daily_analysis_for_room
 #
 # Note on "temp_reached": this is the temperature the room achieved at the
-# end of the detected heating ramp — the closest available proxy from
-# InfluxDB sensor history for "was the room warm enough at schedule start?".
+# schedule start time (looked up from InfluxDB readings), or the end of the
+# detected heating ramp when no reading is available at that time.
 # Miss = target_temp - temp_reached. Positive = room too cold. Negative = overshot.
 
 You are a smart home heating advisor. Your task is to evaluate whether the
@@ -18,12 +20,17 @@ on time, and to recommend a heating rate correction if needed.
 ## Current heating rate: {heating_rate}°C/min
 ## Analysis period: last {analysis_days} days
 
+## Primary Schedule
+- Schedule: {schedule_name}
+- Target temperature: {target_temp}°C
+- Schedule start time: {schedule_time}
+
 ## Active Schedules
 {schedule_lines}
 
 ## Heating Session Accuracy
 Each row shows one detected heating session.
-"Reached" = temperature at end of heating ramp (proxy for temp at schedule start).
+"Reached" = room temperature at {schedule_time} (schedule start time), or at end of heating ramp when no reading is available.
 "Miss" = target_temp − temp_reached. Positive = room was too cold. Negative = overshot.
 
 {sessions_table}

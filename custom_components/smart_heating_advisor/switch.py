@@ -30,18 +30,15 @@ async def async_setup_entry(
     coordinator: SmartHeatingCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     boolean_defs = [
-        ("airing_mode",                    "Airing Mode",                      "mdi:window-open", False, None),
-        ("preheat_notifications_enabled",  "Preheat Notifications Enabled",     "mdi:bell-ring",   True,  EntityCategory.CONFIG),
-        ("target_notifications_enabled",   "Target Notifications Enabled",      "mdi:check-circle", True, EntityCategory.CONFIG),
-        ("standby_notifications_enabled",  "Standby Notifications Enabled",     "mdi:sleep",       True,  EntityCategory.CONFIG),
-        ("window_notifications_enabled",   "Window Notifications Enabled",      "mdi:window-open", True,  EntityCategory.CONFIG),
-        ("override_notifications_enabled", "Override Notifications Enabled",    "mdi:hand-back-right", True, EntityCategory.CONFIG),
-        ("preheat_notified",               "Preheat Notification Sent",         "mdi:bell",        False, EntityCategory.DIAGNOSTIC),
-        ("schedule_notified",              "Schedule Notification Sent",        "mdi:bell-check",  False, EntityCategory.DIAGNOSTIC),
-        ("target_notified",                "Target Notification Sent",          "mdi:check-circle", False, EntityCategory.DIAGNOSTIC),
-        ("standby_notified",               "Standby Notification Sent",         "mdi:sleep",       False, EntityCategory.DIAGNOSTIC),
-        ("vacation_notified",              "Vacation Notification Sent",        "mdi:beach",       False, EntityCategory.DIAGNOSTIC),
-        ("window_timeout_notified",        "Window Timeout Notification Sent",  "mdi:window-open", False, EntityCategory.DIAGNOSTIC),
+        ("airing_mode",                    "Airing Mode",                       "mdi:window-open",       False, None),
+        ("preheat_notifications_enabled",  "Preheat Notifications Enabled",     "mdi:bell-ring",         False, EntityCategory.CONFIG),
+        ("schedule_notifications_enabled", "Schedule Notifications Enabled",    "mdi:calendar-check",    False, EntityCategory.CONFIG),
+        ("window_notifications_enabled",   "Window Notifications Enabled",      "mdi:window-open",       False, EntityCategory.CONFIG),
+        ("override_notifications_enabled", "Override Notifications Enabled",    "mdi:hand-back-right",   False, EntityCategory.CONFIG),
+        ("preheat_notified",               "Preheat Notification Sent",         "mdi:bell",              False, EntityCategory.DIAGNOSTIC),
+        ("schedule_notified",              "Schedule Notification Sent",        "mdi:bell-check",        False, EntityCategory.DIAGNOSTIC),
+        ("standby_notified",               "Schedule Ended Notification Sent",  "mdi:calendar-remove",   False, EntityCategory.DIAGNOSTIC),
+        ("window_timeout_notified",        "Window Timeout Notification Sent",  "mdi:window-open",       False, EntityCategory.DIAGNOSTIC),
     ]
 
     async def _create_entities(_event=None) -> None:

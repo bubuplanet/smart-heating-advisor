@@ -201,7 +201,6 @@ def _do_create_room_automation(
         },
         "mode": "queued",
         "max": 10,
-        "enabled": False,
     }
     automations.append(new_automation)
 

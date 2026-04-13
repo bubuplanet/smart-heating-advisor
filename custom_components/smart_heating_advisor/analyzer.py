@@ -33,6 +33,54 @@ def extract_temp_from_schedule_name(name: str, fallback: float = 21.0) -> float:
     return fallback
 
 
+def build_schedule_lines(
+    schedules: list[dict],
+    fallback_temp: float = 21.0,
+) -> str:
+    """Build the schedule summary block for Ollama prompts.
+
+    Returns a multi-line string with one bullet per schedule, or a single
+    default line when no schedules are provided.
+    """
+    lines = ""
+    for s in schedules:
+        temp = extract_temp_from_schedule_name(s.get("name", ""), fallback_temp)
+        lines += f"  - {s.get('name', 'Unknown')}: target {temp}°C\n"
+    if not lines:
+        lines = f"  - Default: target {fallback_temp}°C\n"
+    return lines
+
+
+def build_sessions_text(analysis: dict, weekly: bool = False) -> str:
+    """Build the heating-sessions block for Ollama prompts.
+
+    Args:
+        analysis: dict returned by :func:`analyze_heating_sessions`.
+        weekly:   When True uses the compact weekly format; otherwise the
+                  daily format with status emoji and duration.
+    """
+    text = ""
+    for s in analysis.get("sessions", []):
+        if weekly:
+            reached = "✅" if s["target_reached"] else "❌"
+            text += (
+                f"  - {s['date']} {reached}: "
+                f"{s['start_temp']}°C → {s['end_temp']}°C, "
+                f"rate: {s['rate']}°C/min\n"
+            )
+        else:
+            reached = "✅" if s["target_reached"] else "❌"
+            text += (
+                f"  - {s['date']} {reached}: started {s['start_time']} "
+                f"at {s['start_temp']}°C, reached {s['end_temp']}°C "
+                f"in {s['duration_min']:.0f} min "
+                f"(rate: {s['rate']}°C/min, target: {s['target_temp']}°C)\n"
+            )
+    if not text:
+        text = "  No heating sessions found.\n"
+    return text
+
+
 def analyze_heating_sessions(
     readings: list[tuple],
     schedules: list[dict] | None = None,
@@ -154,140 +202,3 @@ def analyze_heating_sessions(
         "avg_start_time": avg_start_time,
         "days_analyzed": len(sessions),
     }
-
-
-def build_daily_prompt(
-    room_name: str,
-    current_rate: float,
-    analysis: dict,
-    schedules: list[dict],
-    outside_temp: float,
-    tomorrow_min: float,
-    tomorrow_max: float,
-    season: str,
-    fallback_temp: float = 21.0,
-) -> str:
-    """Build the daily analysis prompt for Ollama."""
-
-    # Build schedule summary
-    schedule_lines = ""
-    for s in schedules:
-        temp = extract_temp_from_schedule_name(s.get("name", ""), fallback_temp)
-        schedule_lines += f"  - {s.get('name', 'Unknown')}: target {temp}°C\n"
-    if not schedule_lines:
-        schedule_lines = f"  - Default: target {fallback_temp}°C\n"
-
-    # Build session summary
-    sessions_text = ""
-    for s in analysis.get("sessions", []):
-        reached = "✅" if s["target_reached"] else "❌"
-        sessions_text += (
-            f"  - {s['date']} {reached}: started {s['start_time']} "
-            f"at {s['start_temp']}°C, reached {s['end_temp']}°C "
-            f"in {s['duration_min']:.0f} min "
-            f"(rate: {s['rate']}°C/min, target: {s['target_temp']}°C)\n"
-        )
-    if not sessions_text:
-        sessions_text = "  No heating sessions found in last 7 days.\n"
-
-    prompt = f"""You are a smart home heating advisor. Analyze heating data for the {room_name} and suggest an optimal heating rate.
-
-## Room: {room_name}
-## Current heating_rate: {current_rate} °C/min
-
-## Active Schedules
-{schedule_lines}
-
-## Last 7 Days Heating Sessions
-- Average heating rate observed: {analysis.get('avg_rate', 'unknown')} °C/min
-- Success rate (target reached): {analysis.get('success_rate', 0)}%
-- Average pre-heat start time: {analysis.get('avg_start_time', 'unknown')}
-- Sessions analyzed: {analysis.get('days_analyzed', 0)}
-
-Daily breakdown:
-{sessions_text}
-
-## Weather Context
-- Current outside temperature: {outside_temp}°C
-- Tomorrow forecast: min {tomorrow_min}°C / max {tomorrow_max}°C
-- Season: {season}
-
-## Your Task
-1. If success rate is below 80% → increase heating_rate (heats up faster)
-2. If heating consistently starts more than 45 min before schedule → decrease heating_rate (too conservative)
-3. Consider outside temperature: colder outside = may need higher rate
-4. Keep heating_rate between 0.05 and 0.30
-5. Only suggest meaningful changes (>0.01 difference)
-
-Respond ONLY with a valid JSON object, no other text:
-{{
-  "heating_rate": 0.13,
-  "reasoning": "brief explanation under 100 words",
-  "confidence": "high"
-}}"""
-
-    return prompt
-
-
-def build_weekly_prompt(
-    room_name: str,
-    current_rate: float,
-    analysis: dict,
-    schedules: list[dict],
-    avg_outside_temp: float,
-    season: str,
-    fallback_temp: float = 21.0,
-) -> str:
-    """Build the weekly deep analysis prompt for Ollama."""
-
-    schedule_lines = ""
-    for s in schedules:
-        temp = extract_temp_from_schedule_name(s.get("name", ""), fallback_temp)
-        schedule_lines += f"  - {s.get('name', 'Unknown')}: target {temp}°C\n"
-    if not schedule_lines:
-        schedule_lines = f"  - Default: target {fallback_temp}°C\n"
-
-    sessions_text = ""
-    for s in analysis.get("sessions", []):
-        reached = "✅" if s["target_reached"] else "❌"
-        sessions_text += (
-            f"  - {s['date']} {reached}: {s['start_temp']}°C → "
-            f"{s['end_temp']}°C, rate: {s['rate']}°C/min\n"
-        )
-
-    prompt = f"""You are a smart home heating advisor doing a weekly deep analysis for the {room_name}.
-
-## Room: {room_name}
-## Current heating_rate: {current_rate} °C/min
-
-## Active Schedules
-{schedule_lines}
-
-## Last 30 Days Performance
-- Sessions analyzed: {analysis.get('days_analyzed', 0)}
-- Average heating rate observed: {analysis.get('avg_rate', 'unknown')} °C/min
-- Overall success rate: {analysis.get('success_rate', 0)}%
-- Average pre-heat start time: {analysis.get('avg_start_time', 'unknown')}
-- Average outside temperature: {avg_outside_temp}°C
-- Season: {season}
-
-Recent sessions:
-{sessions_text}
-
-## Your Task
-Provide a comprehensive weekly assessment:
-1. Was the heating rate appropriate this week?
-2. Any patterns noticed (e.g. worse on very cold days)?
-3. Recommended heating_rate adjustment
-4. Confidence level
-5. A 2-3 sentence summary for the homeowner
-
-Respond ONLY with a valid JSON object:
-{{
-  "heating_rate": 0.13,
-  "reasoning": "detailed explanation under 200 words",
-  "confidence": "high",
-  "weekly_report": "2-3 sentence summary for the homeowner"
-}}"""
-
-    return prompt

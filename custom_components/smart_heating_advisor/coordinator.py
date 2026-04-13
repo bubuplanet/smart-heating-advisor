@@ -30,10 +30,11 @@ from .const import (
 from .ollama import OllamaClient
 from .analyzer import (
     analyze_heating_sessions,
-    build_daily_prompt,
-    build_weekly_prompt,
+    build_schedule_lines,
+    build_sessions_text,
     get_season,
 )
+from .prompt_loader import load_prompt
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -705,15 +706,24 @@ from(bucket: "{bucket}")
         current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
         _LOGGER.debug("[%s] Current heating rate: %.3f °C/min", room.room_name, current_rate)
 
-        prompt = build_daily_prompt(
-            room_name=room.room_name,
-            current_rate=current_rate,
-            analysis=analysis,
-            schedules=schedules,
-            outside_temp=weather["outside_temp"],
-            tomorrow_min=weather["tomorrow_min"],
-            tomorrow_max=weather["tomorrow_max"],
-            season=season,
+        prompt = await self.hass.async_add_executor_job(
+            load_prompt,
+            "daily_analysis.md",
+            {
+                "room_name": room.room_name,
+                "current_rate": current_rate,
+                "schedule_lines": build_schedule_lines(schedules),
+                "avg_rate": analysis.get("avg_rate", "unknown"),
+                "success_rate": analysis.get("success_rate", 0),
+                "avg_start_time": analysis.get("avg_start_time", "unknown"),
+                "days_analyzed": analysis.get("days_analyzed", 0),
+                "sessions_text": build_sessions_text(analysis),
+                "outside_temp": weather["outside_temp"],
+                "tomorrow_min": weather["tomorrow_min"],
+                "tomorrow_max": weather["tomorrow_max"],
+                "season": season,
+            },
+            self.hass.config.config_dir,
         )
 
         response = await self.ollama.async_generate(prompt)
@@ -830,13 +840,22 @@ from(bucket: "{bucket}")
         state = self.hass.states.get(room.heating_rate_helper)
         current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
 
-        prompt = build_weekly_prompt(
-            room_name=room.room_name,
-            current_rate=current_rate,
-            analysis=analysis,
-            schedules=schedules,
-            avg_outside_temp=weather["outside_temp"],
-            season=season,
+        prompt = await self.hass.async_add_executor_job(
+            load_prompt,
+            "weekly_analysis.md",
+            {
+                "room_name": room.room_name,
+                "current_rate": current_rate,
+                "schedule_lines": build_schedule_lines(schedules),
+                "days_analyzed": analysis.get("days_analyzed", 0),
+                "avg_rate": analysis.get("avg_rate", "unknown"),
+                "success_rate": analysis.get("success_rate", 0),
+                "avg_start_time": analysis.get("avg_start_time", "unknown"),
+                "avg_outside_temp": weather["outside_temp"],
+                "season": season,
+                "sessions_text": build_sessions_text(analysis, weekly=True),
+            },
+            self.hass.config.config_dir,
         )
 
         response = await self.ollama.async_generate(prompt)

@@ -46,6 +46,7 @@ def _apply_debug_logging(enabled: bool) -> None:
 
 
 BLUEPRINT_SOURCE = Path(__file__).parent / BLUEPRINT_RELATIVE_PATH / BLUEPRINT_FILENAME
+PROMPTS_SOURCE_DIR = Path(__file__).parent / "prompts"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -139,6 +140,37 @@ async def async_install_blueprint(hass: HomeAssistant) -> dict:
     )
     _LOGGER.info("SHA Blueprint: %s", result["message"])
     return result
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Prompt installation
+# ──────────────────────────────────────────────────────────────────────
+
+def _do_copy_prompts(source_dir: Path, dest_dir: Path) -> list[str]:
+    """Copy bundled prompt files to the user-editable location.
+
+    Only copies files that do not already exist at the destination so that
+    user edits are never overwritten. Runs in executor (blocking I/O).
+
+    Returns the list of filenames that were newly copied.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[str] = []
+    for src in source_dir.glob("*.md"):
+        dst = dest_dir / src.name
+        if not dst.exists():
+            shutil.copy2(src, dst)
+            copied.append(src.name)
+            _LOGGER.info("SHA prompts: installed %s → %s", src.name, dst)
+        else:
+            _LOGGER.debug("SHA prompts: %s already exists — skipping (preserving user edits)", dst)
+    return copied
+
+
+async def async_install_prompts(hass: HomeAssistant) -> list[str]:
+    """Copy bundled prompts to /config/smart_heating_advisor/prompts/ if not present."""
+    dest_dir = Path(hass.config.config_dir) / "smart_heating_advisor" / "prompts"
+    return await hass.async_add_executor_job(_do_copy_prompts, PROMPTS_SOURCE_DIR, dest_dir)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -442,6 +474,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Install / upgrade blueprint
     blueprint_result = await async_install_blueprint(hass)
+
+    # Copy bundled prompt files to /config/smart_heating_advisor/prompts/
+    # (only if not already present — preserves user edits)
+    await async_install_prompts(hass)
 
     # Create coordinator and load the persistent room registry
     coordinator = SmartHeatingCoordinator(hass, entry)

@@ -166,6 +166,16 @@ class RoomLastAnalysisSensor(SHABaseSensor):
     def icon(self) -> str:
         return "mdi:clock-check"
 
+    @property
+    def extra_state_attributes(self) -> dict:
+        state = self._room_state()
+        return {
+            "target_accuracy_percent": state.get("target_accuracy_percent"),
+            "average_miss_celsius": state.get("average_miss_celsius"),
+            "rate_adjustment_reason": state.get("rate_adjustment_reason"),
+            "analysis_summary": state.get("analysis_summary"),
+        }
+
 
 class RoomConfidenceSensor(SHABaseSensor):
     """AI confidence level for this room's heating rate."""

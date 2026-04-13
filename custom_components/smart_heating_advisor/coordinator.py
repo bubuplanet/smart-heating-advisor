@@ -31,7 +31,9 @@ from .ollama import OllamaClient
 from .analyzer import (
     analyze_heating_sessions,
     build_schedule_lines,
+    build_sessions_table,
     build_sessions_text,
+    build_weekly_accuracy_summary,
     get_season,
 )
 from .prompt_loader import load_prompt
@@ -481,6 +483,14 @@ from(bucket: "{bucket}")
             )
         rate = clamped
 
+        # Preserve the old rate so the weekly prompt can report whether
+        # a change was made and what the previous value was.
+        if room.room_id not in self.room_states:
+            self.room_states[room.room_id] = {}
+        self.room_states[room.room_id]["previous_rate"] = (
+            self.room_states[room.room_id].get("heating_rate", rate)
+        )
+
         entity = self.heating_rate_entities.get(room.room_id)
         if entity:
             _LOGGER.debug(
@@ -711,13 +721,16 @@ from(bucket: "{bucket}")
             "daily_analysis.md",
             {
                 "room_name": room.room_name,
-                "current_rate": current_rate,
+                "heating_rate": current_rate,
+                "analysis_days": 7,
                 "schedule_lines": build_schedule_lines(schedules),
-                "avg_rate": analysis.get("avg_rate", "unknown"),
-                "success_rate": analysis.get("success_rate", 0),
-                "avg_start_time": analysis.get("avg_start_time", "unknown"),
-                "days_analyzed": analysis.get("days_analyzed", 0),
-                "sessions_text": build_sessions_text(analysis),
+                "sessions_table": build_sessions_table(analysis),
+                "sessions_total": analysis.get("sessions_total", 0),
+                "sessions_on_target": analysis.get("sessions_on_target", 0),
+                "sessions_with_miss": analysis.get("sessions_with_miss", 0),
+                "average_miss": analysis.get("average_miss", 0.0),
+                "consecutive_misses": analysis.get("consecutive_misses", 0),
+                "miss_trend": analysis.get("miss_trend", "stable"),
                 "outside_temp": weather["outside_temp"],
                 "tomorrow_min": weather["tomorrow_min"],
                 "tomorrow_max": weather["tomorrow_max"],
@@ -747,17 +760,29 @@ from(bucket: "{bucket}")
             return
 
         new_rate = float(result["heating_rate"])
-        reasoning = result.get("reasoning", "No reasoning provided")
+        reasoning = result.get("reasoning", result.get("rate_adjustment_reason", "No reasoning provided"))
         confidence = result.get("confidence", "unknown")
+        target_accuracy_percent = result.get("target_accuracy_percent")
+        average_miss_celsius = result.get("average_miss_celsius")
+        rate_adjustment_reason = result.get("rate_adjustment_reason", reasoning)
+        recommendation = result.get("recommendation", "")
+        analysis_summary = result.get("analysis_summary", "")
+
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "[%s] AI result — new_rate=%.3f, confidence=%s, reasoning=%s",
-                room.room_name, new_rate, confidence, reasoning,
+                "[%s] AI result — new_rate=%.3f, confidence=%s, accuracy=%s%%, "
+                "avg_miss=%s°C, reasoning=%s",
+                room.room_name, new_rate, confidence,
+                target_accuracy_percent, average_miss_celsius, reasoning,
             )
 
         if room.room_id not in self.room_states:
             self.room_states[room.room_id] = {}
         self.room_states[room.room_id]["confidence"] = confidence
+        self.room_states[room.room_id]["target_accuracy_percent"] = target_accuracy_percent
+        self.room_states[room.room_id]["average_miss_celsius"] = average_miss_celsius
+        self.room_states[room.room_id]["rate_adjustment_reason"] = rate_adjustment_reason
+        self.room_states[room.room_id]["analysis_summary"] = analysis_summary
 
         await self._async_apply_heating_rate(room, new_rate, reasoning)
 
@@ -768,21 +793,21 @@ from(bucket: "{bucket}")
             new_rate=new_rate,
             success_rate=analysis.get("success_rate"),
             outcome=self._format_daily_outcome(room.room_name, current_rate, new_rate),
-            details=reasoning,
+            details=analysis_summary or rate_adjustment_reason or reasoning,
         )
 
         await self._async_notify(
             f"🌡️ {room.room_name} — Heating Rate Updated",
             f"New rate: {new_rate:.3f}°C/min (was {current_rate:.3f}°C/min)\n"
+            f"Accuracy: {target_accuracy_percent}% on target, "
+            f"avg miss {average_miss_celsius}°C\n"
             f"Confidence: {confidence}\n"
-            f"Success rate last 7 days: {analysis['success_rate']}%\n"
-            f"Reason: {reasoning}",
+            f"Reason: {rate_adjustment_reason or reasoning}",
         )
 
         _LOGGER.info(
-            "[%s] Daily analysis complete. New rate: %.3f",
-            room.room_name,
-            new_rate,
+            "[%s] Daily analysis complete. New rate: %.3f (accuracy=%s%%, avg_miss=%s°C)",
+            room.room_name, new_rate, target_accuracy_percent, average_miss_celsius,
         )
 
     # ──────────────────────────────────────────────────────────────────
@@ -840,20 +865,42 @@ from(bucket: "{bucket}")
         state = self.hass.states.get(room.heating_rate_helper)
         current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
 
+        # Weekly accuracy context
+        sessions_7 = analysis.get("sessions", [])
+        weekly_on_target = analysis.get("sessions_on_target", 0)
+        weekly_sessions_total = analysis.get("sessions_total", 0)
+        weekly_avg_temp = (
+            round(
+                sum(s.get("temp_at_schedule_start", s["end_temp"]) for s in sessions_7)
+                / len(sessions_7),
+                1,
+            )
+            if sessions_7 else "n/a"
+        )
+        weekly_average_miss = analysis.get("average_miss", 0.0)
+        previous_rate = self.room_states.get(room.room_id, {}).get("previous_rate", current_rate)
+        rate_was_adjusted = "Yes" if abs(current_rate - previous_rate) >= 0.005 else "No"
+
         prompt = await self.hass.async_add_executor_job(
             load_prompt,
             "weekly_analysis.md",
             {
                 "room_name": room.room_name,
-                "current_rate": current_rate,
+                "heating_rate": current_rate,
+                "analysis_days": 30,
                 "schedule_lines": build_schedule_lines(schedules),
-                "days_analyzed": analysis.get("days_analyzed", 0),
-                "avg_rate": analysis.get("avg_rate", "unknown"),
-                "success_rate": analysis.get("success_rate", 0),
-                "avg_start_time": analysis.get("avg_start_time", "unknown"),
+                "sessions_text": build_sessions_text(analysis, weekly=True),
+                "weekly_accuracy_summary": build_weekly_accuracy_summary(analysis),
+                "weekly_on_target": weekly_on_target,
+                "weekly_sessions_total": weekly_sessions_total,
+                "weekly_avg_temp": weekly_avg_temp,
+                "weekly_average_miss": weekly_average_miss,
+                "miss_trend": analysis.get("miss_trend", "stable"),
+                "consecutive_misses": analysis.get("consecutive_misses", 0),
+                "rate_was_adjusted": rate_was_adjusted,
+                "previous_rate": previous_rate,
                 "avg_outside_temp": weather["outside_temp"],
                 "season": season,
-                "sessions_text": build_sessions_text(analysis, weekly=True),
             },
             self.hass.config.config_dir,
         )

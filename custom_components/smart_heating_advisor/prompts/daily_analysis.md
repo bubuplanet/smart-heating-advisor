@@ -1,34 +1,29 @@
 # SHA — Daily Analysis Prompt
 # Variables: {room_name}, {heating_rate}, {analysis_days},
-#            {schedule_name}, {target_temp}, {schedule_time},
-#            {schedule_lines}, {sessions_table}, {sessions_total},
-#            {sessions_on_target}, {sessions_with_miss}, {average_miss},
-#            {consecutive_misses}, {miss_trend},
-#            {outside_temp}, {tomorrow_min}, {tomorrow_max}, {season},
+#            {schedule_count}, {schedule_lines},
+#            {schedules_analysis_text}, {humidity_analysis_text},
 #            {trv_entities}, {trv_count}, {standby_temp}, {all_trvs_active_since},
-#            {session_count}, {on_target_count}, {avg_observed_rate}
+#            {session_count}, {on_target_count}, {avg_observed_rate},
+#            {outside_temp}, {tomorrow_min}, {tomorrow_max}, {season},
+#            {learning_phase}, {sessions_so_far}, {humidity_sensor}
 # Called by: coordinator.py _async_run_daily_analysis_for_room
 #
-# Note on "temp_reached": when TRVs are configured, sessions are detected from
-# TRV setpoint changes (start = any TRV above standby+5°C, end = all TRVs below
-# that threshold). Room temperature is cross-referenced at ±60 min. When no room
-# sensor reading is available near the schedule time, "Reached" shows n/a.
-# Miss = target_temp - temp_reached. Positive = room too cold. Negative = overshot.
+# Detection method: hvac_action_str readings from TRV climate entities.
+# Sessions are periods where at least one TRV reports "heating".
+# Multiple TRV periods are merged into a single session.
+# Each session is matched to a schedule ON period that started within
+# 120 minutes before the heating session ended.
+# Miss = target_temp − room_temp_at_schedule_on_time. Positive = too cold.
 
 You are a smart home heating advisor. Your task is to evaluate whether the
-pre-heat timing in {room_name} is achieving the comfort target temperature
-on time, and to recommend a heating rate correction if needed.
+pre-heat timing in {room_name} is achieving the target comfort temperature
+on schedule, and to recommend a heating rate correction if needed.
 
 ## Room: {room_name}
 ## Current heating rate: {heating_rate}°C/min
 ## Analysis period: last {analysis_days} days
 
-## Primary Schedule
-- Schedule: {schedule_name}
-- Target temperature: {target_temp}°C
-- Schedule start time: {schedule_time}
-
-## Active Schedules
+## Active Schedules ({schedule_count})
 {schedule_lines}
 
 ## TRV Configuration
@@ -37,21 +32,16 @@ on time, and to recommend a heating rate correction if needed.
 - Reliable data from: {all_trvs_active_since}
   (sessions before this date are excluded — TRV was broken or unconfigured)
 
-## Heating Session Accuracy
-Sessions detected from TRV setpoint changes. Room temperature cross-referenced at ±60 min.
-"Reached" = room temperature at {schedule_time} (schedule start time), or n/a when no reading was close enough.
-"Miss" = target_temp − temp_reached. Positive = room was too cold. Negative = overshot.
+## Learning Phase
+- Learning phase: {learning_phase}
+- Sessions so far: {sessions_so_far}
+- Humidity sensor: {humidity_sensor}
 
-{sessions_table}
+## Per-Schedule Heating Accuracy
+{schedules_analysis_text}
 
-## Target Accuracy Summary
-- Sessions analysed: {sessions_total}
-- Sessions on target (miss ≤ 0.5°C): {sessions_on_target}
-- Sessions that missed target (miss > 0.5°C): {sessions_with_miss}
-- Average miss: {average_miss}°C
-- Average observed room heating rate: {avg_observed_rate}°C/min
-- Consecutive misses (most recent streak): {consecutive_misses}
-- Miss trend: {miss_trend}
+## Humidity Context
+{humidity_analysis_text}
 
 ## Weather Context
 - Current outside temperature: {outside_temp}°C
@@ -59,20 +49,26 @@ Sessions detected from TRV setpoint changes. Room temperature cross-referenced a
 - Season: {season}
 
 ## Reasoning Instructions
-1. If average_miss > 0.5°C or sessions_with_miss > half of sessions_total:
-   the heating rate is too low — the room is not reaching target on time.
+1. If average miss > 0.5°C or more than half of sessions missed target:
+   the heating rate is too low — room not reaching target on time.
    Increase heating_rate to compensate.
-2. If average_miss < −1.0°C (consistent overshoot):
+2. If average miss < −1.0°C (consistent overshoot):
    the heating rate is too high — pre-heat starts too early.
    Decrease heating_rate.
-3. If consecutive_misses >= 3: treat this as urgent — increase rate more aggressively.
-4. If miss_trend is "worsening": bias toward increasing rate even if current miss is moderate.
-5. If miss_trend is "improving": a smaller or no adjustment may be sufficient.
+3. If consecutive_misses ≥ 3: treat as urgent — increase rate more aggressively.
+4. If miss trend is "worsening": bias toward increasing rate even if miss is moderate.
+5. If miss trend is "improving": a smaller or no adjustment may suffice.
 6. Keep heating_rate between 0.05 and 0.30.
 7. Only suggest a change when the adjustment is > 0.01°C/min.
 8. Consider outside temperature: colder outside generally requires a higher rate.
-9. If session_count < 3 or all_trvs_active_since is very recent (< 3 days ago):
-   lower your confidence to "low" — insufficient data for a reliable recommendation.
+9. If learning_phase is True or session_count < 3:
+   lower confidence to "low" — insufficient data for a reliable recommendation.
+   Do not make aggressive rate changes during the learning phase.
+10. If any schedule shows recommended_preheat_min > 180:
+    note in recommendation that the radiator may be underpowered for the room size.
+11. If humidity_sensor is configured (not "not configured"):
+    confirm in analysis_summary whether humidity peaks suggest the room is being used
+    as expected (e.g. shower use, cooking). Ignore humidity if sensor not configured.
 
 Respond ONLY with a valid JSON object — no explanation text outside the JSON:
 {

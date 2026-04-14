@@ -30,13 +30,20 @@ from .const import (
 from .ollama import OllamaClient
 from .analyzer import (
     analyze_heating_sessions,
+    analyze_sessions_per_schedule,
+    build_humidity_analysis_text,
     build_schedule_lines,
+    build_schedule_on_periods,
+    build_schedules_analysis_text,
     build_sessions_table,
     build_sessions_text,
     build_weekly_accuracy_summary,
     detect_all_trvs_active_since,
+    detect_heating_sessions_from_hvac,
     detect_standby_temp,
+    extract_temp_from_schedule_name,
     get_season,
+    match_sessions_to_schedules,
 )
 from .prompt_loader import load_prompt
 
@@ -73,6 +80,38 @@ def _mask_secret(value: str, visible: int = 4) -> str:
     if len(value) <= visible:
         return "*" * len(value)
     return "*" * (len(value) - visible) + value[-visible:]
+
+
+def _get_measurement(entity_id: str) -> str:
+    """Auto-derive InfluxDB measurement name from entity_id.
+
+    Matches the confirmed production schema exactly:
+    - ``sensor.*_temperature`` → ``"°C"``
+    - ``sensor.*_humidity``    → ``"%"``
+    - ``climate.*``            → full entity_id (e.g. ``"climate.bathroom_radiator"``)
+    - ``schedule.*``           → full entity_id (e.g. ``"schedule.weekday_morning_shower_26c"``)
+    - anything else            → ``"°C"`` (safe fallback)
+    """
+    if entity_id.startswith("sensor.") and entity_id.endswith("_temperature"):
+        return "°C"
+    if entity_id.startswith("sensor.") and entity_id.endswith("_humidity"):
+        return "%"
+    if entity_id.startswith("climate."):
+        return entity_id
+    if entity_id.startswith("schedule."):
+        return entity_id
+    return "°C"
+
+
+def _strip_domain(entity_id: str) -> str:
+    """Strip the HA domain prefix from an entity_id for use in InfluxDB filters.
+
+    Examples:
+        sensor.bathroom_thermostat_temperature → bathroom_thermostat_temperature
+        climate.bathroom_radiator              → bathroom_radiator
+        schedule.weekday_morning_shower_26c    → weekday_morning_shower_26c
+    """
+    return entity_id.split(".", 1)[1] if "." in entity_id else entity_id
 
 
 def _do_read_automation_inputs(config_dir: str, room_name: str) -> list[str]:
@@ -397,18 +436,17 @@ class SmartHeatingCoordinator:
         org = self.config[CONF_INFLUXDB_ORG]
         bucket = self.config[CONF_INFLUXDB_BUCKET]
 
-        # Strip any domain prefix (sensor., climate., binary_sensor., …)
-        influx_entity_id = entity_id.split(".", 1)[-1] if "." in entity_id else entity_id
+        entity_id_bare = _strip_domain(entity_id)
 
-        flux_query = f"""
-from(bucket: "{bucket}")
-  |> range(start: -{days}d)
-  |> filter(fn: (r) => r["entity_id"] == "{influx_entity_id}")
-  |> filter(fn: (r) => r["_field"] == "{field}")
-  |> filter(fn: (r) => r["_measurement"] == "{measurement}")
-  |> sort(columns: ["_time"])
-  |> yield(name: "data")
-"""
+        flux_query = (
+            f'from(bucket: "{bucket}")\n'
+            f"  |> range(start: -{days}d)\n"
+            f'  |> filter(fn: (r) => r["_measurement"] == "{measurement}")\n'
+            f'  |> filter(fn: (r) => r["entity_id"] == "{entity_id_bare}")\n'
+            f'  |> filter(fn: (r) => r["_field"] == "{field}")\n'
+            f'  |> sort(columns: ["_time"])\n'
+            f'  |> yield(name: "data")\n'
+        )
 
         headers = {
             "Authorization": f"Token {token}",
@@ -417,8 +455,8 @@ from(bucket: "{bucket}")
         }
 
         _LOGGER.debug(
-            "InfluxDB: querying %s for entity '%s' — last %d day(s)",
-            url, entity_id, days,
+            "InfluxDB: entity='%s' measurement='%s' field='%s' days=%d",
+            entity_id, measurement, field, days,
         )
         try:
             async with aiohttp.ClientSession() as session:
@@ -431,23 +469,19 @@ from(bucket: "{bucket}")
                 ) as response:
                     if response.status != 200:
                         _LOGGER.error(
-                            "InfluxDB query failed for %s: status %s",
-                            entity_id,
-                            response.status,
+                            "InfluxDB query failed for %s: HTTP %s",
+                            entity_id, response.status,
                         )
                         return []
                     csv_text = await response.text()
                     readings = self._parse_influxdb_csv(csv_text)
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug(
-                            "InfluxDB: received %d reading(s) for '%s'%s",
-                            len(readings),
-                            entity_id,
-                            f" — first: {readings[0][0]}, last: {readings[-1][0]}" if readings else "",
-                        )
+                    _LOGGER.debug(
+                        "InfluxDB: entity='%s' → %d reading(s)",
+                        entity_id, len(readings),
+                    )
                     return readings
-        except Exception as e:
-            _LOGGER.error("InfluxDB query error for %s: %s", entity_id, e)
+        except Exception as exc:
+            _LOGGER.error("InfluxDB query error for %s: %s", entity_id, exc)
             return []
 
     def _parse_influxdb_csv(self, csv_text: str) -> list[tuple]:
@@ -517,10 +551,272 @@ from(bucket: "{bucket}")
         return result
 
     # ──────────────────────────────────────────────────────────────────
+    # InfluxDB v2 — multi-field, correct-measurement queries
+    # ──────────────────────────────────────────────────────────────────
+
+    def _parse_influxdb_csv_multi(self, csv_text: str) -> dict:
+        """Parse InfluxDB CSV response into dict[field_name → list[(datetime, value)]].
+
+        Handles both numeric and string values (e.g. ``hvac_action_str``).
+        Routes rows by the ``_field`` column in the CSV header.
+        """
+        result: dict = {}
+        lines = csv_text.strip().split("\n")
+        time_idx: int | None = None
+        value_idx: int | None = None
+        field_idx: int | None = None
+
+        for line in lines:
+            if not line or line.startswith("#"):
+                # Each table in InfluxDB CSV is preceded by annotations (#datatype …)
+                # followed by a fresh header row — reset indices on blank lines so
+                # the next header row is picked up correctly.
+                if not line:
+                    time_idx = value_idx = field_idx = None
+                continue
+
+            parts = line.split(",")
+
+            if "_time" in parts and "_value" in parts:
+                time_idx = parts.index("_time")
+                value_idx = parts.index("_value")
+                field_idx = parts.index("_field") if "_field" in parts else None
+                continue
+
+            if time_idx is None or value_idx is None:
+                continue
+
+            try:
+                ts_str = parts[time_idx].strip().replace("Z", "+00:00")
+                ts = datetime.fromisoformat(ts_str)
+                raw_val = parts[value_idx].strip()
+                try:
+                    val: object = float(raw_val)
+                except ValueError:
+                    val = raw_val
+                fname = parts[field_idx].strip() if field_idx is not None else "value"
+                result.setdefault(fname, []).append((ts, val))
+            except (ValueError, IndexError):
+                continue
+
+        for fname in result:
+            result[fname].sort(key=lambda x: x[0])
+
+        return result
+
+    async def async_query_influxdb_v2(
+        self,
+        entity_id: str,
+        days: int,
+        fields: list[str],
+        measurement: str | None = None,
+    ) -> dict:
+        """Query InfluxDB for multiple fields using the confirmed schema.
+
+        Auto-derives measurement from entity_id unless overridden.
+        Omits the entity_id tag filter for ``climate.*`` and ``schedule.*``
+        entities (their measurement IS the entity_id).
+
+        Returns dict[field_name → list[(datetime, value)]].
+        """
+        import aiohttp
+
+        token = self.config[CONF_INFLUXDB_TOKEN]
+        url = self.config[CONF_INFLUXDB_URL]
+        org = self.config[CONF_INFLUXDB_ORG]
+        bucket = self.config[CONF_INFLUXDB_BUCKET]
+
+        if measurement is None:
+            measurement = _get_measurement(entity_id)
+
+        entity_id_bare = _strip_domain(entity_id)
+        field_filter = " or ".join(f'r["_field"] == "{f}"' for f in fields)
+
+        flux_query = (
+            f'from(bucket: "{bucket}")\n'
+            f"  |> range(start: -{days}d)\n"
+            f'  |> filter(fn: (r) => r["_measurement"] == "{measurement}")\n'
+            f'  |> filter(fn: (r) => r["entity_id"] == "{entity_id_bare}")\n'
+            f'  |> filter(fn: (r) => {field_filter})\n'
+            f'  |> sort(columns: ["_time"])\n'
+            f'  |> yield(name: "data")\n'
+        )
+
+        headers = {
+            "Authorization": f"Token {token}",
+            "Content-Type": "application/vnd.flux",
+            "Accept": "application/csv",
+        }
+
+        _LOGGER.debug(
+            "InfluxDB v2: entity='%s' measurement='%s' entity_bare='%s' fields=%s days=%d",
+            entity_id, measurement, entity_id_bare, fields, days,
+        )
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{url}/api/v2/query",
+                    params={"org": org},
+                    headers=headers,
+                    data=flux_query,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as response:
+                    if response.status != 200:
+                        _LOGGER.error(
+                            "InfluxDB v2 query failed for %s: status %s",
+                            entity_id, response.status,
+                        )
+                        return {}
+                    csv_text = await response.text()
+                    result = self._parse_influxdb_csv_multi(csv_text)
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "InfluxDB v2: '%s' → %s",
+                            entity_id, {k: len(v) for k, v in result.items()},
+                        )
+                    return result
+        except Exception as exc:
+            _LOGGER.error("InfluxDB v2 query error for %s: %s", entity_id, exc)
+            return {}
+
+    async def async_query_trv_data_full(
+        self, room: "RoomConfig", days: int
+    ) -> dict:
+        """Query temperature, current_temperature, and hvac_action_str for all TRVs.
+
+        Uses the confirmed schema: measurement = full entity_id (e.g.
+        ``climate.bathroom_radiator``), no entity_id tag filter.
+
+        Returns dict[entity_id → dict[field → list[(datetime, value)]]].
+        """
+        trvs = self._get_room_trvs(room)
+        if not trvs:
+            _LOGGER.debug("[%s] No TRV entities — skipping TRV data query", room.room_name)
+            return {}
+
+        result: dict = {}
+        for trv_entity_id in trvs:
+            fields_data = await self.async_query_influxdb_v2(
+                trv_entity_id,
+                days,
+                fields=["temperature", "current_temperature", "hvac_action_str"],
+            )
+            _LOGGER.debug(
+                "[%s] TRV %s: %s",
+                room.room_name, trv_entity_id,
+                {k: len(v) for k, v in fields_data.items()},
+            )
+            result[trv_entity_id] = fields_data
+
+        return result
+
+    async def async_query_schedule_data(
+        self, schedule_entity_ids: list[str], days: int
+    ) -> dict:
+        """Query ON periods for each schedule from InfluxDB.
+
+        Uses confirmed schema: measurement = full schedule entity_id.
+
+        Returns dict[entity_id → list[{start, end}]].
+        """
+        result: dict = {}
+        for entity_id in schedule_entity_ids:
+            fields_data = await self.async_query_influxdb_v2(
+                entity_id, days, fields=["state"],
+            )
+            state_readings = fields_data.get("state", [])
+            on_periods = build_schedule_on_periods(state_readings)
+            _LOGGER.debug(
+                "Schedule %s: %d state readings → %d ON period(s) over %d days",
+                entity_id, len(state_readings), len(on_periods), days,
+            )
+            result[entity_id] = on_periods
+        return result
+
+    def _get_room_humidity_sensor(self, room: "RoomConfig") -> str | None:
+        """Return humidity sensor entity_id for the room, if configured.
+
+        Checks subentry data first.  Falls back to auto-deriving by replacing
+        ``_temperature`` with ``_humidity`` in the room temp sensor entity_id
+        (only if the derived entity is present in HA states).
+        """
+        for subentry in self.entry.subentries.values():
+            sub_room = subentry.data.get("room_name", "")
+            if _room_name_to_id(str(sub_room)) == room.room_id:
+                humidity = subentry.data.get("humidity_sensor")
+                if humidity:
+                    return str(humidity)
+
+        sensor = room.temp_sensor
+        if "_temperature" in sensor:
+            candidate = sensor.replace("_temperature", "_humidity")
+            if self.hass.states.get(candidate):
+                return candidate
+
+        return None
+
+    async def async_query_humidity_data(self, room: "RoomConfig", days: int) -> list[tuple]:
+        """Query humidity readings for the room (measurement ``%``, field ``value``)."""
+        humidity_sensor = self._get_room_humidity_sensor(room)
+        if not humidity_sensor:
+            return []
+        return await self.async_query_influxdb(
+            humidity_sensor, days, field="value", measurement="%"
+        )
+
+    @staticmethod
+    def _detect_all_trvs_active_since_from_hvac(trv_data: dict) -> "datetime | None":
+        """Return the latest 'first heating reading' timestamp across all TRVs.
+
+        "First heating" means the earliest timestamp where hvac_action_str == "heating".
+        Returns None if any TRV has no hvac_action_str data OR never reported "heating"
+        (treats the whole dataset as unreliable until all TRVs confirm active heating).
+        """
+        if not trv_data:
+            return None
+        latest: "datetime | None" = None
+        for entity_id, fields in trv_data.items():
+            hvac_readings = fields.get("hvac_action_str", [])
+            if not hvac_readings:
+                _LOGGER.debug(
+                    "TRV %s has no hvac_action_str data — treating as unreliable",
+                    entity_id,
+                )
+                return None
+            heating_ts = [ts for ts, val in hvac_readings if str(val).lower() == "heating"]
+            if not heating_ts:
+                _LOGGER.debug(
+                    "TRV %s never reported 'heating' in queried window — treating as unreliable",
+                    entity_id,
+                )
+                return None
+            first_ts = min(heating_ts)
+            if latest is None or first_ts > latest:
+                latest = first_ts
+        return latest
+
+    def _enrich_schedules_info(self, schedules: list[dict]) -> list[dict]:
+        """Add ``target_temp`` and ``schedule_time`` to each schedule info dict."""
+        result = []
+        for s in schedules:
+            name = s.get("name", "")
+            target_temp = extract_temp_from_schedule_name(name, 21.0)
+            schedule_time = "n/a"
+            next_event = s.get("next_event")
+            if next_event:
+                try:
+                    dt = datetime.fromisoformat(str(next_event).replace("Z", "+00:00"))
+                    schedule_time = dt.strftime("%H:%M")
+                except (ValueError, TypeError):
+                    pass
+            result.append({**s, "target_temp": target_temp, "schedule_time": schedule_time})
+        return result
+
+    # ──────────────────────────────────────────────────────────────────
     # Schedule helpers
     # ──────────────────────────────────────────────────────────────────
 
-    def _get_schedule_info(self, room: RoomConfig) -> list[dict]:
+    def _get_schedule_info(self, room: "RoomConfig") -> list[dict]:
         """Read schedule helper states and return schedule info list."""
         schedules = []
         for entity_id in room.schedule_entities:
@@ -612,8 +908,6 @@ from(bucket: "{bucket}")
         which is extracted from the schedule entity's friendly name using the
         same regex as the blueprint (e.g. "Morning Shower 26C" → 26°C).
         """
-        from .analyzer import extract_temp_from_schedule_name
-
         if not schedules:
             return {"name": "Default", "target_temp": 21.0, "schedule_time": "n/a"}
 
@@ -857,19 +1151,20 @@ from(bucket: "{bucket}")
     async def _async_run_daily_analysis_for_room(
         self, room: RoomConfig, weather: dict, season: str
     ) -> None:
-        """Run daily analysis for a single room."""
+        """Run daily analysis for a single room (hvac_action_str pipeline)."""
         run_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         _LOGGER.debug(
             "[%s] Daily analysis — weather: outside=%.1f°C, tomorrow min=%.1f/max=%.1f°C, season=%s",
             room.room_name,
             weather["outside_temp"], weather["tomorrow_min"], weather["tomorrow_max"], season,
         )
-        readings = await self.async_query_influxdb(room.temp_sensor, days=7)
+
+        # ── 1. Room temperature ──────────────────────────────────────
+        readings = await self.async_query_influxdb(room.temp_sensor, days=30)
         if len(readings) < 5:
             _LOGGER.warning(
-                "[%s] Not enough data (%d readings) — skipping",
-                room.room_name,
-                len(readings),
+                "[%s] Not enough room-temp data (%d readings) — skipping",
+                room.room_name, len(readings),
             )
             await self._async_notify_daily_room_result(
                 room=room,
@@ -882,45 +1177,130 @@ from(bucket: "{bucket}")
             )
             return
 
-        # Query TRV setpoint history — used for accurate session detection
-        trv_readings = await self.async_query_trv_readings(room, days=7)
-        standby_temp = detect_standby_temp(trv_readings)
-        standby_threshold = standby_temp + 5.0
-        all_trvs_active_since = detect_all_trvs_active_since(trv_readings, standby_threshold)
+        # ── 2. TRV data (hvac_action_str + setpoints + current_temp) ─
+        trv_data = await self.async_query_trv_data_full(room, days=30)
+
+        # Standby temp from setpoint readings (backward compat helper)
+        trv_setpoint_readings = {
+            eid: fields.get("temperature", []) for eid, fields in trv_data.items()
+        }
+        standby_temp_val = detect_standby_temp(trv_setpoint_readings) if trv_setpoint_readings else 7.0
+
+        # ── 3. all_trvs_active_since ─────────────────────────────────
+        all_trvs_active_since = self._detect_all_trvs_active_since_from_hvac(trv_data)
+        if all_trvs_active_since is None and trv_setpoint_readings:
+            # Fallback: use setpoint-based detection when hvac_action_str missing
+            standby_threshold = standby_temp_val + 5.0
+            all_trvs_active_since = detect_all_trvs_active_since(
+                trv_setpoint_readings, standby_threshold
+            )
 
         if all_trvs_active_since:
             _LOGGER.info(
-                "[%s] All TRVs active since %s — sessions before this date excluded",
-                room.room_name,
-                all_trvs_active_since.strftime("%Y-%m-%d %H:%M"),
+                "[%s] All TRVs active since %s — sessions before excluded",
+                room.room_name, all_trvs_active_since.strftime("%Y-%m-%d %H:%M"),
             )
 
+        # ── 4. Schedules ─────────────────────────────────────────────
         schedules = await self._async_get_schedule_info_with_fallback(room)
+        schedules_info = self._enrich_schedules_info(schedules)
         primary = self._primary_schedule_info(schedules)
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "[%s] Schedules found: %d — %s | primary: %s target=%.1f°C time=%s",
+                "[%s] Schedules: %d — %s | primary: %s target=%.1f°C time=%s",
                 room.room_name, len(schedules), [s["name"] for s in schedules],
                 primary["name"], primary["target_temp"], primary["schedule_time"],
             )
-        analysis = analyze_heating_sessions(
-            readings,
-            schedules,
-            schedule_time_hhmm=primary["schedule_time"] if primary["schedule_time"] != "n/a" else None,
-            trv_readings=trv_readings if trv_readings else None,
-            all_trvs_active_since=all_trvs_active_since,
-            standby_temp=standby_temp,
-            target_temp=primary["target_temp"],
-        )
-        _LOGGER.debug(
-            "[%s] Analysis: %d session(s), success_rate=%s%%, avg_rate=%s",
-            room.room_name,
-            len(analysis.get("sessions", [])),
-            analysis.get("success_rate", "?"),
-            analysis.get("avg_rate", "?"),
+
+        # ── 5. Schedule ON periods from InfluxDB ─────────────────────
+        schedule_entity_ids = [s["entity_id"] for s in schedules_info]
+        schedule_on_periods = await self.async_query_schedule_data(schedule_entity_ids, days=30)
+
+        # ── 6. Humidity ──────────────────────────────────────────────
+        humidity_readings = await self.async_query_humidity_data(room, days=30)
+
+        # ── 7. Session detection ─────────────────────────────────────
+        has_hvac_data = any(
+            fields.get("hvac_action_str") for fields in trv_data.values()
         )
 
-        if not analysis["sessions"]:
+        if has_hvac_data:
+            raw_sessions = detect_heating_sessions_from_hvac(trv_data, all_trvs_active_since)
+            matched_sessions = match_sessions_to_schedules(
+                raw_sessions, schedule_on_periods, schedules_info, readings, trv_data
+            )
+            per_schedule = analyze_sessions_per_schedule(matched_sessions, schedules_info)
+
+            # Aggregate overall stats
+            sessions_total = sum(s["sessions_total"] for s in per_schedule.values())
+            sessions_on_target = sum(s["sessions_on_target"] for s in per_schedule.values())
+            sessions_with_miss = sum(s["sessions_with_miss"] for s in per_schedule.values())
+            all_avg_misses = [
+                s["avg_miss"] for s in per_schedule.values() if s.get("avg_miss") is not None
+            ]
+            average_miss = round(sum(all_avg_misses) / len(all_avg_misses), 1) if all_avg_misses else 0.0
+            all_rates = [s["avg_rate"] for s in per_schedule.values() if s.get("avg_rate") is not None]
+            avg_rate = round(sum(all_rates) / len(all_rates), 3) if all_rates else None
+            success_rate_pct = round(sessions_on_target / sessions_total * 100, 1) if sessions_total else 0.0
+
+            # Consecutive misses and trend across all sessions
+            all_sorted = sorted(matched_sessions, key=lambda s: s["date"])
+            consecutive_misses = 0
+            for s in reversed(all_sorted):
+                miss = s.get("target_miss")
+                if miss is not None and miss > 0.5:
+                    consecutive_misses += 1
+                else:
+                    break
+            half = len(all_sorted) // 2
+            miss_trend = "stable"
+            if half >= 2:
+                first_m = [s["target_miss"] for s in all_sorted[:half] if s.get("target_miss") is not None]
+                second_m = [s["target_miss"] for s in all_sorted[half:] if s.get("target_miss") is not None]
+                if first_m and second_m:
+                    fa = sum(first_m) / len(first_m)
+                    sa = sum(second_m) / len(second_m)
+                    if sa < fa - 0.5:
+                        miss_trend = "improving"
+                    elif sa > fa + 0.5:
+                        miss_trend = "worsening"
+
+            display_sessions = all_sorted[-7:]
+            schedules_analysis_text = build_schedules_analysis_text(per_schedule, all_trvs_active_since)
+        else:
+            # Fallback: old setpoint/room-sensor pipeline
+            _LOGGER.debug("[%s] No hvac_action_str data — using setpoint-based detection", room.room_name)
+            analysis = analyze_heating_sessions(
+                readings,
+                schedules,
+                schedule_time_hhmm=primary["schedule_time"] if primary["schedule_time"] != "n/a" else None,
+                trv_readings=trv_setpoint_readings if trv_setpoint_readings else None,
+                all_trvs_active_since=all_trvs_active_since,
+                standby_temp=standby_temp_val,
+                target_temp=primary["target_temp"],
+            )
+            matched_sessions = analysis.get("sessions", [])
+            per_schedule = {}
+            sessions_total = analysis.get("sessions_total", 0)
+            sessions_on_target = analysis.get("sessions_on_target", 0)
+            sessions_with_miss = analysis.get("sessions_with_miss", 0)
+            average_miss = analysis.get("average_miss", 0.0)
+            avg_rate = analysis.get("avg_rate")
+            success_rate_pct = analysis.get("success_rate", 0.0)
+            consecutive_misses = analysis.get("consecutive_misses", 0)
+            miss_trend = analysis.get("miss_trend", "stable")
+            display_sessions = matched_sessions
+            schedules_analysis_text = (
+                f"  (Setpoint-based detection — {sessions_on_target}/{sessions_total} sessions on target, "
+                f"avg miss {average_miss:+.1f}°C)\n"
+            )
+
+        _LOGGER.debug(
+            "[%s] Sessions: total=%d on_target=%d avg_rate=%s avg_miss=%s",
+            room.room_name, sessions_total, sessions_on_target, avg_rate, average_miss,
+        )
+
+        if sessions_total == 0:
             trvs_early = self._get_room_trvs(room)
             active_since_early = (
                 all_trvs_active_since.strftime("%Y-%m-%d %H:%M")
@@ -930,7 +1310,7 @@ from(bucket: "{bucket}")
             if all_trvs_active_since:
                 days_reliable = (datetime.now(timezone.utc) - all_trvs_active_since).days
 
-            if trv_readings and all_trvs_active_since and days_reliable is not None and days_reliable < 3:
+            if trv_data and all_trvs_active_since and days_reliable is not None and days_reliable < 3:
                 no_session_details = (
                     f"Reliable TRV data only available since {active_since_early} "
                     f"({days_reliable} day(s)). "
@@ -952,7 +1332,7 @@ from(bucket: "{bucket}")
                 run_ts=run_ts,
                 old_rate=None,
                 new_rate=None,
-                success_rate=analysis.get("success_rate"),
+                success_rate=None,
                 outcome=f"No changes needed in {room.room_name}.",
                 details=no_session_details,
             )
@@ -967,45 +1347,53 @@ from(bucket: "{bucket}")
             all_trvs_active_since.strftime("%Y-%m-%d %H:%M")
             if all_trvs_active_since else "n/a"
         )
+        humidity_sensor_entity = self._get_room_humidity_sensor(room)
+        humidity_analysis_text = build_humidity_analysis_text(humidity_readings, matched_sessions)
+        learning_phase = sessions_total < 7
+        sessions_so_far = sessions_total
 
         prompt = await self.hass.async_add_executor_job(
             load_prompt,
             "daily_analysis.md",
             {
-                # Current variable names (new bundled prompts)
                 "room_name": room.room_name,
                 "heating_rate": round(current_rate, 3),
-                "analysis_days": 7,
-                "schedule_name": primary["name"],
-                "target_temp": primary["target_temp"],
-                "schedule_time": primary["schedule_time"],
+                "analysis_days": 30,
+                "schedule_count": len(schedules),
                 "schedule_lines": build_schedule_lines(schedules),
-                "sessions_table": build_sessions_table(analysis),
-                "sessions_text": build_sessions_text(analysis),
-                "sessions_total": analysis.get("sessions_total", 0),
-                "sessions_on_target": analysis.get("sessions_on_target", 0),
-                "sessions_with_miss": analysis.get("sessions_with_miss", 0),
-                "average_miss": analysis.get("average_miss", 0.0),
-                "consecutive_misses": analysis.get("consecutive_misses", 0),
-                "miss_trend": analysis.get("miss_trend", "stable"),
+                "schedules_analysis_text": schedules_analysis_text,
+                "humidity_analysis_text": humidity_analysis_text,
                 "outside_temp": weather["outside_temp"],
                 "tomorrow_min": weather["tomorrow_min"],
                 "tomorrow_max": weather["tomorrow_max"],
                 "season": season,
-                # TRV data
                 "trv_entities": ", ".join(trvs) if trvs else "none configured",
                 "trv_count": len(trvs),
-                "standby_temp": standby_temp,
+                "standby_temp": standby_temp_val,
                 "all_trvs_active_since": active_since_str,
-                "session_count": analysis.get("sessions_total", 0),
-                "on_target_count": analysis.get("sessions_on_target", 0),
-                "avg_observed_rate": str(analysis.get("avg_rate") or "n/a"),
+                "session_count": sessions_total,
+                "on_target_count": sessions_on_target,
+                "avg_observed_rate": str(avg_rate or "n/a"),
+                "humidity_sensor": humidity_sensor_entity or "not configured",
+                "learning_phase": learning_phase,
+                "sessions_so_far": sessions_so_far,
                 # Backward-compat aliases for old /config prompt files
+                "schedule_name": primary["name"],
+                "target_temp": primary["target_temp"],
+                "schedule_time": primary["schedule_time"],
+                "sessions_table": build_sessions_table({"sessions": display_sessions}),
+                "sessions_text": build_sessions_text({"sessions": display_sessions}),
+                "sessions_total": sessions_total,
+                "sessions_on_target": sessions_on_target,
+                "sessions_with_miss": sessions_with_miss,
+                "average_miss": average_miss,
+                "consecutive_misses": consecutive_misses,
+                "miss_trend": miss_trend,
                 "current_rate": round(current_rate, 3),
-                "days_analyzed": analysis.get("days_analyzed", 0),
-                "avg_rate": str(analysis.get("avg_rate") or "n/a"),
-                "success_rate": analysis.get("success_rate", 0),
-                "avg_start_time": analysis.get("avg_start_time") or "n/a",
+                "days_analyzed": 30,
+                "avg_rate": str(avg_rate or "n/a"),
+                "success_rate": success_rate_pct,
+                "avg_start_time": "n/a",
             },
             self.hass.config.config_dir,
         )
@@ -1024,7 +1412,7 @@ from(bucket: "{bucket}")
                 run_ts=run_ts,
                 old_rate=current_rate,
                 new_rate=current_rate,
-                success_rate=analysis.get("success_rate"),
+                success_rate=success_rate_pct,
                 outcome=f"No changes needed in {room.room_name}.",
                 details="AI response was invalid, keeping previous heating rate.",
             )
@@ -1062,7 +1450,7 @@ from(bucket: "{bucket}")
             run_ts=run_ts,
             old_rate=current_rate,
             new_rate=new_rate,
-            success_rate=analysis.get("success_rate"),
+            success_rate=success_rate_pct,
             outcome=self._format_daily_outcome(room.room_name, current_rate, new_rate),
             details=analysis_summary or rate_adjustment_reason or reasoning,
         )
@@ -1111,13 +1499,13 @@ from(bucket: "{bucket}")
     async def _async_run_weekly_analysis_for_room(
         self, room: RoomConfig, weather: dict, season: str
     ) -> None:
-        """Run weekly analysis for a single room — report only."""
+        """Run weekly analysis for a single room — report only (hvac_action_str pipeline)."""
         run_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+        # ── 1. Room temperature ──────────────────────────────────────
         readings = await self.async_query_influxdb(room.temp_sensor, days=30)
         if len(readings) < 5:
-            _LOGGER.warning(
-                "[%s] Not enough data for weekly analysis", room.room_name
-            )
+            _LOGGER.warning("[%s] Not enough room-temp data for weekly analysis", room.room_name)
             await self._async_notify_weekly_room_result(
                 room=room,
                 run_ts=run_ts,
@@ -1130,36 +1518,110 @@ from(bucket: "{bucket}")
             )
             return
 
-        # Query TRV setpoint history — used for accurate session detection
-        trv_readings = await self.async_query_trv_readings(room, days=30)
-        standby_temp = detect_standby_temp(trv_readings)
-        standby_threshold = standby_temp + 5.0
-        all_trvs_active_since = detect_all_trvs_active_since(trv_readings, standby_threshold)
+        # ── 2. TRV data ──────────────────────────────────────────────
+        trv_data = await self.async_query_trv_data_full(room, days=30)
+
+        trv_setpoint_readings = {
+            eid: fields.get("temperature", []) for eid, fields in trv_data.items()
+        }
+        standby_temp_val = detect_standby_temp(trv_setpoint_readings) if trv_setpoint_readings else 7.0
+
+        # ── 3. all_trvs_active_since ─────────────────────────────────
+        all_trvs_active_since = self._detect_all_trvs_active_since_from_hvac(trv_data)
+        if all_trvs_active_since is None and trv_setpoint_readings:
+            standby_threshold = standby_temp_val + 5.0
+            all_trvs_active_since = detect_all_trvs_active_since(
+                trv_setpoint_readings, standby_threshold
+            )
 
         if all_trvs_active_since:
             _LOGGER.info(
-                "[%s] Weekly: all TRVs active since %s — sessions before this date excluded",
-                room.room_name,
-                all_trvs_active_since.strftime("%Y-%m-%d %H:%M"),
+                "[%s] Weekly: all TRVs active since %s — sessions before excluded",
+                room.room_name, all_trvs_active_since.strftime("%Y-%m-%d %H:%M"),
             )
 
+        # ── 4. Schedules ─────────────────────────────────────────────
         schedules = await self._async_get_schedule_info_with_fallback(room)
+        schedules_info = self._enrich_schedules_info(schedules)
         primary = self._primary_schedule_info(schedules)
-        analysis = analyze_heating_sessions(
-            readings,
-            schedules,
-            schedule_time_hhmm=primary["schedule_time"] if primary["schedule_time"] != "n/a" else None,
-            trv_readings=trv_readings if trv_readings else None,
-            all_trvs_active_since=all_trvs_active_since,
-            standby_temp=standby_temp,
-            target_temp=primary["target_temp"],
-        )
+
+        # ── 5. Schedule ON periods ───────────────────────────────────
+        schedule_entity_ids = [s["entity_id"] for s in schedules_info]
+        schedule_on_periods = await self.async_query_schedule_data(schedule_entity_ids, days=30)
+
+        # ── 6. Humidity ──────────────────────────────────────────────
+        humidity_readings = await self.async_query_humidity_data(room, days=30)
+
+        # ── 7. Session detection ─────────────────────────────────────
+        has_hvac_data = any(fields.get("hvac_action_str") for fields in trv_data.values())
+
+        if has_hvac_data:
+            raw_sessions = detect_heating_sessions_from_hvac(trv_data, all_trvs_active_since)
+            matched_sessions = match_sessions_to_schedules(
+                raw_sessions, schedule_on_periods, schedules_info, readings, trv_data
+            )
+            per_schedule = analyze_sessions_per_schedule(matched_sessions, schedules_info)
+
+            sessions_total = sum(s["sessions_total"] for s in per_schedule.values())
+            sessions_on_target = sum(s["sessions_on_target"] for s in per_schedule.values())
+            all_avg_misses = [
+                s["avg_miss"] for s in per_schedule.values() if s.get("avg_miss") is not None
+            ]
+            average_miss = round(sum(all_avg_misses) / len(all_avg_misses), 1) if all_avg_misses else 0.0
+            all_rates = [s["avg_rate"] for s in per_schedule.values() if s.get("avg_rate") is not None]
+            avg_rate = round(sum(all_rates) / len(all_rates), 3) if all_rates else None
+            success_rate_pct = round(sessions_on_target / sessions_total * 100, 1) if sessions_total else 0.0
+
+            all_sorted = sorted(matched_sessions, key=lambda s: s["date"])
+            consecutive_misses = 0
+            for s in reversed(all_sorted):
+                miss = s.get("target_miss")
+                if miss is not None and miss > 0.5:
+                    consecutive_misses += 1
+                else:
+                    break
+            half = len(all_sorted) // 2
+            miss_trend = "stable"
+            if half >= 2:
+                first_m = [s["target_miss"] for s in all_sorted[:half] if s.get("target_miss") is not None]
+                second_m = [s["target_miss"] for s in all_sorted[half:] if s.get("target_miss") is not None]
+                if first_m and second_m:
+                    fa = sum(first_m) / len(first_m)
+                    sa = sum(second_m) / len(second_m)
+                    if sa < fa - 0.5:
+                        miss_trend = "improving"
+                    elif sa > fa + 0.5:
+                        miss_trend = "worsening"
+
+            display_sessions = all_sorted[-7:]
+            schedules_analysis_text = build_schedules_analysis_text(per_schedule, all_trvs_active_since)
+        else:
+            _LOGGER.debug("[%s] Weekly: no hvac_action_str — using setpoint-based detection", room.room_name)
+            analysis = analyze_heating_sessions(
+                readings,
+                schedules,
+                schedule_time_hhmm=primary["schedule_time"] if primary["schedule_time"] != "n/a" else None,
+                trv_readings=trv_setpoint_readings if trv_setpoint_readings else None,
+                all_trvs_active_since=all_trvs_active_since,
+                standby_temp=standby_temp_val,
+                target_temp=primary["target_temp"],
+            )
+            matched_sessions = analysis.get("sessions", [])
+            per_schedule = {}
+            sessions_total = analysis.get("sessions_total", 0)
+            sessions_on_target = analysis.get("sessions_on_target", 0)
+            average_miss = analysis.get("average_miss", 0.0)
+            avg_rate = analysis.get("avg_rate")
+            success_rate_pct = analysis.get("success_rate", 0.0)
+            consecutive_misses = analysis.get("consecutive_misses", 0)
+            miss_trend = analysis.get("miss_trend", "stable")
+            display_sessions = matched_sessions
+            schedules_analysis_text = build_weekly_accuracy_summary(analysis)
 
         state = self.hass.states.get(room.heating_rate_helper)
         current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
 
-        # Early return when no sessions detected — give context so caller can understand why
-        if not analysis["sessions"]:
+        if sessions_total == 0:
             trvs_early = self._get_room_trvs(room)
             active_since_early = (
                 all_trvs_active_since.strftime("%Y-%m-%d %H:%M")
@@ -1169,7 +1631,7 @@ from(bucket: "{bucket}")
             if all_trvs_active_since:
                 days_reliable = (datetime.now(timezone.utc) - all_trvs_active_since).days
 
-            if trv_readings and all_trvs_active_since and days_reliable is not None and days_reliable < 7:
+            if trv_data and all_trvs_active_since and days_reliable is not None and days_reliable < 7:
                 no_session_details = (
                     f"Reliable TRV data only available since {active_since_early} "
                     f"({days_reliable} day(s) of reliable data). "
@@ -1188,7 +1650,7 @@ from(bucket: "{bucket}")
                 )
                 no_session_report = (
                     f"No heating sessions were detected for {room.room_name} in the last 30 days. "
-                    f"Check that the TRV entities are recording setpoint changes in InfluxDB."
+                    f"Check that the TRV entities are recording hvac_action_str in InfluxDB."
                 )
 
             _LOGGER.warning(
@@ -1208,67 +1670,69 @@ from(bucket: "{bucket}")
             )
             return
 
-        # Weekly accuracy context
-        sessions_7 = analysis.get("sessions", [])
-        weekly_on_target = analysis.get("sessions_on_target", 0)
-        weekly_sessions_total = analysis.get("sessions_total", 0)
-
-        # avg temp at schedule start — skip sessions with None values (TRV sessions may lack room data)
-        valid_temps = [
-            s.get("temp_at_schedule_start", s.get("end_temp"))
-            for s in sessions_7
-            if s.get("temp_at_schedule_start") is not None or s.get("end_temp") is not None
-        ]
-        weekly_avg_temp = round(sum(valid_temps) / len(valid_temps), 1) if valid_temps else "n/a"
-
-        weekly_average_miss = analysis.get("average_miss", 0.0)
-        previous_rate = self.room_states.get(room.room_id, {}).get("previous_rate", current_rate)
-        rate_was_adjusted = "Yes" if abs(current_rate - previous_rate) >= 0.005 else "No"
-
         trvs = self._get_room_trvs(room)
         active_since_str = (
             all_trvs_active_since.strftime("%Y-%m-%d %H:%M")
             if all_trvs_active_since else "n/a"
         )
+        previous_rate = self.room_states.get(room.room_id, {}).get("previous_rate", current_rate)
+        rate_was_adjusted = "Yes" if abs(current_rate - previous_rate) >= 0.005 else "No"
+
+        humidity_sensor_entity = self._get_room_humidity_sensor(room)
+        humidity_analysis_text = build_humidity_analysis_text(humidity_readings, matched_sessions)
+        learning_phase = sessions_total < 7
+        sessions_so_far = sessions_total
+
+        # avg temp at schedule start (for compat variables)
+        valid_temps = [
+            s.get("temp_at_schedule_start") or s.get("end_temp")
+            for s in display_sessions
+            if s.get("temp_at_schedule_start") is not None or s.get("end_temp") is not None
+        ]
+        weekly_avg_temp = round(sum(valid_temps) / len(valid_temps), 1) if valid_temps else "n/a"
 
         prompt = await self.hass.async_add_executor_job(
             load_prompt,
             "weekly_analysis.md",
             {
-                # Current variable names (new bundled prompts)
                 "room_name": room.room_name,
                 "heating_rate": round(current_rate, 3),
                 "analysis_days": 30,
-                "schedule_name": primary["name"],
-                "target_temp": primary["target_temp"],
-                "schedule_time": primary["schedule_time"],
+                "schedule_count": len(schedules),
                 "schedule_lines": build_schedule_lines(schedules),
-                "sessions_text": build_sessions_text(analysis, weekly=True),
-                "weekly_accuracy_summary": build_weekly_accuracy_summary(analysis),
-                "weekly_on_target": weekly_on_target,
-                "weekly_sessions_total": weekly_sessions_total,
-                "weekly_avg_temp": weekly_avg_temp,
-                "weekly_average_miss": weekly_average_miss,
-                "miss_trend": analysis.get("miss_trend", "stable"),
-                "consecutive_misses": analysis.get("consecutive_misses", 0),
+                "schedules_analysis_text": schedules_analysis_text,
+                "humidity_analysis_text": humidity_analysis_text,
                 "rate_was_adjusted": rate_was_adjusted,
                 "previous_rate": round(previous_rate, 3),
                 "avg_outside_temp": weather["outside_temp"],
                 "season": season,
-                # TRV data
                 "trv_entities": ", ".join(trvs) if trvs else "none configured",
                 "trv_count": len(trvs),
-                "standby_temp": standby_temp,
+                "standby_temp": standby_temp_val,
                 "all_trvs_active_since": active_since_str,
-                "session_count": analysis.get("sessions_total", 0),
-                "on_target_count": analysis.get("sessions_on_target", 0),
-                "avg_observed_rate": str(analysis.get("avg_rate") or "n/a"),
+                "session_count": sessions_total,
+                "on_target_count": sessions_on_target,
+                "avg_observed_rate": str(avg_rate or "n/a"),
+                "humidity_sensor": humidity_sensor_entity or "not configured",
+                "learning_phase": learning_phase,
+                "sessions_so_far": sessions_so_far,
                 # Backward-compat aliases for old /config prompt files
+                "schedule_name": primary["name"],
+                "target_temp": primary["target_temp"],
+                "schedule_time": primary["schedule_time"],
+                "sessions_text": build_sessions_text({"sessions": display_sessions}, weekly=True),
+                "weekly_accuracy_summary": schedules_analysis_text,
+                "weekly_on_target": sessions_on_target,
+                "weekly_sessions_total": sessions_total,
+                "weekly_avg_temp": weekly_avg_temp,
+                "weekly_average_miss": average_miss,
+                "miss_trend": miss_trend,
+                "consecutive_misses": consecutive_misses,
                 "current_rate": round(current_rate, 3),
-                "days_analyzed": analysis.get("days_analyzed", 0),
-                "avg_rate": str(analysis.get("avg_rate") or "n/a"),
-                "success_rate": analysis.get("success_rate", 0),
-                "avg_start_time": analysis.get("avg_start_time") or "n/a",
+                "days_analyzed": 30,
+                "avg_rate": str(avg_rate or "n/a"),
+                "success_rate": success_rate_pct,
+                "avg_start_time": "n/a",
             },
             self.hass.config.config_dir,
         )
@@ -1279,15 +1743,14 @@ from(bucket: "{bucket}")
         if not result:
             _LOGGER.error(
                 "[%s] Invalid weekly Ollama response (first 200 chars): %s",
-                room.room_name,
-                (response or "")[:200],
+                room.room_name, (response or "")[:200],
             )
             await self._async_notify_weekly_room_result(
                 room=room,
                 run_ts=run_ts,
                 current_rate=current_rate,
                 suggested_rate=current_rate,
-                success_rate=analysis.get("success_rate"),
+                success_rate=success_rate_pct,
                 outcome=f"No changes suggested for {room.room_name}.",
                 details="AI response was invalid, keeping current value.",
                 weekly_report="No weekly report generated due to invalid AI response.",
@@ -1312,14 +1775,14 @@ from(bucket: "{bucket}")
         details = (
             f"Confidence: {confidence}. "
             f"Reasoning: {reasoning or 'No reasoning provided.'} "
-            f"Avg observed rate: {analysis.get('avg_rate', 'unknown')} °C/min."
+            f"Avg observed rate: {avg_rate or 'unknown'} °C/min."
         )
         await self._async_notify_weekly_room_result(
             room=room,
             run_ts=run_ts,
             current_rate=current_rate,
             suggested_rate=suggested_rate,
-            success_rate=analysis.get("success_rate"),
+            success_rate=success_rate_pct,
             outcome=self._format_weekly_outcome(room.room_name, current_rate, suggested_rate),
             details=details,
             weekly_report=weekly_report,
@@ -1327,6 +1790,5 @@ from(bucket: "{bucket}")
 
         _LOGGER.info(
             "[%s] Weekly report complete. Suggested rate: %.3f",
-            room.room_name,
-            suggested_rate,
+            room.room_name, suggested_rate,
         )

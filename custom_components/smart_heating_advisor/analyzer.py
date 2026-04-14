@@ -2,7 +2,7 @@
 import logging
 import re
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -781,3 +781,531 @@ def analyze_heating_sessions(
         "consecutive_misses": consecutive_misses,
         "miss_trend": miss_trend,
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# hvac_action_str-based session detection (confirmed InfluxDB schema)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def merge_heating_periods(
+    periods: list[tuple],
+) -> list[tuple]:
+    """Merge overlapping or adjacent (start, end) datetime periods.
+
+    Returns a sorted list of non-overlapping periods.
+    """
+    if not periods:
+        return []
+    sorted_periods = sorted(periods, key=lambda p: p[0])
+    merged = [list(sorted_periods[0])]
+    for start, end in sorted_periods[1:]:
+        if start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(s, e) for s, e in merged]
+
+
+def build_schedule_on_periods(
+    state_readings: list[tuple],
+) -> list[dict]:
+    """Build ON periods from schedule state history.
+
+    ``state_readings`` is a list of (timestamp, state_string) tuples where
+    state_string is ``"on"`` or ``"off"``.  Returns a list of dicts with
+    ``start`` and ``end`` keys (datetime objects).  An open-ended ON period
+    at the end of the data is not included.
+    """
+    periods: list[dict] = []
+    on_start: datetime | None = None
+
+    for ts, state in sorted(state_readings, key=lambda x: x[0]):
+        state_lower = str(state).lower()
+        if state_lower == "on" and on_start is None:
+            on_start = ts
+        elif state_lower != "on" and on_start is not None:
+            periods.append({"start": on_start, "end": ts})
+            on_start = None
+
+    return periods
+
+
+def _get_max_setpoint_in_window(
+    trv_data: dict,
+    start: datetime,
+    end: datetime,
+) -> float | None:
+    """Return the max TRV setpoint (``temperature`` field) seen in [start, end]."""
+    max_val: float | None = None
+    for fields in trv_data.values():
+        for ts, val in fields.get("temperature", []):
+            if start <= ts <= end and isinstance(val, (int, float)):
+                max_val = val if max_val is None else max(max_val, val)
+    return max_val
+
+
+def _get_current_temp_nearest(
+    trv_data: dict,
+    target_ts: datetime,
+    window_min: int = 30,
+) -> float | None:
+    """Return the closest ``current_temperature`` reading across all TRVs.
+
+    Returns None when no reading falls within ``window_min`` minutes.
+    """
+    best_val: float | None = None
+    best_diff = float("inf")
+    for fields in trv_data.values():
+        for ts, val in fields.get("current_temperature", []):
+            if not isinstance(val, (int, float)):
+                continue
+            diff = abs((ts - target_ts).total_seconds() / 60)
+            if diff < best_diff and diff <= window_min:
+                best_diff = diff
+                best_val = val
+    return best_val
+
+
+def detect_heating_sessions_from_hvac(
+    trv_data: dict,
+    all_trvs_active_since: datetime | None = None,
+    min_duration_min: int = 10,
+) -> list[dict]:
+    """Detect raw heating sessions from ``hvac_action_str`` readings.
+
+    For each TRV, consecutive ``"heating"`` readings define a heating period.
+    Periods from multiple TRVs are merged (union).  Sessions shorter than
+    ``min_duration_min`` are discarded.  Sessions starting before
+    ``all_trvs_active_since`` are excluded.
+
+    Returns a list of raw session dicts: ``{start, end, duration_min, date, start_time}``.
+    """
+    all_periods: list[tuple] = []
+
+    for entity_id, fields in trv_data.items():
+        hvac_readings = sorted(
+            [(ts, val) for ts, val in fields.get("hvac_action_str", [])],
+            key=lambda x: x[0],
+        )
+        if not hvac_readings:
+            continue
+
+        period_start: datetime | None = None
+        prev_ts: datetime | None = None
+
+        for ts, state in hvac_readings:
+            is_heating = str(state).lower() == "heating"
+
+            if is_heating and period_start is None:
+                period_start = ts
+            elif not is_heating and period_start is not None:
+                all_periods.append((period_start, ts))
+                period_start = None
+            prev_ts = ts
+
+        # Close any open period at end of data
+        if period_start is not None and prev_ts is not None and prev_ts > period_start:
+            all_periods.append((period_start, prev_ts))
+
+    merged = merge_heating_periods(all_periods)
+
+    sessions: list[dict] = []
+    for start, end in merged:
+        duration_min = (end - start).total_seconds() / 60
+        if duration_min < min_duration_min:
+            _LOGGER.debug(
+                "hvac session %s too short (%.0f min < %d min) — skipped",
+                start.strftime("%Y-%m-%d %H:%M"), duration_min, min_duration_min,
+            )
+            continue
+        if all_trvs_active_since and start < all_trvs_active_since:
+            _LOGGER.debug(
+                "hvac session %s before all_trvs_active_since (%s) — excluded",
+                start.strftime("%Y-%m-%d %H:%M"),
+                all_trvs_active_since.strftime("%Y-%m-%d %H:%M"),
+            )
+            continue
+        sessions.append({
+            "start": start,
+            "end": end,
+            "duration_min": round(duration_min, 1),
+            "date": start.strftime("%Y-%m-%d"),
+            "start_time": start.strftime("%H:%M"),
+        })
+
+    return sessions
+
+
+def _build_matched_session(
+    session: dict,
+    sched_info: dict,
+    on_period: dict,
+    room_temp_readings: list[tuple],
+    trv_data: dict,
+) -> dict:
+    """Enrich a raw session with schedule and room-temp context.
+
+    Args:
+        session:            Raw session dict (start, end, duration_min, date, start_time).
+        sched_info:         Dict with entity_id, name, target_temp, schedule_time.
+        on_period:          Schedule ON period dict with start/end datetimes.
+        room_temp_readings: (datetime, float) list for room sensor.
+        trv_data:           Full TRV data dict for current_temperature fallback.
+    """
+    session_start: datetime = session["start"]
+    session_end: datetime = session["end"]
+    schedule_on_ts: datetime = on_period["start"]
+    target_temp: float = sched_info["target_temp"]
+
+    preheat_min = (schedule_on_ts - session_start).total_seconds() / 60
+    duration_min = session["duration_min"]
+
+    # Room temp at session start
+    room_start = _closest_temp_to_ts(room_temp_readings, session_start, window_minutes=30)
+    if room_start is None:
+        room_start = _get_current_temp_nearest(trv_data, session_start, window_min=30)
+
+    # Exclude sessions with no start temperature — can't compute rate or miss
+    if room_start is None:
+        return None
+
+    # Room temp at session end (for rate calculation)
+    room_end = _closest_temp_to_ts(room_temp_readings, session_end, window_minutes=30)
+    if room_end is None:
+        room_end = _get_current_temp_nearest(trv_data, session_end, window_min=30)
+
+    # Room temp when schedule turned ON (= comfort check time)
+    room_at_on = _closest_temp_to_ts(room_temp_readings, schedule_on_ts, window_minutes=30)
+    if room_at_on is None:
+        room_at_on = _get_current_temp_nearest(trv_data, schedule_on_ts, window_min=30)
+
+    # Max TRV setpoint during the session
+    max_setpoint = _get_max_setpoint_in_window(trv_data, session_start, session_end)
+
+    # Observed rate: rise from session_start to session_end divided by duration
+    observed_rate: float | None = None
+    room_rise: float | None = None
+    if room_end is not None:
+        room_rise = room_end - room_start
+        if room_rise > 0 and duration_min > 0:
+            observed_rate = round(room_rise / duration_min, 3)
+
+    # Miss = target − room at schedule ON time
+    target_miss: float | None = None
+    target_reached = False
+    if room_at_on is not None:
+        target_miss = round(target_temp - room_at_on, 1)
+        target_reached = abs(target_miss) <= 0.5
+
+    return {
+        "date": session["date"],
+        "start_time": session["start_time"],
+        "start": session_start,
+        "end": session_end,
+        "duration_min": duration_min,
+        "preheat_min": round(preheat_min, 1),
+        "schedule_entity_id": sched_info["entity_id"],
+        "schedule_name": sched_info["name"],
+        "schedule_time": sched_info.get("schedule_time", "n/a"),
+        "target_temp": target_temp,
+        "trv_target": round(max_setpoint, 1) if max_setpoint is not None else None,
+        # Room-temp fields — canonical names + compat aliases
+        "room_temp_at_start": round(room_start, 1),
+        "room_temp_at_schedule_start": round(room_at_on, 1) if room_at_on is not None else None,
+        "room_temp_at_schedule_on": round(room_at_on, 1) if room_at_on is not None else None,
+        "start_temp": round(room_start, 1),
+        "end_temp": round(room_at_on, 1) if room_at_on is not None else None,
+        "temp_at_schedule_start": round(room_at_on, 1) if room_at_on is not None else None,
+        "room_rise": round(room_rise, 1) if room_rise is not None else None,
+        # Rate fields — both canonical and compat
+        "observed_rate": observed_rate,
+        "rate": observed_rate or 0.0,
+        "target_miss": target_miss,
+        "target_reached": target_reached,
+    }
+
+
+def _match_one_session(
+    session: dict,
+    schedule_on_periods: dict,
+    schedules_info: list[dict],
+    room_temp_readings: list[tuple],
+    trv_data: dict,
+) -> list[dict]:
+    """Match one raw session to zero or more schedule ON periods.
+
+    A schedule ON period matches if it started within
+    [session_start − 120 min, session_end].
+
+    Returns a list of enriched session dicts (one per matched schedule).
+    Unmatched sessions (manual overrides, no schedule match, or no room temp data)
+    are excluded — returns an empty list.
+    """
+    session_start: datetime = session["start"]
+    session_end: datetime = session["end"]
+    window_open = session_start - timedelta(minutes=120)
+
+    matched: list[dict] = []
+
+    for sched_info in schedules_info:
+        entity_id = sched_info["entity_id"]
+        on_periods = schedule_on_periods.get(entity_id, [])
+        for on_period in on_periods:
+            period_start: datetime = on_period["start"]
+            if window_open <= period_start <= session_end:
+                enriched = _build_matched_session(
+                    session, sched_info, on_period, room_temp_readings, trv_data
+                )
+                if enriched is not None:
+                    matched.append(enriched)
+
+    # Unmatched sessions (no schedule match, or all room_start were None) are excluded
+    return matched
+
+
+def match_sessions_to_schedules(
+    sessions: list[dict],
+    schedule_on_periods: dict,
+    schedules_info: list[dict],
+    room_temp_readings: list[tuple],
+    trv_data: dict,
+) -> list[dict]:
+    """Match all raw heating sessions to schedules.
+
+    Returns a flat list of enriched session dicts sorted by date.
+    """
+    result: list[dict] = []
+    for session in sessions:
+        result.extend(
+            _match_one_session(
+                session, schedule_on_periods, schedules_info, room_temp_readings, trv_data
+            )
+        )
+    result.sort(key=lambda s: s["date"])
+    return result
+
+
+def analyze_sessions_per_schedule(
+    sessions: list[dict],
+    schedules_info: list[dict],
+) -> dict:
+    """Compute per-schedule accuracy statistics.
+
+    Returns a dict mapping schedule entity_id → stats dict.
+    """
+    per_sched: dict[str, list[dict]] = {}
+    for s in sessions:
+        eid = s.get("schedule_entity_id")
+        if eid:
+            per_sched.setdefault(eid, []).append(s)
+
+    result: dict = {}
+
+    for sched_info in schedules_info:
+        eid = sched_info["entity_id"]
+        sched_sessions = per_sched.get(eid, [])
+
+        total = len(sched_sessions)
+        misses = [
+            s["target_miss"] for s in sched_sessions if s.get("target_miss") is not None
+        ]
+        rates = [
+            s["observed_rate"] for s in sched_sessions
+            if s.get("observed_rate") is not None and s["observed_rate"] > 0
+        ]
+        preheat_mins = [
+            s["preheat_min"] for s in sched_sessions if s.get("preheat_min") is not None
+        ]
+        room_temps_at_start = [
+            s["room_temp_at_start"] for s in sched_sessions
+            if s.get("room_temp_at_start") is not None
+        ]
+        room_temps_at_schedule_start = [
+            s["room_temp_at_schedule_start"] for s in sched_sessions
+            if s.get("room_temp_at_schedule_start") is not None
+        ]
+
+        on_target = sum(1 for m in misses if abs(m) <= 0.5)
+        avg_miss = round(sum(misses) / len(misses), 1) if misses else None
+        avg_rate = round(sum(rates) / len(rates), 3) if rates else None
+        avg_preheat = round(sum(preheat_mins) / len(preheat_mins), 1) if preheat_mins else None
+        avg_room_temp_at_start = round(sum(room_temps_at_start) / len(room_temps_at_start), 1) if room_temps_at_start else None
+        avg_room_temp_at_schedule_start = round(sum(room_temps_at_schedule_start) / len(room_temps_at_schedule_start), 1) if room_temps_at_schedule_start else None
+
+        # Recommended preheat: (target_temp − avg_room_temp_at_start) / avg_rate
+        recommended_preheat: float | None = None
+        target_temp_val = sched_info.get("target_temp")
+        if avg_rate and avg_rate > 0 and avg_room_temp_at_start is not None and target_temp_val is not None:
+            temp_gap = target_temp_val - avg_room_temp_at_start
+            if temp_gap > 0:
+                recommended_preheat = round(temp_gap / avg_rate, 0)
+
+        # Miss trend: compare first half vs second half
+        sched_misses_sorted = [
+            s["target_miss"] for s in sorted(sched_sessions, key=lambda x: x["date"])
+            if s.get("target_miss") is not None
+        ]
+        miss_trend_sched = "stable"
+        half = len(sched_misses_sorted) // 2
+        if half >= 2:
+            first_half = sched_misses_sorted[:half]
+            second_half = sched_misses_sorted[half:]
+            fa = sum(first_half) / len(first_half)
+            sa = sum(second_half) / len(second_half)
+            if sa < fa - 0.5:
+                miss_trend_sched = "improving"
+            elif sa > fa + 0.5:
+                miss_trend_sched = "worsening"
+
+        result[eid] = {
+            "entity_id": eid,
+            "name": sched_info["name"],
+            "target_temp": target_temp_val,
+            "schedule_time": sched_info.get("schedule_time", "n/a"),
+            "sessions_total": total,
+            "sessions_on_target": on_target,
+            "sessions_with_miss": len([m for m in misses if m > 0.5]),
+            "avg_miss": avg_miss,
+            "avg_rate": avg_rate,
+            "avg_preheat_min": avg_preheat,
+            "recommended_preheat_min": recommended_preheat,
+            "avg_room_temp_at_start": avg_room_temp_at_start,
+            "avg_room_temp_at_schedule_start": avg_room_temp_at_schedule_start,
+            "miss_trend": miss_trend_sched,
+            "sessions": sched_sessions[-7:],
+        }
+
+    return result
+
+
+def _format_preheat_start(schedule_time: str, preheat_min: float) -> str:
+    """Return HH:MM for preheat start given schedule time and minutes before.
+
+    Example: schedule_time="07:30", preheat_min=25.0 → "07:05"
+    """
+    try:
+        h, m = map(int, schedule_time.split(":"))
+        total = h * 60 + m - int(preheat_min)
+        total = total % (24 * 60)
+        return f"{total // 60:02d}:{total % 60:02d}"
+    except (ValueError, AttributeError):
+        return "n/a"
+
+
+def build_schedules_analysis_text(
+    per_schedule: dict,
+    all_trvs_active_since: datetime | None,
+) -> str:
+    """Build the per-schedule accuracy block for prompts.
+
+    Shows for each schedule: stats summary, session detail table.
+    If fewer than 3 sessions: shows "Insufficient data" message.
+    """
+    if not per_schedule:
+        return "  No schedule analysis available.\n"
+
+    lines = ""
+    for stats in per_schedule.values():
+        name = stats["name"]
+        total = stats["sessions_total"]
+        on_target = stats["sessions_on_target"]
+        target_temp = stats.get("target_temp")
+        sched_time = stats.get("schedule_time", "n/a")
+        avg_miss = stats.get("avg_miss")
+        avg_rate = stats.get("avg_rate")
+        rec_preheat = stats.get("recommended_preheat_min")
+        avg_room_temp_at_schedule_start = stats.get("avg_room_temp_at_schedule_start")
+        miss_trend = stats.get("miss_trend", "stable")
+
+        lines += f"\nSchedule: {name}\n"
+        lines += f"Target: {target_temp}°C at {sched_time}\n" if target_temp else f"Schedule time: {sched_time}\n"
+        lines += f"Sessions: {total}\n"
+
+        if total < 3:
+            lines += "Insufficient data (fewer than 3 sessions) — no reliable statistics yet.\n"
+            continue
+
+        lines += f"Target reached: {on_target} of {total}\n"
+        if avg_room_temp_at_schedule_start is not None:
+            lines += f"Average room temp at schedule start: {avg_room_temp_at_schedule_start:.1f}°C\n"
+        if avg_miss is not None:
+            lines += f"Average miss: {avg_miss:+.1f}°C\n"
+        if avg_rate is not None:
+            lines += f"Real heating rate: {avg_rate:.3f}°C/min\n"
+        if rec_preheat is not None:
+            lines += f"Recommended pre-heat: {rec_preheat:.0f} min\n"
+            if sched_time != "n/a":
+                start_str = _format_preheat_start(sched_time, rec_preheat)
+                lines += f"Recommended pre-heat start: {start_str}\n"
+        lines += f"Miss trend: {miss_trend}\n"
+
+        # Per-session detail
+        sessions = stats.get("sessions", [])
+        if sessions:
+            lines += "\nSession detail:\n"
+            for s in sessions:
+                date = s.get("date", "?")
+                room_at_start = s.get("room_temp_at_schedule_start")
+                miss = s.get("target_miss")
+                rate = s.get("observed_rate")
+                reached = "reached" if s.get("target_reached") else "missed"
+                temp_str = f"{room_at_start:.1f}°C" if room_at_start is not None else "n/a"
+                miss_str = f"{miss:+.1f}°C" if miss is not None else "n/a"
+                rate_str = f"{rate:.3f}°C/min" if rate is not None else "n/a"
+                lines += f"  {date} | at schedule start {temp_str} | miss {miss_str} | rate {rate_str} | {reached}\n"
+
+    if all_trvs_active_since:
+        lines += (
+            f"\n(Sessions before {all_trvs_active_since.strftime('%Y-%m-%d')} "
+            f"excluded — TRV unreliable before that date)\n"
+        )
+
+    return lines
+
+
+def build_humidity_analysis_text(
+    humidity_readings: list[tuple],
+    sessions: list[dict],
+) -> str:
+    """Build a brief humidity summary for prompts.
+
+    Shows baseline humidity and per-session peak humidity in the window
+    (session_start, session_end + 120 min).
+    """
+    if not humidity_readings:
+        return "  No humidity data available.\n"
+
+    all_vals = [v for _, v in humidity_readings if isinstance(v, (int, float))]
+    if not all_vals:
+        return "  No humidity readings available.\n"
+
+    avg_baseline = round(sum(all_vals) / len(all_vals), 1)
+
+    # Peak humidity per session in (session_start, session_end + 120 min)
+    session_peaks: list[str] = []
+    for s in sessions:
+        start = s.get("start")
+        end = s.get("end")
+        if start is None or end is None:
+            continue
+        window_end = end + timedelta(minutes=120)
+        peak_val: float | None = None
+        peak_ts: datetime | None = None
+        for ts, val in humidity_readings:
+            if isinstance(val, (int, float)) and start <= ts <= window_end:
+                if peak_val is None or val > peak_val:
+                    peak_val = val
+                    peak_ts = ts
+        if peak_val is not None and peak_ts is not None:
+            session_peaks.append(
+                f"    {s.get('date', '?')}: peak {peak_val:.0f}% at {peak_ts.strftime('%H:%M')}"
+            )
+
+    if session_peaks:
+        peaks_text = "\n".join(session_peaks)
+        return (
+            f"  Baseline average humidity: {avg_baseline}%\n"
+            f"  Peak humidity per session (during + 120 min after heating):\n"
+            f"{peaks_text}\n"
+        )
+    return f"  Average humidity: {avg_baseline}% (no session overlap found).\n"

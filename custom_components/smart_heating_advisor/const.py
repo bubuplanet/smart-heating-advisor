@@ -13,10 +13,10 @@ DEFAULT_INFLUXDB_ORG = "home_assistant"
 DEFAULT_INFLUXDB_BUCKET = "home_assistant"
 
 # ── Heating defaults ──────────────────────────────────────────────────
-DEFAULT_HEATING_RATE = 0.15
+DEFAULT_HEATING_RATE = 0.08
 MIN_HEATING_RATE = 0.05
 MAX_HEATING_RATE = 0.30
-DEFAULT_TARGET_TEMP = 21
+DEFAULT_TARGET_TEMP = 22
 DEFAULT_TARGET_TIME = "06:00"
 
 # ── Config keys ───────────────────────────────────────────────────────

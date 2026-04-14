@@ -1,12 +1,12 @@
 # SHA — Weekly Analysis Prompt
 # Variables: {room_name}, {heating_rate}, {analysis_days},
-#            {schedule_name}, {target_temp}, {schedule_time},
-#            {schedule_lines}, {sessions_text}, {weekly_accuracy_summary},
-#            {weekly_on_target}, {weekly_sessions_total}, {weekly_avg_temp},
-#            {weekly_average_miss}, {miss_trend}, {consecutive_misses},
-#            {rate_was_adjusted}, {previous_rate}, {avg_outside_temp}, {season},
+#            {schedule_count}, {schedule_lines},
+#            {schedules_analysis_text}, {humidity_analysis_text},
 #            {trv_entities}, {trv_count}, {standby_temp}, {all_trvs_active_since},
-#            {session_count}, {on_target_count}, {avg_observed_rate}
+#            {session_count}, {on_target_count}, {avg_observed_rate},
+#            {rate_was_adjusted}, {previous_rate},
+#            {avg_outside_temp}, {season},
+#            {learning_phase}, {sessions_so_far}, {humidity_sensor}
 # Called by: coordinator.py _async_run_weekly_analysis_for_room
 
 You are a smart home heating advisor writing a weekly performance report for {room_name}.
@@ -16,12 +16,7 @@ Your audience is the homeowner — use plain, non-technical language.
 ## Current heating rate: {heating_rate}°C/min
 ## Analysis period: last {analysis_days} days
 
-## Primary Schedule
-- Schedule: {schedule_name}
-- Target temperature: {target_temp}°C
-- Schedule start time: {schedule_time}
-
-## Active Schedules
+## Active Schedules ({schedule_count})
 {schedule_lines}
 
 ## TRV Configuration
@@ -30,17 +25,16 @@ Your audience is the homeowner — use plain, non-technical language.
 - Reliable data from: {all_trvs_active_since}
   (sessions before this date are excluded — TRV was broken or unconfigured)
 
-## Recent Heating Sessions
-{sessions_text}
+## Learning Phase
+- Learning phase: {learning_phase}
+- Sessions so far: {sessions_so_far}
+- Humidity sensor: {humidity_sensor}
 
-## Pre-Heat Accuracy This Week
-{weekly_accuracy_summary}
-- Target reached on time: {weekly_on_target} of {weekly_sessions_total} sessions
-- Average temperature at end of heating ramp: {weekly_avg_temp}°C
-- Average miss (target − reached): {weekly_average_miss}°C
-- Average observed room heating rate: {avg_observed_rate}°C/min
-- Miss trend: {miss_trend}
-- Consecutive misses (most recent streak): {consecutive_misses}
+## Per-Schedule Heating Accuracy
+{schedules_analysis_text}
+
+## Humidity Context
+{humidity_analysis_text}
 
 ## Rate Change History
 - Heating rate this period: {heating_rate}°C/min
@@ -67,6 +61,12 @@ Write a weekly report section that:
 Also provide a recommended heating_rate based on the data.
 If the daily analysis already adjusted the rate this week, confirm or refine it.
 Keep heating_rate between 0.05 and 0.30.
+If learning_phase is True or session_count < 3: note that data is limited and avoid
+aggressive rate changes; set confidence to "low".
+If any schedule shows recommended_preheat_min > 180: note that the radiator may be
+underpowered for the room size.
+If humidity_sensor is configured (not "not configured"): mention whether humidity
+patterns are consistent with expected room usage.
 
 Respond ONLY with a valid JSON object:
 {

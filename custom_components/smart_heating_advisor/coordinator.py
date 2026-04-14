@@ -1125,8 +1125,6 @@ class SmartHeatingCoordinator:
 
     async def async_run_daily_analysis(self) -> None:
         """Run daily heating rate analysis for all discovered rooms."""
-        _LOGGER.info("Starting daily heating analysis")
-
         if not await self.ollama.async_test_connection():
             await self._async_notify(
                 "⚠️ SHA — Daily Analysis Failed",
@@ -1139,14 +1137,32 @@ class SmartHeatingCoordinator:
             _LOGGER.warning("No rooms discovered — skipping daily analysis")
             return
 
+        total = len(rooms)
+        _LOGGER.info("[SHA] Daily analysis starting — %d room(s)", total)
         weather = self._get_weather_data()
         season = get_season(datetime.now().month)
 
-        for room in rooms:
-            _LOGGER.info("[%s] Starting daily analysis", room.room_name)
-            await self._async_run_daily_analysis_for_room(
-                room, weather, season
-            )
+        success_count = 0
+        for idx, room in enumerate(rooms, start=1):
+            _LOGGER.info("[%s] Analysis starting (%d of %d)", room.room_name, idx, total)
+            try:
+                stats = await self._async_run_daily_analysis_for_room(room, weather, season)
+                new_rate = stats.get("new_rate") if stats else None
+                session_count = stats.get("session_count", 0) if stats else 0
+                on_target = stats.get("on_target", 0) if stats else 0
+                rate_str = f"{new_rate:.3f}" if new_rate is not None else "n/a"
+                _LOGGER.info(
+                    "[%s] Analysis complete — rate: %s°C/min, sessions: %d, target accuracy: %d of %d",
+                    room.room_name, rate_str, session_count, on_target, session_count,
+                )
+                success_count += 1
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.error(
+                    "[%s] Analysis failed — %s. Continuing with next room.",
+                    room.room_name, exc,
+                )
+
+        _LOGGER.info("[SHA] Daily analysis complete — %d of %d rooms processed", success_count, total)
 
     async def _async_run_daily_analysis_for_room(
         self, room: RoomConfig, weather: dict, season: str
@@ -1175,7 +1191,7 @@ class SmartHeatingCoordinator:
                 outcome=f"No changes needed in {room.room_name}.",
                 details=f"Analysis ran but not enough data ({len(readings)} readings).",
             )
-            return
+            return {"new_rate": None, "session_count": 0, "on_target": 0}
 
         # ── 2. TRV data (hvac_action_str + setpoints + current_temp) ─
         trv_data = await self.async_query_trv_data_full(room, days=30)
@@ -1313,10 +1329,11 @@ class SmartHeatingCoordinator:
             state = self.hass.states.get(room.heating_rate_helper)
             current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
 
-            _LOGGER.info(
-                "[%s] No heating sessions detected "
-                "(TRVs=%d, reliable_since=%s, days_reliable=%s) — asking Ollama for guidance",
-                room.room_name, len(trvs_early), active_since_early, days_reliable,
+            _LOGGER.warning(
+                "[%s] No sessions detected — %s days of data available. TRVs: %s",
+                room.room_name,
+                days_reliable if days_reliable is not None else "unknown",
+                ", ".join(trvs_early) if trvs_early else "none",
             )
 
             if days_reliable is not None and days_reliable < 7:
@@ -1374,7 +1391,7 @@ class SmartHeatingCoordinator:
                 outcome=f"No changes — no heating sessions detected in {room.room_name}.",
                 details=details_text,
             )
-            return
+            return {"new_rate": current_rate, "session_count": 0, "on_target": 0}
 
         state = self.hass.states.get(room.heating_rate_helper)
         current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
@@ -1454,7 +1471,7 @@ class SmartHeatingCoordinator:
                 outcome=f"No changes needed in {room.room_name}.",
                 details="AI response was invalid, keeping previous heating rate.",
             )
-            return
+            return {"new_rate": current_rate, "session_count": sessions_total, "on_target": sessions_on_target}
 
         new_rate = float(result["heating_rate"])
         reasoning = result.get("reasoning", result.get("rate_adjustment_reason", "No reasoning provided"))
@@ -1502,10 +1519,7 @@ class SmartHeatingCoordinator:
             f"Reason: {rate_adjustment_reason or reasoning}",
         )
 
-        _LOGGER.info(
-            "[%s] Daily analysis complete. New rate: %.3f (accuracy=%s%%, avg_miss=%s°C)",
-            room.room_name, new_rate, target_accuracy_percent, average_miss_celsius,
-        )
+        return {"new_rate": new_rate, "session_count": sessions_total, "on_target": sessions_on_target}
 
     # ──────────────────────────────────────────────────────────────────
     # Weekly analysis
@@ -1513,8 +1527,6 @@ class SmartHeatingCoordinator:
 
     async def async_run_weekly_analysis(self) -> None:
         """Run weekly report analysis for all discovered rooms."""
-        _LOGGER.info("Starting weekly heating analysis (report only)")
-
         if not await self.ollama.async_test_connection():
             await self._async_notify(
                 "⚠️ SHA — Weekly Report Failed",
@@ -1527,12 +1539,32 @@ class SmartHeatingCoordinator:
             _LOGGER.warning("No rooms discovered — skipping weekly analysis")
             return
 
+        total = len(rooms)
+        _LOGGER.info("[SHA] Weekly analysis starting — %d room(s)", total)
         weather = self._get_weather_data()
         season = get_season(datetime.now().month)
 
-        for room in rooms:
-            _LOGGER.info("[%s] Starting weekly analysis", room.room_name)
-            await self._async_run_weekly_analysis_for_room(room, weather, season)
+        success_count = 0
+        for idx, room in enumerate(rooms, start=1):
+            _LOGGER.info("[%s] Analysis starting (%d of %d)", room.room_name, idx, total)
+            try:
+                stats = await self._async_run_weekly_analysis_for_room(room, weather, season)
+                new_rate = stats.get("new_rate") if stats else None
+                session_count = stats.get("session_count", 0) if stats else 0
+                on_target = stats.get("on_target", 0) if stats else 0
+                rate_str = f"{new_rate:.3f}" if new_rate is not None else "n/a"
+                _LOGGER.info(
+                    "[%s] Analysis complete — rate: %s°C/min, sessions: %d, target accuracy: %d of %d",
+                    room.room_name, rate_str, session_count, on_target, session_count,
+                )
+                success_count += 1
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.error(
+                    "[%s] Analysis failed — %s. Continuing with next room.",
+                    room.room_name, exc,
+                )
+
+        _LOGGER.info("[SHA] Weekly analysis complete — %d of %d rooms processed", success_count, total)
 
     async def _async_run_weekly_analysis_for_room(
         self, room: RoomConfig, weather: dict, season: str
@@ -1554,7 +1586,7 @@ class SmartHeatingCoordinator:
                 details=f"Analysis ran but not enough data ({len(readings)} readings).",
                 weekly_report="No weekly report generated due to insufficient data.",
             )
-            return
+            return {"new_rate": None, "session_count": 0, "on_target": 0}
 
         # ── 2. TRV data ──────────────────────────────────────────────
         trv_data = await self.async_query_trv_data_full(room, days=30)
@@ -1669,10 +1701,11 @@ class SmartHeatingCoordinator:
             if all_trvs_active_since:
                 days_reliable = (datetime.now(timezone.utc) - all_trvs_active_since).days
 
-            _LOGGER.info(
-                "[%s] Weekly: no heating sessions detected "
-                "(TRVs=%d, reliable_since=%s, days_reliable=%s) — asking Ollama for report",
-                room.room_name, len(trvs_early), active_since_early, days_reliable,
+            _LOGGER.warning(
+                "[%s] No sessions detected — %s days of data available. TRVs: %s",
+                room.room_name,
+                days_reliable if days_reliable is not None else "unknown",
+                ", ".join(trvs_early) if trvs_early else "none",
             )
 
             if days_reliable is not None and days_reliable < 7:
@@ -1727,7 +1760,7 @@ class SmartHeatingCoordinator:
                 details=details_text,
                 weekly_report=weekly_report_text,
             )
-            return
+            return {"new_rate": current_rate, "session_count": 0, "on_target": 0}
 
         trvs = self._get_room_trvs(room)
         active_since_str = (
@@ -1814,7 +1847,7 @@ class SmartHeatingCoordinator:
                 details="AI response was invalid, keeping current value.",
                 weekly_report="No weekly report generated due to invalid AI response.",
             )
-            return
+            return {"new_rate": current_rate, "session_count": sessions_total, "on_target": sessions_on_target}
 
         confidence = result.get("confidence", "unknown")
         weekly_report = result.get("weekly_report", "No weekly report generated.")
@@ -1847,7 +1880,4 @@ class SmartHeatingCoordinator:
             weekly_report=weekly_report,
         )
 
-        _LOGGER.info(
-            "[%s] Weekly report complete. Suggested rate: %.3f",
-            room.room_name, suggested_rate,
-        )
+        return {"new_rate": suggested_rate, "session_count": sessions_total, "on_target": sessions_on_target}

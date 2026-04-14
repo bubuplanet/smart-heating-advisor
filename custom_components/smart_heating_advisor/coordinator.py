@@ -921,8 +921,31 @@ from(bucket: "{bucket}")
         )
 
         if not analysis["sessions"]:
+            trvs_early = self._get_room_trvs(room)
+            active_since_early = (
+                all_trvs_active_since.strftime("%Y-%m-%d %H:%M")
+                if all_trvs_active_since else "n/a"
+            )
+            days_reliable: int | None = None
+            if all_trvs_active_since:
+                days_reliable = (datetime.now(timezone.utc) - all_trvs_active_since).days
+
+            if trv_readings and all_trvs_active_since and days_reliable is not None and days_reliable < 3:
+                no_session_details = (
+                    f"Reliable TRV data only available since {active_since_early} "
+                    f"({days_reliable} day(s)). "
+                    f"Need at least 3 days before daily analysis can run reliably."
+                )
+            else:
+                no_session_details = (
+                    f"No heating sessions detected in the last 7 days. "
+                    f"TRVs configured: {len(trvs_early)}. "
+                    f"Reliable data since: {active_since_early}."
+                )
             _LOGGER.warning(
-                "[%s] No heating sessions detected — skipping", room.room_name
+                "[%s] No heating sessions detected "
+                "(TRVs=%d, reliable_since=%s, days_reliable=%s) — skipping",
+                room.room_name, len(trvs_early), active_since_early, days_reliable,
             )
             await self._async_notify_daily_room_result(
                 room=room,
@@ -931,7 +954,7 @@ from(bucket: "{bucket}")
                 new_rate=None,
                 success_rate=analysis.get("success_rate"),
                 outcome=f"No changes needed in {room.room_name}.",
-                details="Analysis ran but no heating sessions were detected.",
+                details=no_session_details,
             )
             return
 
@@ -1134,6 +1157,56 @@ from(bucket: "{bucket}")
 
         state = self.hass.states.get(room.heating_rate_helper)
         current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
+
+        # Early return when no sessions detected — give context so caller can understand why
+        if not analysis["sessions"]:
+            trvs_early = self._get_room_trvs(room)
+            active_since_early = (
+                all_trvs_active_since.strftime("%Y-%m-%d %H:%M")
+                if all_trvs_active_since else "n/a"
+            )
+            days_reliable: int | None = None
+            if all_trvs_active_since:
+                days_reliable = (datetime.now(timezone.utc) - all_trvs_active_since).days
+
+            if trv_readings and all_trvs_active_since and days_reliable is not None and days_reliable < 7:
+                no_session_details = (
+                    f"Reliable TRV data only available since {active_since_early} "
+                    f"({days_reliable} day(s) of reliable data). "
+                    f"Need at least 7 days before sessions can be analysed reliably."
+                )
+                no_session_report = (
+                    f"SHA is still collecting reliable data for {room.room_name} "
+                    f"(reliable since {active_since_early}, {days_reliable} day(s)). "
+                    f"A full report will be available after 7 days of data."
+                )
+            else:
+                no_session_details = (
+                    f"No heating sessions detected in the last 30 days. "
+                    f"TRVs configured: {len(trvs_early)}. "
+                    f"Reliable data since: {active_since_early}."
+                )
+                no_session_report = (
+                    f"No heating sessions were detected for {room.room_name} in the last 30 days. "
+                    f"Check that the TRV entities are recording setpoint changes in InfluxDB."
+                )
+
+            _LOGGER.warning(
+                "[%s] Weekly: no heating sessions detected "
+                "(TRVs=%d, reliable_since=%s, days_reliable=%s)",
+                room.room_name, len(trvs_early), active_since_early, days_reliable,
+            )
+            await self._async_notify_weekly_room_result(
+                room=room,
+                run_ts=run_ts,
+                current_rate=current_rate,
+                suggested_rate=current_rate,
+                success_rate=0,
+                outcome=f"No changes suggested for {room.room_name}.",
+                details=no_session_details,
+                weekly_report=no_session_report,
+            )
+            return
 
         # Weekly accuracy context
         sessions_7 = analysis.get("sessions", [])

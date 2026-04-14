@@ -549,6 +549,41 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         _LOGGER.info("SHA: v2 migration complete")
 
+    # ── Phase 1b: TRV backfill migration ─────────────────────────────────
+    # The Phase 1 migration created subentries with trvs: [] (empty).
+    # Rooms that were set up via the initial config flow had their TRVs stored
+    # in entry.data[CONF_ROOM_CONFIGS] but those were never ported to the
+    # subentry data.  This one-time migration reads TRVs from the legacy config
+    # and writes them to any subentry that currently has trvs: [].
+    if not entry.data.get("sha_trv_migration_complete"):
+        legacy_trvs_by_id: dict[str, list] = {
+            _room_name_to_id(r.get("room_name", "")): r.get("trvs", [])
+            for r in entry.data.get(CONF_ROOM_CONFIGS, [])
+            if r.get("room_name")
+        }
+        for subentry in entry.subentries.values():
+            sub_room = subentry.data.get("room_name", "")
+            if not sub_room:
+                continue
+            if subentry.data.get("trvs"):
+                continue  # Already has TRVs — skip
+            room_id = _room_name_to_id(sub_room)
+            legacy_trvs = legacy_trvs_by_id.get(room_id, [])
+            if legacy_trvs:
+                hass.config_entries.async_update_subentry(
+                    entry,
+                    subentry,
+                    data={**dict(subentry.data), "trvs": legacy_trvs},
+                )
+                _LOGGER.info(
+                    "SHA: TRV migration — backfilled %d TRV(s) for room '%s': %s",
+                    len(legacy_trvs), sub_room, legacy_trvs,
+                )
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, "sha_trv_migration_complete": True}
+        )
+        _LOGGER.info("SHA: TRV backfill migration complete")
+
     # ── Phase 2: Sync coordinator with SubEntries (authoritative source) ──
     # SubEntries are the single source of truth after migration.
     # • New subentry (room added via "+ Add Room") → register in coordinator.

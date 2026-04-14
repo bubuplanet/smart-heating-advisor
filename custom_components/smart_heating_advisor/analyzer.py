@@ -770,7 +770,7 @@ def analyze_heating_sessions(
 
     return {
         "sessions": sessions[-7:],
-        "avg_rate": round(avg_rate, 3),
+        "avg_rate": round(avg_rate, 3) if avg_rate is not None else None,
         "success_rate": success_rate,
         "avg_start_time": avg_start_time,
         "days_analyzed": sessions_total,

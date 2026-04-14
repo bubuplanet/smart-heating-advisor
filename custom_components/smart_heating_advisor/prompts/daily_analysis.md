@@ -4,12 +4,15 @@
 #            {schedule_lines}, {sessions_table}, {sessions_total},
 #            {sessions_on_target}, {sessions_with_miss}, {average_miss},
 #            {consecutive_misses}, {miss_trend},
-#            {outside_temp}, {tomorrow_min}, {tomorrow_max}, {season}
+#            {outside_temp}, {tomorrow_min}, {tomorrow_max}, {season},
+#            {trv_entities}, {trv_count}, {standby_temp}, {all_trvs_active_since},
+#            {session_count}, {on_target_count}, {avg_observed_rate}
 # Called by: coordinator.py _async_run_daily_analysis_for_room
 #
-# Note on "temp_reached": this is the temperature the room achieved at the
-# schedule start time (looked up from InfluxDB readings), or the end of the
-# detected heating ramp when no reading is available at that time.
+# Note on "temp_reached": when TRVs are configured, sessions are detected from
+# TRV setpoint changes (start = any TRV above standby+5°C, end = all TRVs below
+# that threshold). Room temperature is cross-referenced at ±60 min. When no room
+# sensor reading is available near the schedule time, "Reached" shows n/a.
 # Miss = target_temp - temp_reached. Positive = room too cold. Negative = overshot.
 
 You are a smart home heating advisor. Your task is to evaluate whether the
@@ -28,9 +31,15 @@ on time, and to recommend a heating rate correction if needed.
 ## Active Schedules
 {schedule_lines}
 
+## TRV Configuration
+- TRV entities ({trv_count}): {trv_entities}
+- Detected standby setpoint: {standby_temp}°C
+- Reliable data from: {all_trvs_active_since}
+  (sessions before this date are excluded — TRV was broken or unconfigured)
+
 ## Heating Session Accuracy
-Each row shows one detected heating session.
-"Reached" = room temperature at {schedule_time} (schedule start time), or at end of heating ramp when no reading is available.
+Sessions detected from TRV setpoint changes. Room temperature cross-referenced at ±60 min.
+"Reached" = room temperature at {schedule_time} (schedule start time), or n/a when no reading was close enough.
 "Miss" = target_temp − temp_reached. Positive = room was too cold. Negative = overshot.
 
 {sessions_table}
@@ -40,6 +49,7 @@ Each row shows one detected heating session.
 - Sessions on target (miss ≤ 0.5°C): {sessions_on_target}
 - Sessions that missed target (miss > 0.5°C): {sessions_with_miss}
 - Average miss: {average_miss}°C
+- Average observed room heating rate: {avg_observed_rate}°C/min
 - Consecutive misses (most recent streak): {consecutive_misses}
 - Miss trend: {miss_trend}
 
@@ -61,6 +71,8 @@ Each row shows one detected heating session.
 6. Keep heating_rate between 0.05 and 0.30.
 7. Only suggest a change when the adjustment is > 0.01°C/min.
 8. Consider outside temperature: colder outside generally requires a higher rate.
+9. If session_count < 3 or all_trvs_active_since is very recent (< 3 days ago):
+   lower your confidence to "low" — insufficient data for a reliable recommendation.
 
 Respond ONLY with a valid JSON object — no explanation text outside the JSON:
 {

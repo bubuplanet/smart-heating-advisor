@@ -1143,7 +1143,7 @@ class SmartHeatingCoordinator:
         season = get_season(datetime.now().month)
 
         for room in rooms:
-            _LOGGER.info("[%s] Running daily analysis", room.room_name)
+            _LOGGER.info("[%s] Starting daily analysis", room.room_name)
             await self._async_run_daily_analysis_for_room(
                 room, weather, season
             )
@@ -1310,31 +1310,69 @@ class SmartHeatingCoordinator:
             if all_trvs_active_since:
                 days_reliable = (datetime.now(timezone.utc) - all_trvs_active_since).days
 
-            if trv_data and all_trvs_active_since and days_reliable is not None and days_reliable < 3:
-                no_session_details = (
-                    f"Reliable TRV data only available since {active_since_early} "
-                    f"({days_reliable} day(s)). "
-                    f"Need at least 3 days before daily analysis can run reliably."
-                )
-            else:
-                no_session_details = (
-                    f"No heating sessions detected in the last 7 days. "
-                    f"TRVs configured: {len(trvs_early)}. "
-                    f"Reliable data since: {active_since_early}."
-                )
-            _LOGGER.warning(
+            state = self.hass.states.get(room.heating_rate_helper)
+            current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
+
+            _LOGGER.info(
                 "[%s] No heating sessions detected "
-                "(TRVs=%d, reliable_since=%s, days_reliable=%s) — skipping",
+                "(TRVs=%d, reliable_since=%s, days_reliable=%s) — asking Ollama for guidance",
                 room.room_name, len(trvs_early), active_since_early, days_reliable,
             )
+
+            if days_reliable is not None and days_reliable < 7:
+                phase_instruction = (
+                    f"SHA is still in the learning phase — only {days_reliable} day(s) of "
+                    f"reliable TRV data available. Explain to the homeowner that the system "
+                    f"will improve automatically as more data is collected."
+                )
+            else:
+                phase_instruction = (
+                    f"Reliable TRV data has been available for "
+                    f"{days_reliable if days_reliable is not None else 'an unknown number of'} "
+                    f"days, but no heating sessions were detected. This is unexpected. "
+                    f"Flag to the homeowner that TRVs may not be reporting hvac_action_str "
+                    f"to InfluxDB correctly, and suggest checking the InfluxDB integration."
+                )
+
+            no_session_prompt = (
+                f"No heating sessions detected yet for {room.room_name}.\n"
+                f"TRVs configured: {', '.join(trvs_early) if trvs_early else 'none'}\n"
+                f"Reliable data since: {active_since_early}\n"
+                f"Days of reliable data: {days_reliable if days_reliable is not None else 'unknown'}\n\n"
+                f"{phase_instruction}\n\n"
+                f"Current heating rate: {current_rate:.3f}°C/min — keep unchanged, no session data to adjust from.\n\n"
+                f"Respond ONLY with a valid JSON object:\n"
+                f"{{\n"
+                f'  "heating_rate": {current_rate:.3f},\n'
+                f'  "rate_adjustment_reason": "No sessions detected — heating rate unchanged",\n'
+                f'  "target_accuracy_percent": null,\n'
+                f'  "average_miss_celsius": null,\n'
+                f'  "confidence": "low",\n'
+                f'  "recommendation": "Wait for more data before making adjustments",\n'
+                f'  "analysis_summary": "2-3 sentence plain-language message to the homeowner"\n'
+                f"}}"
+            )
+
+            response = await self.ollama.async_generate(no_session_prompt)
+            no_session_result = await self.ollama.async_parse_json_response(response)
+
+            if no_session_result:
+                details_text = (
+                    no_session_result.get("analysis_summary")
+                    or no_session_result.get("recommendation")
+                    or phase_instruction
+                )
+            else:
+                details_text = phase_instruction
+
             await self._async_notify_daily_room_result(
                 room=room,
                 run_ts=run_ts,
-                old_rate=None,
-                new_rate=None,
-                success_rate=None,
-                outcome=f"No changes needed in {room.room_name}.",
-                details=no_session_details,
+                old_rate=current_rate,
+                new_rate=current_rate,
+                success_rate=0,
+                outcome=f"No changes — no heating sessions detected in {room.room_name}.",
+                details=details_text,
             )
             return
 
@@ -1493,7 +1531,7 @@ class SmartHeatingCoordinator:
         season = get_season(datetime.now().month)
 
         for room in rooms:
-            _LOGGER.info("[%s] Running weekly analysis", room.room_name)
+            _LOGGER.info("[%s] Starting weekly analysis", room.room_name)
             await self._async_run_weekly_analysis_for_room(room, weather, season)
 
     async def _async_run_weekly_analysis_for_room(
@@ -1631,42 +1669,63 @@ class SmartHeatingCoordinator:
             if all_trvs_active_since:
                 days_reliable = (datetime.now(timezone.utc) - all_trvs_active_since).days
 
-            if trv_data and all_trvs_active_since and days_reliable is not None and days_reliable < 7:
-                no_session_details = (
-                    f"Reliable TRV data only available since {active_since_early} "
-                    f"({days_reliable} day(s) of reliable data). "
-                    f"Need at least 7 days before sessions can be analysed reliably."
-                )
-                no_session_report = (
-                    f"SHA is still collecting reliable data for {room.room_name} "
-                    f"(reliable since {active_since_early}, {days_reliable} day(s)). "
-                    f"A full report will be available after 7 days of data."
-                )
-            else:
-                no_session_details = (
-                    f"No heating sessions detected in the last 30 days. "
-                    f"TRVs configured: {len(trvs_early)}. "
-                    f"Reliable data since: {active_since_early}."
-                )
-                no_session_report = (
-                    f"No heating sessions were detected for {room.room_name} in the last 30 days. "
-                    f"Check that the TRV entities are recording hvac_action_str in InfluxDB."
-                )
-
-            _LOGGER.warning(
+            _LOGGER.info(
                 "[%s] Weekly: no heating sessions detected "
-                "(TRVs=%d, reliable_since=%s, days_reliable=%s)",
+                "(TRVs=%d, reliable_since=%s, days_reliable=%s) — asking Ollama for report",
                 room.room_name, len(trvs_early), active_since_early, days_reliable,
             )
+
+            if days_reliable is not None and days_reliable < 7:
+                phase_instruction = (
+                    f"SHA is still in the learning phase — only {days_reliable} day(s) of "
+                    f"reliable TRV data available. Explain to the homeowner that the system "
+                    f"will improve automatically as more data is collected. "
+                    f"A full weekly report will be available after at least 7 days of data."
+                )
+            else:
+                phase_instruction = (
+                    f"Reliable TRV data has been available for "
+                    f"{days_reliable if days_reliable is not None else 'an unknown number of'} "
+                    f"days, but no heating sessions were detected. This is unexpected. "
+                    f"Flag to the homeowner that TRVs may not be reporting hvac_action_str "
+                    f"to InfluxDB correctly, and suggest checking the InfluxDB integration."
+                )
+
+            no_session_prompt = (
+                f"No heating sessions detected yet for {room.room_name}.\n"
+                f"TRVs configured: {', '.join(trvs_early) if trvs_early else 'none'}\n"
+                f"Reliable data since: {active_since_early}\n"
+                f"Days of reliable data: {days_reliable if days_reliable is not None else 'unknown'}\n\n"
+                f"{phase_instruction}\n\n"
+                f"Current heating rate: {current_rate:.3f}°C/min — keep unchanged.\n\n"
+                f"Respond ONLY with a valid JSON object:\n"
+                f"{{\n"
+                f'  "heating_rate": {current_rate:.3f},\n'
+                f'  "reasoning": "No sessions detected — rate unchanged",\n'
+                f'  "confidence": "low",\n'
+                f'  "weekly_report": "2-3 sentence plain-language weekly report for the homeowner"\n'
+                f"}}"
+            )
+
+            response = await self.ollama.async_generate(no_session_prompt)
+            no_session_result = await self.ollama.async_parse_json_response(response)
+
+            if no_session_result:
+                weekly_report_text = no_session_result.get("weekly_report") or phase_instruction
+                details_text = no_session_result.get("reasoning") or phase_instruction
+            else:
+                weekly_report_text = phase_instruction
+                details_text = phase_instruction
+
             await self._async_notify_weekly_room_result(
                 room=room,
                 run_ts=run_ts,
                 current_rate=current_rate,
                 suggested_rate=current_rate,
                 success_rate=0,
-                outcome=f"No changes suggested for {room.room_name}.",
-                details=no_session_details,
-                weekly_report=no_session_report,
+                outcome=f"No changes suggested for {room.room_name} — no sessions detected.",
+                details=details_text,
+                weekly_report=weekly_report_text,
             )
             return
 

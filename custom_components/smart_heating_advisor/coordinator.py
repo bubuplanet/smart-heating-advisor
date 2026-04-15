@@ -614,8 +614,10 @@ class SmartHeatingCoordinator:
         """Query InfluxDB for multiple fields using the confirmed schema.
 
         Auto-derives measurement from entity_id unless overridden.
-        Omits the entity_id tag filter for ``climate.*`` and ``schedule.*``
-        entities (their measurement IS the entity_id).
+        Includes the entity_id tag filter for all entity types.
+        For ``climate.*`` and ``schedule.*`` the measurement filter already
+        disambiguates uniquely but the entity_id filter is included for
+        consistency and correctness.
 
         Returns dict[field_name → list[(datetime, value)]].
         """

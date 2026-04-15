@@ -540,13 +540,14 @@ def detect_sessions_from_trvs(
                         "TRV session on %s too short (%.0f min < %d min) — skipped",
                         session_start.strftime("%Y-%m-%d"), duration_min, _MIN_SESSION_DURATION_MIN,
                     )
-                elif all_trvs_active_since and session_start < all_trvs_active_since:
-                    _LOGGER.debug(
-                        "TRV session on %s before all_trvs_active_since (%s) — excluded",
-                        session_start.strftime("%Y-%m-%d %H:%M"),
-                        all_trvs_active_since.strftime("%Y-%m-%d %H:%M"),
-                    )
                 else:
+                    full_setup = not (all_trvs_active_since and session_start < all_trvs_active_since)
+                    if not full_setup:
+                        _LOGGER.debug(
+                            "TRV session on %s before all_trvs_active_since (%s) — included with full_setup=False",
+                            session_start.strftime("%Y-%m-%d %H:%M"),
+                            all_trvs_active_since.strftime("%Y-%m-%d %H:%M"),
+                        )
                     date_str = session_start.strftime("%Y-%m-%d")
                     start_temp = _closest_temp_to_ts(room_temp_readings, session_start)
                     end_temp_raw = _closest_temp_to_ts(room_temp_readings, session_end)
@@ -604,6 +605,7 @@ def detect_sessions_from_trvs(
                             "duration_min": round(duration_min, 0),
                             "rate": rate,
                             "target_reached": target_reached,
+                            "full_setup": full_setup,
                         }
                     )
 
@@ -713,13 +715,17 @@ def analyze_heating_sessions(
     if not sessions:
         return _EMPTY
 
-    # Aggregate over all detected sessions (before trimming to last 7).
-    # target_miss and rate may be None for TRV sessions without room-sensor data.
+    # Split by TRV setup completeness for accuracy calculations.
+    # Room-sensor sessions (no full_setup field) default to True.
+    full_sessions = [s for s in sessions if s.get("full_setup", True)]
+
+    # sessions_total counts all sessions (for display / pattern detection).
+    # Accuracy metrics use full-setup sessions only.
     sessions_total = len(sessions)
-    rates = [s["rate"] for s in sessions if s.get("rate") is not None and s["rate"] > 0]
+    rates = [s["rate"] for s in full_sessions if s.get("rate") is not None and s["rate"] > 0]
     avg_rate = sum(rates) / len(rates) if rates else None
 
-    misses = [s["target_miss"] for s in sessions if s.get("target_miss") is not None]
+    misses = [s["target_miss"] for s in full_sessions if s.get("target_miss") is not None]
     if misses:
         sessions_with_miss = sum(1 for m in misses if m > 0.5)
         sessions_on_target = len(misses) - sessions_with_miss
@@ -731,20 +737,21 @@ def analyze_heating_sessions(
         average_miss = 0.0
         success_rate = 0.0
 
-    # Consecutive misses counting backward from the most recent session
+    # Consecutive misses counting backward from the most recent full-setup session
     consecutive_misses = 0
-    for s in reversed(sessions):
+    for s in reversed(full_sessions):
         miss = s.get("target_miss")
         if miss is not None and miss > 0.5:
             consecutive_misses += 1
         else:
             break
 
-    # Miss trend: compare first-half average miss vs second-half average miss
-    half = sessions_total // 2
+    # Miss trend: compare first-half vs second-half average miss (full-setup sessions)
+    full_total = len(full_sessions)
+    half = full_total // 2
     if half >= 2:
-        first_misses = [s["target_miss"] for s in sessions[:half] if s.get("target_miss") is not None]
-        second_misses = [s["target_miss"] for s in sessions[half:] if s.get("target_miss") is not None]
+        first_misses = [s["target_miss"] for s in full_sessions[:half] if s.get("target_miss") is not None]
+        second_misses = [s["target_miss"] for s in full_sessions[half:] if s.get("target_miss") is not None]
         if first_misses and second_misses:
             first_avg = sum(first_misses) / len(first_misses)
             second_avg = sum(second_misses) / len(second_misses)
@@ -918,19 +925,20 @@ def detect_heating_sessions_from_hvac(
                 start.strftime("%Y-%m-%d %H:%M"), duration_min, min_duration_min,
             )
             continue
-        if all_trvs_active_since and start < all_trvs_active_since:
+        full_setup = not (all_trvs_active_since and start < all_trvs_active_since)
+        if not full_setup:
             _LOGGER.debug(
-                "hvac session %s before all_trvs_active_since (%s) — excluded",
+                "hvac session %s before all_trvs_active_since (%s) — included with full_setup=False",
                 start.strftime("%Y-%m-%d %H:%M"),
                 all_trvs_active_since.strftime("%Y-%m-%d %H:%M"),
             )
-            continue
         sessions.append({
             "start": start,
             "end": end,
             "duration_min": round(duration_min, 1),
             "date": start.strftime("%Y-%m-%d"),
             "start_time": start.strftime("%H:%M"),
+            "full_setup": full_setup,
         })
 
     return sessions
@@ -1022,6 +1030,7 @@ def _build_matched_session(
         "rate": observed_rate or 0.0,
         "target_miss": target_miss,
         "target_reached": target_reached,
+        "full_setup": session.get("full_setup", True),
     }
 
 
@@ -1105,23 +1114,32 @@ def analyze_sessions_per_schedule(
         eid = sched_info["entity_id"]
         sched_sessions = per_sched.get(eid, [])
 
-        total = len(sched_sessions)
+        # Split by TRV setup completeness.
+        # full_setup=True  → all TRVs were active (reliable data)
+        # full_setup=False → at least one TRV was inactive (partial coverage)
+        full_sessions = [s for s in sched_sessions if s.get("full_setup", True)]
+        partial_sessions = [s for s in sched_sessions if not s.get("full_setup", True)]
+        total = len(sched_sessions)          # all sessions — for display
+        full_count = len(full_sessions)      # for accuracy threshold and calculations
+        partial_count = len(partial_sessions)
+
+        # Accuracy metrics computed from full-setup sessions only
         misses = [
-            s["target_miss"] for s in sched_sessions if s.get("target_miss") is not None
+            s["target_miss"] for s in full_sessions if s.get("target_miss") is not None
         ]
         rates = [
-            s["observed_rate"] for s in sched_sessions
+            s["observed_rate"] for s in full_sessions
             if s.get("observed_rate") is not None and s["observed_rate"] > 0
         ]
         preheat_mins = [
-            s["preheat_min"] for s in sched_sessions if s.get("preheat_min") is not None
+            s["preheat_min"] for s in full_sessions if s.get("preheat_min") is not None
         ]
         room_temps_at_start = [
-            s["room_temp_at_start"] for s in sched_sessions
+            s["room_temp_at_start"] for s in full_sessions
             if s.get("room_temp_at_start") is not None
         ]
         room_temps_at_schedule_start = [
-            s["room_temp_at_schedule_start"] for s in sched_sessions
+            s["room_temp_at_schedule_start"] for s in full_sessions
             if s.get("room_temp_at_schedule_start") is not None
         ]
 
@@ -1132,7 +1150,7 @@ def analyze_sessions_per_schedule(
         avg_room_temp_at_start = round(sum(room_temps_at_start) / len(room_temps_at_start), 1) if room_temps_at_start else None
         avg_room_temp_at_schedule_start = round(sum(room_temps_at_schedule_start) / len(room_temps_at_schedule_start), 1) if room_temps_at_schedule_start else None
 
-        # Recommended preheat: (target_temp − avg_room_temp_at_start) / avg_rate
+        # Recommended preheat: (target_temp − avg_room_temp_at_start) / avg_rate (full sessions)
         recommended_preheat: float | None = None
         target_temp_val = sched_info.get("target_temp")
         if avg_rate and avg_rate > 0 and avg_room_temp_at_start is not None and target_temp_val is not None:
@@ -1140,9 +1158,9 @@ def analyze_sessions_per_schedule(
             if temp_gap > 0:
                 recommended_preheat = round(temp_gap / avg_rate, 0)
 
-        # Miss trend: compare first half vs second half
+        # Miss trend: compare first half vs second half (full-setup sessions only)
         sched_misses_sorted = [
-            s["target_miss"] for s in sorted(sched_sessions, key=lambda x: x["date"])
+            s["target_miss"] for s in sorted(full_sessions, key=lambda x: x["date"])
             if s.get("target_miss") is not None
         ]
         miss_trend_sched = "stable"
@@ -1162,8 +1180,10 @@ def analyze_sessions_per_schedule(
             "name": sched_info["name"],
             "target_temp": target_temp_val,
             "schedule_time": sched_info.get("schedule_time", "n/a"),
-            "sessions_total": total,
-            "sessions_on_target": on_target,
+            "sessions_total": total,          # all sessions (for display)
+            "full_setup_count": full_count,   # sessions with complete TRV coverage
+            "partial_setup_count": partial_count,  # sessions before all TRVs were active
+            "sessions_on_target": on_target,  # from full-setup sessions only
             "sessions_with_miss": len([m for m in misses if m > 0.5]),
             "avg_miss": avg_miss,
             "avg_rate": avg_rate,
@@ -1208,6 +1228,8 @@ def build_schedules_analysis_text(
     for stats in per_schedule.values():
         name = stats["name"]
         total = stats["sessions_total"]
+        full_count = stats.get("full_setup_count", total)
+        partial_count = stats.get("partial_setup_count", 0)
         on_target = stats["sessions_on_target"]
         target_temp = stats.get("target_temp")
         sched_time = stats.get("schedule_time", "n/a")
@@ -1219,13 +1241,19 @@ def build_schedules_analysis_text(
 
         lines += f"\nSchedule: {name}\n"
         lines += f"Target: {target_temp}°C at {sched_time}\n" if target_temp else f"Schedule time: {sched_time}\n"
-        lines += f"Sessions: {total}\n"
+        if partial_count > 0:
+            lines += f"Sessions: {total} total ({full_count} full-setup, {partial_count} partial-setup)\n"
+            lines += "(Accuracy stats from full-setup sessions only)\n"
+        else:
+            lines += f"Sessions: {total}\n"
 
-        if total < 3:
-            lines += "Insufficient data (fewer than 3 sessions) — no reliable statistics yet.\n"
+        if full_count < 3:
+            lines += "Insufficient full-setup data (fewer than 3 full-setup sessions) — no reliable statistics yet.\n"
+            if partial_count > 0:
+                lines += f"  Note: {partial_count} partial-setup session(s) available for pattern detection only.\n"
             continue
 
-        lines += f"Target reached: {on_target} of {total}\n"
+        lines += f"Target reached: {on_target} of {full_count} (full-setup sessions)\n"
         if avg_room_temp_at_schedule_start is not None:
             lines += f"Average room temp at schedule start: {avg_room_temp_at_schedule_start:.1f}°C\n"
         if avg_miss is not None:
@@ -1239,7 +1267,7 @@ def build_schedules_analysis_text(
                 lines += f"Recommended pre-heat start: {start_str}\n"
         lines += f"Miss trend: {miss_trend}\n"
 
-        # Per-session detail
+        # Per-session detail (all sessions, flag shows setup completeness)
         sessions = stats.get("sessions", [])
         if sessions:
             lines += "\nSession detail:\n"
@@ -1249,15 +1277,16 @@ def build_schedules_analysis_text(
                 miss = s.get("target_miss")
                 rate = s.get("observed_rate")
                 reached = "reached" if s.get("target_reached") else "missed"
+                setup_flag = "" if s.get("full_setup", True) else " [partial]"
                 temp_str = f"{room_at_start:.1f}°C" if room_at_start is not None else "n/a"
                 miss_str = f"{miss:+.1f}°C" if miss is not None else "n/a"
                 rate_str = f"{rate:.3f}°C/min" if rate is not None else "n/a"
-                lines += f"  {date} | at schedule start {temp_str} | miss {miss_str} | rate {rate_str} | {reached}\n"
+                lines += f"  {date}{setup_flag} | at schedule start {temp_str} | miss {miss_str} | rate {rate_str} | {reached}\n"
 
     if all_trvs_active_since:
         lines += (
             f"\n(Sessions before {all_trvs_active_since.strftime('%Y-%m-%d')} "
-            f"excluded — TRV unreliable before that date)\n"
+            f"have partial TRV coverage — flagged as partial-setup, excluded from accuracy calculations)\n"
         )
 
     return lines

@@ -3,6 +3,7 @@
 #            {schedule_count}, {schedule_lines},
 #            {schedules_analysis_text}, {humidity_analysis_text},
 #            {trv_entities}, {trv_count}, {standby_temp}, {all_trvs_active_since},
+#            {full_setup_count}, {partial_setup_count},
 #            {session_count}, {on_target_count}, {avg_observed_rate},
 #            {outside_temp}, {tomorrow_min}, {tomorrow_max}, {season},
 #            {learning_phase}, {sessions_so_far}, {humidity_sensor}
@@ -30,7 +31,16 @@ on schedule, and to recommend a heating rate correction if needed.
 - TRV entities ({trv_count}): {trv_entities}
 - Detected standby setpoint: {standby_temp}°C
 - Reliable data from: {all_trvs_active_since}
-  (sessions before this date are excluded — TRV was broken or unconfigured)
+  (sessions before this date have partial TRV coverage — included for pattern detection only)
+
+## TRV Setup History
+- Full setup (all TRVs active) since: {all_trvs_active_since}
+- Full setup sessions: {full_setup_count}
+- Partial setup sessions (incomplete TRV coverage): {partial_setup_count}
+
+Note: Sessions before {all_trvs_active_since} had partial TRV coverage.
+Use only full setup sessions for heating rate and accuracy calculations.
+Use all sessions for usage pattern detection.
 
 ## Learning Phase
 - Learning phase: {learning_phase}

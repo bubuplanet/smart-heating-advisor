@@ -1427,7 +1427,7 @@ class SmartHeatingCoordinator:
 
         if all_trvs_active_since:
             _LOGGER.info(
-                "[%s] All TRVs active since %s — sessions before excluded",
+                "[%s] All TRVs active since %s — sessions before flagged as partial_setup",
                 room.room_name, all_trvs_active_since.strftime("%Y-%m-%d %H:%M"),
             )
 
@@ -1462,7 +1462,10 @@ class SmartHeatingCoordinator:
             per_schedule = analyze_sessions_per_schedule(matched_sessions, schedules_info)
 
             # Aggregate overall stats
+            # sessions_total = all sessions (for display); on_target from full-setup only
             sessions_total = sum(s["sessions_total"] for s in per_schedule.values())
+            full_setup_count = sum(s.get("full_setup_count", s["sessions_total"]) for s in per_schedule.values())
+            partial_setup_count = sum(s.get("partial_setup_count", 0) for s in per_schedule.values())
             sessions_on_target = sum(s["sessions_on_target"] for s in per_schedule.values())
             sessions_with_miss = sum(s["sessions_with_miss"] for s in per_schedule.values())
             all_avg_misses = [
@@ -1471,22 +1474,26 @@ class SmartHeatingCoordinator:
             average_miss = round(sum(all_avg_misses) / len(all_avg_misses), 1) if all_avg_misses else 0.0
             all_rates = [s["avg_rate"] for s in per_schedule.values() if s.get("avg_rate") is not None]
             avg_rate = round(sum(all_rates) / len(all_rates), 3) if all_rates else None
-            success_rate_pct = round(sessions_on_target / sessions_total * 100, 1) if sessions_total else 0.0
+            success_rate_pct = round(sessions_on_target / full_setup_count * 100, 1) if full_setup_count else 0.0
 
-            # Consecutive misses and trend across all sessions
+            # Consecutive misses and trend — full-setup sessions only (accuracy metric)
+            full_sorted = sorted(
+                [s for s in matched_sessions if s.get("full_setup", True)],
+                key=lambda s: s["date"],
+            )
             all_sorted = sorted(matched_sessions, key=lambda s: s["date"])
             consecutive_misses = 0
-            for s in reversed(all_sorted):
+            for s in reversed(full_sorted):
                 miss = s.get("target_miss")
                 if miss is not None and miss > 0.5:
                     consecutive_misses += 1
                 else:
                     break
-            half = len(all_sorted) // 2
+            half = len(full_sorted) // 2
             miss_trend = "stable"
             if half >= 2:
-                first_m = [s["target_miss"] for s in all_sorted[:half] if s.get("target_miss") is not None]
-                second_m = [s["target_miss"] for s in all_sorted[half:] if s.get("target_miss") is not None]
+                first_m = [s["target_miss"] for s in full_sorted[:half] if s.get("target_miss") is not None]
+                second_m = [s["target_miss"] for s in full_sorted[half:] if s.get("target_miss") is not None]
                 if first_m and second_m:
                     fa = sum(first_m) / len(first_m)
                     sa = sum(second_m) / len(second_m)
@@ -1512,6 +1519,8 @@ class SmartHeatingCoordinator:
             matched_sessions = analysis.get("sessions", [])
             per_schedule = {}
             sessions_total = analysis.get("sessions_total", 0)
+            full_setup_count = sum(1 for s in matched_sessions if s.get("full_setup", True))
+            partial_setup_count = sum(1 for s in matched_sessions if not s.get("full_setup", True))
             sessions_on_target = analysis.get("sessions_on_target", 0)
             sessions_with_miss = analysis.get("sessions_with_miss", 0)
             average_miss = analysis.get("average_miss", 0.0)
@@ -1526,8 +1535,9 @@ class SmartHeatingCoordinator:
             )
 
         _LOGGER.debug(
-            "[%s] Sessions: total=%d on_target=%d avg_rate=%s avg_miss=%s",
-            room.room_name, sessions_total, sessions_on_target, avg_rate, average_miss,
+            "[%s] Sessions: total=%d full_setup=%d partial=%d on_target=%d avg_rate=%s avg_miss=%s",
+            room.room_name, sessions_total, full_setup_count, partial_setup_count,
+            sessions_on_target, avg_rate, average_miss,
         )
 
         if sessions_total == 0:
@@ -1638,7 +1648,7 @@ class SmartHeatingCoordinator:
         )
         humidity_sensor_entity = self._get_room_humidity_sensor(room)
         humidity_analysis_text = build_humidity_analysis_text(humidity_readings, matched_sessions)
-        learning_phase = sessions_total < 7
+        learning_phase = full_setup_count < 7
         sessions_so_far = sessions_total
 
         prompt = await self.hass.async_add_executor_job(
@@ -1660,6 +1670,8 @@ class SmartHeatingCoordinator:
                 "trv_count": len(trvs),
                 "standby_temp": standby_temp_val,
                 "all_trvs_active_since": active_since_str,
+                "full_setup_count": full_setup_count,
+                "partial_setup_count": partial_setup_count,
                 "session_count": sessions_total,
                 "on_target_count": sessions_on_target,
                 "avg_observed_rate": str(avg_rate or "n/a"),
@@ -1851,7 +1863,7 @@ class SmartHeatingCoordinator:
 
         if all_trvs_active_since:
             _LOGGER.info(
-                "[%s] Weekly: all TRVs active since %s — sessions before excluded",
+                "[%s] Weekly: all TRVs active since %s — sessions before flagged as partial_setup",
                 room.room_name, all_trvs_active_since.strftime("%Y-%m-%d %H:%M"),
             )
 
@@ -1878,6 +1890,8 @@ class SmartHeatingCoordinator:
             per_schedule = analyze_sessions_per_schedule(matched_sessions, schedules_info)
 
             sessions_total = sum(s["sessions_total"] for s in per_schedule.values())
+            full_setup_count = sum(s.get("full_setup_count", s["sessions_total"]) for s in per_schedule.values())
+            partial_setup_count = sum(s.get("partial_setup_count", 0) for s in per_schedule.values())
             sessions_on_target = sum(s["sessions_on_target"] for s in per_schedule.values())
             all_avg_misses = [
                 s["avg_miss"] for s in per_schedule.values() if s.get("avg_miss") is not None
@@ -1885,21 +1899,26 @@ class SmartHeatingCoordinator:
             average_miss = round(sum(all_avg_misses) / len(all_avg_misses), 1) if all_avg_misses else 0.0
             all_rates = [s["avg_rate"] for s in per_schedule.values() if s.get("avg_rate") is not None]
             avg_rate = round(sum(all_rates) / len(all_rates), 3) if all_rates else None
-            success_rate_pct = round(sessions_on_target / sessions_total * 100, 1) if sessions_total else 0.0
+            success_rate_pct = round(sessions_on_target / full_setup_count * 100, 1) if full_setup_count else 0.0
 
+            # Consecutive misses and trend — full-setup sessions only
+            full_sorted = sorted(
+                [s for s in matched_sessions if s.get("full_setup", True)],
+                key=lambda s: s["date"],
+            )
             all_sorted = sorted(matched_sessions, key=lambda s: s["date"])
             consecutive_misses = 0
-            for s in reversed(all_sorted):
+            for s in reversed(full_sorted):
                 miss = s.get("target_miss")
                 if miss is not None and miss > 0.5:
                     consecutive_misses += 1
                 else:
                     break
-            half = len(all_sorted) // 2
+            half = len(full_sorted) // 2
             miss_trend = "stable"
             if half >= 2:
-                first_m = [s["target_miss"] for s in all_sorted[:half] if s.get("target_miss") is not None]
-                second_m = [s["target_miss"] for s in all_sorted[half:] if s.get("target_miss") is not None]
+                first_m = [s["target_miss"] for s in full_sorted[:half] if s.get("target_miss") is not None]
+                second_m = [s["target_miss"] for s in full_sorted[half:] if s.get("target_miss") is not None]
                 if first_m and second_m:
                     fa = sum(first_m) / len(first_m)
                     sa = sum(second_m) / len(second_m)
@@ -1924,6 +1943,8 @@ class SmartHeatingCoordinator:
             matched_sessions = analysis.get("sessions", [])
             per_schedule = {}
             sessions_total = analysis.get("sessions_total", 0)
+            full_setup_count = sum(1 for s in matched_sessions if s.get("full_setup", True))
+            partial_setup_count = sum(1 for s in matched_sessions if not s.get("full_setup", True))
             sessions_on_target = analysis.get("sessions_on_target", 0)
             average_miss = analysis.get("average_miss", 0.0)
             avg_rate = analysis.get("avg_rate")
@@ -2027,7 +2048,7 @@ class SmartHeatingCoordinator:
 
         humidity_sensor_entity = self._get_room_humidity_sensor(room)
         humidity_analysis_text = build_humidity_analysis_text(humidity_readings, matched_sessions)
-        learning_phase = sessions_total < 7
+        learning_phase = full_setup_count < 7
         sessions_so_far = sessions_total
 
         # avg temp at schedule start (for compat variables)
@@ -2057,6 +2078,8 @@ class SmartHeatingCoordinator:
                 "trv_count": len(trvs),
                 "standby_temp": standby_temp_val,
                 "all_trvs_active_since": active_since_str,
+                "full_setup_count": full_setup_count,
+                "partial_setup_count": partial_setup_count,
                 "session_count": sessions_total,
                 "on_target_count": sessions_on_target,
                 "avg_observed_rate": str(avg_rate or "n/a"),

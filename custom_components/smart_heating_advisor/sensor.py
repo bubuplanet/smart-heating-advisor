@@ -8,7 +8,7 @@ from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
+from .const import DEFAULT_HEATING_RATE, DOMAIN
 from .coordinator import SmartHeatingCoordinator, _room_name_to_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -125,7 +125,7 @@ class RoomHeatingRateSensor(SHABaseSensor):
 
     @property
     def native_value(self) -> float:
-        rate = self._room_state().get("heating_rate", 0.15)
+        rate = self._room_state().get("heating_rate", DEFAULT_HEATING_RATE)
         return round(float(rate), 3)
 
     @property

@@ -1054,15 +1054,30 @@ class SmartHeatingCoordinator:
     ) -> bool:
         """Check whether InfluxDB data for this room is stale (> 48 h old).
 
-        Creates a persistent notification and logs at WARNING when stale.
+        Creates a persistent notification and logs at WARNING when stale or empty.
         Dismisses any existing stale notification when data is fresh.
 
-        Returns True when analysis should be skipped (data is stale).
-        Returns False when data is fresh or the readings list is empty
-        (the caller's existing < 5 readings guard handles that case).
+        Returns True when analysis should be skipped (no data or data is stale).
+        Returns False when data is fresh.
         """
         if not readings:
-            return False
+            await self._async_persistent_notification(
+                title=f"SHA — {room.room_name} InfluxDB unreachable",
+                message=(
+                    f"SHA could not retrieve any data for "
+                    f"{room.room_name} from InfluxDB. "
+                    f"Check that InfluxDB is running and "
+                    f"recording {room.temp_sensor} correctly. "
+                    f"Analysis has been skipped."
+                ),
+                notification_id=f"sha_influxdb_unreachable_{room.room_id}",
+            )
+            _LOGGER.warning(
+                "[%s] InfluxDB returned no data — "
+                "is InfluxDB running?",
+                room.room_name,
+            )
+            return True
 
         last_ts = readings[-1][0]
         now_utc = datetime.now(timezone.utc)
@@ -1127,6 +1142,16 @@ class SmartHeatingCoordinator:
                 "analysis will still run (automation may not yet be configured).",
                 room.room_name,
                 alias,
+            )
+            await self._async_persistent_notification(
+                title="",
+                message="",
+                notification_id=notification_id,
+                dismiss=True,
+            )
+            _LOGGER.debug(
+                "[%s] No SHA automation found — proceeding",
+                room.room_name,
             )
             return False
 
@@ -1516,7 +1541,17 @@ class SmartHeatingCoordinator:
                 days_reliable = (datetime.now(timezone.utc) - all_trvs_active_since).days
 
             state = self.hass.states.get(room.heating_rate_helper)
-            current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
+            if state and state.state not in ("unavailable", "unknown"):
+                current_rate = float(state.state)
+            else:
+                if state:
+                    _LOGGER.debug(
+                        "[%s] Heating rate entity unavailable "
+                        "— using default %s°C/min",
+                        room.room_name,
+                        DEFAULT_HEATING_RATE,
+                    )
+                current_rate = DEFAULT_HEATING_RATE
 
             _LOGGER.warning(
                 "[%s] No sessions detected — %s days of data available. TRVs: %s",
@@ -1583,7 +1618,17 @@ class SmartHeatingCoordinator:
             return {"new_rate": current_rate, "session_count": 0, "on_target": 0}
 
         state = self.hass.states.get(room.heating_rate_helper)
-        current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
+        if state and state.state not in ("unavailable", "unknown"):
+            current_rate = float(state.state)
+        else:
+            if state:
+                _LOGGER.debug(
+                    "[%s] Heating rate entity unavailable "
+                    "— using default %s°C/min",
+                    room.room_name,
+                    DEFAULT_HEATING_RATE,
+                )
+            current_rate = DEFAULT_HEATING_RATE
         _LOGGER.debug("[%s] Current heating rate: %.3f °C/min", room.room_name, current_rate)
 
         trvs = self._get_room_trvs(room)
@@ -1889,7 +1934,17 @@ class SmartHeatingCoordinator:
             schedules_analysis_text = build_weekly_accuracy_summary(analysis)
 
         state = self.hass.states.get(room.heating_rate_helper)
-        current_rate = float(state.state) if state else DEFAULT_HEATING_RATE
+        if state and state.state not in ("unavailable", "unknown"):
+            current_rate = float(state.state)
+        else:
+            if state:
+                _LOGGER.debug(
+                    "[%s] Heating rate entity unavailable "
+                    "— using default %s°C/min",
+                    room.room_name,
+                    DEFAULT_HEATING_RATE,
+                )
+            current_rate = DEFAULT_HEATING_RATE
 
         if sessions_total == 0:
             trvs_early = self._get_room_trvs(room)

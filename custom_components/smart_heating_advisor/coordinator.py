@@ -55,7 +55,6 @@ def _room_name_to_id(room_name: str) -> str:
 
     Examples:
         Bathroom           → bathroom
-        Alessio's Bedroom  → alessios_bedroom
         Living Room        → living_room
     """
     room_id = room_name.lower()

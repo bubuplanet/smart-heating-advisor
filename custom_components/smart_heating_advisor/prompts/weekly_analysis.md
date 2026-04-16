@@ -71,8 +71,13 @@ Write a weekly report section that:
 Also provide a recommended heating_rate based on the data.
 If the daily analysis already adjusted the rate this week, confirm or refine it.
 Keep heating_rate between 0.05 and 0.30.
-If learning_phase is True or session_count < 3: note that data is limited and avoid
-aggressive rate changes; set confidence to "low".
+If learning_phase is True or session_count < 3:
+set confidence to "low" and note that data is limited.
+However always set heating_rate to the observed real heating rate from the
+session data regardless of learning phase. The rate must reflect reality
+even with limited data — it is better to use an observed rate with low
+confidence than to keep an unobserved default rate.
+If avg_observed_rate is available use it directly as the recommended heating_rate.
 If any schedule shows recommended_preheat_min > 180: note that the radiator may be
 underpowered for the room size.
 If humidity_sensor is configured (not "not configured"): mention whether humidity

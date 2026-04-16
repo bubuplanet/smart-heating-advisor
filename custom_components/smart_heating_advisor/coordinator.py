@@ -1728,6 +1728,22 @@ class SmartHeatingCoordinator:
         recommendation = result.get("recommendation", "")
         analysis_summary = result.get("analysis_summary", "")
 
+        # Fallback: if observed rate differs significantly from Ollama's
+        # recommendation, apply the observed rate directly.
+        if (
+            avg_rate is not None
+            and abs(avg_rate - new_rate) > 0.02
+            and 0.005 <= avg_rate <= 0.30
+        ):
+            _LOGGER.info(
+                "[%s] Ollama recommended %.3f°C/min but observed rate %.3f°C/min "
+                "differs significantly — applying observed rate.",
+                room.room_name,
+                new_rate,
+                avg_rate,
+            )
+            new_rate = avg_rate
+
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "[%s] AI result — new_rate=%.3f, confidence=%s, accuracy=%s%%, "
@@ -2134,6 +2150,22 @@ class SmartHeatingCoordinator:
         except (TypeError, ValueError):
             suggested_rate = current_rate
         reasoning = result.get("reasoning", "")
+
+        # Fallback: if observed rate differs significantly from Ollama's
+        # recommendation, apply the observed rate directly.
+        if (
+            avg_rate is not None
+            and abs(avg_rate - suggested_rate) > 0.02
+            and 0.005 <= avg_rate <= 0.30
+        ):
+            _LOGGER.info(
+                "[%s] Ollama recommended %.3f°C/min but observed rate %.3f°C/min "
+                "differs significantly — applying observed rate.",
+                room.room_name,
+                suggested_rate,
+                avg_rate,
+            )
+            suggested_rate = avg_rate
 
         if room.room_id not in self.room_states:
             self.room_states[room.room_id] = {}

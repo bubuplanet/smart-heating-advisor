@@ -1044,7 +1044,12 @@ def _match_one_session(
     """Match one raw session to zero or more schedule ON periods.
 
     A schedule ON period matches if it started within
-    [session_start − 120 min, session_end].
+    [session_start − 240 min, session_end].
+
+    When no InfluxDB schedule history exists for a schedule (schedule entity
+    not yet recorded in InfluxDB), falls back to matching using the configured
+    schedule start time from the automation config.  The session must start
+    within 240 minutes before the configured time on the same day.
 
     Returns a list of enriched session dicts (one per matched schedule).
     Unmatched sessions (manual overrides, no schedule match, or no room temp data)
@@ -1052,20 +1057,56 @@ def _match_one_session(
     """
     session_start: datetime = session["start"]
     session_end: datetime = session["end"]
-    window_open = session_start - timedelta(minutes=120)
+    window_open = session_start - timedelta(minutes=240)
 
     matched: list[dict] = []
 
     for sched_info in schedules_info:
         entity_id = sched_info["entity_id"]
         on_periods = schedule_on_periods.get(entity_id, [])
-        for on_period in on_periods:
-            period_start: datetime = on_period["start"]
-            if window_open <= period_start <= session_end:
+
+        if on_periods:
+            for on_period in on_periods:
+                period_start: datetime = on_period["start"]
+                if window_open <= period_start <= session_end:
+                    enriched = _build_matched_session(
+                        session, sched_info, on_period, room_temp_readings, trv_data
+                    )
+                    if enriched is not None:
+                        matched.append(enriched)
+        else:
+            # Fallback: no InfluxDB schedule history — match using configured
+            # schedule time so pre-history sessions are not silently excluded.
+            schedule_time = sched_info.get("schedule_time")
+            if not schedule_time or schedule_time == "n/a":
+                continue
+            try:
+                sh, sm = map(int, schedule_time.split(":"))
+            except (ValueError, AttributeError):
+                continue
+            # Compute the schedule ON datetime on the session's date.
+            scheduled_on = session_start.replace(
+                hour=sh, minute=sm, second=0, microsecond=0
+            )
+            # If the configured time is before session start, push to next day.
+            if scheduled_on < session_start:
+                scheduled_on += timedelta(days=1)
+            gap_min = (scheduled_on - session_start).total_seconds() / 60
+            if 0 <= gap_min <= 240:
+                virtual_on_period = {
+                    "start": scheduled_on,
+                    "end": scheduled_on + timedelta(minutes=60),
+                }
                 enriched = _build_matched_session(
-                    session, sched_info, on_period, room_temp_readings, trv_data
+                    session, sched_info, virtual_on_period, room_temp_readings, trv_data
                 )
                 if enriched is not None:
+                    _LOGGER.debug(
+                        "Session %s %s matched to '%s' via config time %s "
+                        "(no InfluxDB schedule history available).",
+                        session["date"], session["start_time"],
+                        sched_info["name"], schedule_time,
+                    )
                     matched.append(enriched)
 
     # Unmatched sessions (no schedule match, or all room_start were None) are excluded

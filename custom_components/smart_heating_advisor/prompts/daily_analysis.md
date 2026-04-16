@@ -72,8 +72,12 @@ Use all sessions for usage pattern detection.
 7. Only suggest a change when the adjustment is > 0.01°C/min.
 8. Consider outside temperature: colder outside generally requires a higher rate.
 9. If learning_phase is True or session_count < 3:
-   lower confidence to "low" — insufficient data for a reliable recommendation.
-   Do not make aggressive rate changes during the learning phase.
+   set confidence to "low" and note that data is limited.
+   However always set heating_rate to the observed real heating rate from the
+   session data regardless of learning phase. The rate must reflect reality
+   even with limited data — it is better to use an observed rate with low
+   confidence than to keep an unobserved default rate.
+   If avg_observed_rate is available use it directly as the recommended heating_rate.
 10. If any schedule shows recommended_preheat_min > 180:
     note in recommendation that the radiator may be underpowered for the room size.
 11. If humidity_sensor is configured (not "not configured"):

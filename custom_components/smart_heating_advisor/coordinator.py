@@ -1835,7 +1835,12 @@ class SmartHeatingCoordinator:
     async def _async_run_weekly_analysis_for_room(
         self, room: RoomConfig, weather: dict, season: str
     ) -> None:
-        """Run weekly analysis for a single room — report only (hvac_action_str pipeline)."""
+        """Run weekly analysis for a single room.
+
+        Evaluates session accuracy over the past week, generates a plain-language
+        report for the homeowner, and applies the recommended heating rate to the
+        HA entity (same mechanism as the daily analysis).
+        """
         run_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
         # ── 0. Pre-flight checks ─────────────────────────────────────
@@ -2166,12 +2171,12 @@ class SmartHeatingCoordinator:
             )
             suggested_rate = avg_rate
 
+        await self._async_apply_heating_rate(room, suggested_rate, reasoning)
+
         if room.room_id not in self.room_states:
             self.room_states[room.room_id] = {}
         self.room_states[room.room_id]["confidence"] = confidence
         self.room_states[room.room_id]["weekly_report"] = weekly_report
-
-        await self.async_update_sensors()
 
         # Fix 3: radiator capacity check — fires hard notification if preheat > 180 min
         await self._async_check_radiator_capacity(

@@ -19,6 +19,11 @@ MAX_HEATING_RATE = 0.30
 DEFAULT_TARGET_TEMP = 22
 DEFAULT_TARGET_TIME = "06:00"
 
+# ── TRV setpoint defaults ──────────────────────────────────────────────
+DEFAULT_TRV_SETPOINT = 26.0   # °C — same as typical comfort target
+MIN_TRV_SETPOINT = 5.0        # °C — frost protection floor
+MAX_TRV_SETPOINT = 35.0       # °C — safe cap when HA max_temp unavailable
+
 # ── Config keys ───────────────────────────────────────────────────────
 CONF_OLLAMA_URL = "ollama_url"
 CONF_OLLAMA_MODEL = "ollama_model"
@@ -47,7 +52,7 @@ BLUEPRINT_RELATIVE_PATH = "blueprints"
 # ── Analysis schedule ─────────────────────────────────────────────────
 DAILY_ANALYSIS_HOUR = 0
 DAILY_ANALYSIS_MINUTE = 1
-WEEKLY_ANALYSIS_WEEKDAY = 6  # Sunday
+WEEKLY_ANALYSIS_WEEKDAY = 5  # Saturday
 WEEKLY_ANALYSIS_HOUR = 1
 WEEKLY_ANALYSIS_MINUTE = 0
 

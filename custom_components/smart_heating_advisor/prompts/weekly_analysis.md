@@ -1,92 +1,88 @@
 # SHA — Weekly Analysis Prompt
-# Variables: {room_name}, {heating_rate}, {analysis_days},
+# Variables: {room_name}, {target_comfort_temp}, {target_ready_time},
+#            {sessions_total}, {sessions_on_target},
+#            {avg_comfort_at_ready}, {avg_miss},
+#            {consistent_miss}, {root_cause},
+#            {outside_temp_now}, {season},
+#            {session_detail_table},
 #            {schedule_count}, {schedule_lines},
+#            {avg_heating_rate}, {avg_gradient}, {success_rate_pct},
 #            {schedules_analysis_text}, {humidity_analysis_text},
-#            {trv_entities}, {trv_count}, {standby_temp}, {all_trvs_active_since},
-#            {full_setup_count}, {partial_setup_count},
-#            {session_count}, {on_target_count}, {avg_observed_rate},
-#            {rate_was_adjusted}, {previous_rate},
-#            {avg_outside_temp}, {season},
-#            {learning_phase}, {sessions_so_far}, {humidity_sensor}
+#            {humidity_sensor}
 # Called by: coordinator.py _async_run_weekly_analysis_for_room
 
-You are a smart home heating advisor writing a weekly performance report for {room_name}.
-Your audience is the homeowner — use plain, non-technical language.
-
+## SHA Weekly Performance Report
 ## Room: {room_name}
-## Current heating rate: {heating_rate}°C/min
-## Analysis period: last {analysis_days} days
+## Analysis: last 30 days
+
+Target: {target_comfort_temp}°C by {target_ready_time}
+Sessions analysed: {sessions_total}
+Target reached: {sessions_on_target} of {sessions_total} ({success_rate_pct}%)
+Average temperature at ready time: {avg_comfort_at_ready}°C
+Average miss: {avg_miss}°C
+Consistent miss: {consistent_miss}
+Root cause identified: {root_cause}
+
+Outside temperature this period: {outside_temp_now}°C
+Season: {season}
 
 ## Active Schedules ({schedule_count})
 {schedule_lines}
 
-## TRV Configuration
-- TRV entities ({trv_count}): {trv_entities}
-- Detected standby setpoint: {standby_temp}°C
-- Reliable data from: {all_trvs_active_since}
-  (sessions before this date have partial TRV coverage — included for pattern detection only)
-
-## TRV Setup History
-- Full setup (all TRVs active) since: {all_trvs_active_since}
-- Full setup sessions: {full_setup_count}
-- Partial setup sessions (incomplete TRV coverage): {partial_setup_count}
-
-Note: Sessions before {all_trvs_active_since} had partial TRV coverage.
-Use only full setup sessions for heating rate and accuracy calculations.
-Use all sessions for usage pattern detection.
-
-## Learning Phase
-- Learning phase: {learning_phase}
-- Sessions so far: {sessions_so_far}
-- Humidity sensor: {humidity_sensor}
-
-## Per-Schedule Heating Accuracy
+## Per-Schedule Accuracy
 {schedules_analysis_text}
 
 ## Humidity Context
 {humidity_analysis_text}
 
-## Rate Change History
-- Heating rate this period: {heating_rate}°C/min
-- Rate adjusted this week: {rate_was_adjusted}
-- Previous rate: {previous_rate}°C/min
+## Session detail (last 5 sessions)
+{session_detail_table}
 
-## Weather & Season
-- Average outside temperature this period: {avg_outside_temp}°C
-- Season: {season}
+## Your task
 
-## Your Task
-Write a weekly report section that:
-1. Tells the homeowner how accurately SHA predicted heating times this week
-   in plain language (e.g. "The bathroom reached target temperature on 5 of 7 mornings.")
-2. Explains any rate adjustment made — what it means in practice
-   (e.g. "SHA increased the heating rate slightly so the radiator starts 3 minutes earlier.")
-3. Describes the trend honestly: improving, stable, or worsening
-4. If accuracy is poor (more than half of sessions missed), makes one concrete suggestion
-5. Uses simple language — no technical jargon, no raw numbers unless they help understanding
-6. Is no longer than 150 words
-7. If session_count < 3 or all_trvs_active_since is very recent (< 7 days ago):
-   note that data is limited and the report is preliminary
+Write a plain language weekly report for the homeowner covering this room.
+Maximum 200 words.
 
-Also provide a recommended heating_rate based on the data.
-If the daily analysis already adjusted the rate this week, confirm or refine it.
-Keep heating_rate between 0.05 and 0.30.
-If learning_phase is True or session_count < 3:
-set confidence to "low" and note that data is limited.
-However always set heating_rate to the observed real heating rate from the
-session data regardless of learning phase. The rate must reflect reality
-even with limited data — it is better to use an observed rate with low
-confidence than to keep an unobserved default rate.
-If avg_observed_rate is available use it directly as the recommended heating_rate.
-If any schedule shows recommended_preheat_min > 180: note that the radiator may be
-underpowered for the room size.
-If humidity_sensor is configured (not "not configured"): mention whether humidity
-patterns are consistent with expected room usage.
+The report must:
+1. State clearly whether the room is performing well or not in simple terms
+   ("Your bathroom reached target temperature on X of Y mornings this month")
+2. If performing well — confirm and note any trend (improving or stable)
+3. If not performing well — explain the most likely reason in simple language.
+   NO technical jargon.
+   ("The bathroom heater appears to be too small to heat the room to 26°C within
+   a reasonable time" not "heating_rate is below threshold")
+4. Make exactly ONE concrete suggestion if target is not being reached
+5. Note if SHA is already self-correcting
+   (daily analysis has been adjusting settings)
 
-Respond ONLY with a valid JSON object:
+If root_cause is HARDWARE_INSUFFICIENT:
+  Be direct — tell the user the heater cannot physically reach the target
+  temperature in time. Suggest lowering the target or adding heating.
+
+If root_cause is PREHEAT_TOO_SHORT:
+  Tell the user SHA is adjusting the pre-heat start time and it should improve.
+
+If root_cause is TRV_SETPOINT_TOO_LOW:
+  Tell the user SHA has identified the radiator needs to run hotter and has
+  adjusted its settings.
+
+If root_cause is HEAT_LOSS_HIGH:
+  Suggest checking windows and insulation.
+
+If root_cause is RECENT_DEGRADATION:
+  Note something may have changed recently and ask the user to check the room.
+
+If root_cause is none and consistent_miss is No:
+  Focus on confirming performance is good and note any positive trend.
+
+Respond ONLY with a valid JSON object — no explanation text outside the JSON:
 {
-  "heating_rate": 0.13,
-  "reasoning": "technical explanation under 200 words for log",
+  "performance": "good",
+  "root_cause": "none",
   "confidence": "high",
-  "weekly_report": "plain-language report for homeowner, max 150 words"
+  "report": "plain language report max 200 words"
 }
+
+performance must be one of: "good", "poor", "improving"
+root_cause must match the root_cause above, or "none" if not applicable.
+confidence must be one of: "low", "medium", "high"

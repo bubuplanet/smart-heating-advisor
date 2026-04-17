@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .number import SHAHeatingRateNumber
+    from .number import SHAHeatingRateNumber, SHATRVSetpointNumber
     from .switch import SHAOverrideSwitch
 
 from homeassistant.config_entries import ConfigEntry
@@ -25,6 +25,9 @@ from .const import (
     DEFAULT_HEATING_RATE,
     MIN_HEATING_RATE,
     MAX_HEATING_RATE,
+    DEFAULT_TRV_SETPOINT,
+    MIN_TRV_SETPOINT,
+    MAX_TRV_SETPOINT,
     OLLAMA_TIMEOUT,
 )
 from .ollama import OllamaClient
@@ -79,6 +82,16 @@ def _mask_secret(value: str, visible: int = 4) -> str:
     if len(value) <= visible:
         return "*" * len(value)
     return "*" * (len(value) - visible) + value[-visible:]
+
+
+# Plain-language descriptions of weekly root-cause codes
+_ROOT_CAUSE_PLAIN: dict[str, str] = {
+    "HARDWARE_INSUFFICIENT": "heater may be underpowered for this room",
+    "PREHEAT_TOO_SHORT": "pre-heat starting too late",
+    "TRV_SETPOINT_TOO_LOW": "radiator setpoint needs to be higher",
+    "HEAT_LOSS_HIGH": "possible heat loss — check windows and insulation",
+    "RECENT_DEGRADATION": "recent drop in performance — something may have changed",
+}
 
 
 def _get_measurement(entity_id: str) -> str:
@@ -181,6 +194,7 @@ class RoomConfig:
 
         # SHA helper entity IDs — custom switch/number entities, derived from room_id
         self.heating_rate_helper = f"number.sha_{self.room_id}_heating_rate"
+        self.trv_setpoint_helper = f"number.sha_{self.room_id}_trv_setpoint"
         self.override_switch = f"switch.sha_{self.room_id}_override"
         self.airing_mode = f"switch.sha_{self.room_id}_airing_mode"
         self.preheat_notified = f"switch.sha_{self.room_id}_preheat_notified"
@@ -216,6 +230,9 @@ class SmartHeatingCoordinator:
         # Heating rate entity references — keyed by room_id, populated by number.async_setup_entry
         self.heating_rate_entities: dict[str, "SHAHeatingRateNumber"] = {}
 
+        # TRV setpoint entity references — keyed by room_id, populated by number.async_setup_entry
+        self.trv_setpoint_entities: dict[str, "SHATRVSetpointNumber"] = {}
+
         # Room registry — persisted per config entry via HA storage
         self._room_registry_store: Store = Store(
             hass,
@@ -246,6 +263,10 @@ class SmartHeatingCoordinator:
     def register_heating_rate_entity(self, room_id: str, entity: "SHAHeatingRateNumber") -> None:
         """Store a reference to a room's heating rate entity for direct updates."""
         self.heating_rate_entities[room_id] = entity
+
+    def register_trv_setpoint_entity(self, room_id: str, entity: "SHATRVSetpointNumber") -> None:
+        """Store a reference to a room's TRV setpoint entity for direct updates."""
+        self.trv_setpoint_entities[room_id] = entity
 
     # ──────────────────────────────────────────────────────────────────
     # Room registry / discovery
@@ -959,6 +980,26 @@ class SmartHeatingCoordinator:
             "tomorrow_max": float(tomorrow_max),
         }
 
+    def _get_trv_max_temp(self, room: "RoomConfig") -> float:
+        """Return the minimum max_temp reported across all TRVs for this room.
+
+        Reads live from HA climate entity attributes.  Uses MAX_TRV_SETPOINT
+        (35°C) as a safe default when no TRV state is available.  The minimum
+        across all TRVs is used so the recommendation never exceeds any single
+        TRV's hardware limit.
+        """
+        trvs = self._get_room_trvs(room)
+        max_temps: list[float] = []
+        for trv_entity_id in trvs:
+            state = self.hass.states.get(trv_entity_id)
+            if state and state.state not in ("unavailable", "unknown"):
+                val = state.attributes.get("max_temp")
+                if isinstance(val, (int, float)):
+                    max_temps.append(float(val))
+        result = min(max_temps) if max_temps else MAX_TRV_SETPOINT
+        _LOGGER.debug("[%s] TRV max_temp: %.1f°C (from %d TRV(s))", room.room_name, result, len(max_temps))
+        return result
+
     # ──────────────────────────────────────────────────────────────────
     # Apply results
     # ──────────────────────────────────────────────────────────────────
@@ -1015,6 +1056,37 @@ class SmartHeatingCoordinator:
             room.room_name,
             rate,
             reasoning,
+        )
+
+    async def _async_apply_trv_setpoint(
+        self,
+        room: "RoomConfig",
+        setpoint: float,
+        avg_gradient: float | None,
+        target_comfort: float,
+    ) -> None:
+        """Write the recommended TRV setpoint to the SHA entity."""
+        clamped = max(MIN_TRV_SETPOINT, min(MAX_TRV_SETPOINT, setpoint))
+        entity = self.trv_setpoint_entities.get(room.room_id)
+        if entity:
+            await entity.async_set_native_value(round(clamped, 1))
+        else:
+            _LOGGER.warning(
+                "[%s] No TRV setpoint entity registered — falling back to service call",
+                room.room_name,
+            )
+            await self.hass.services.async_call(
+                "number",
+                "set_value",
+                {"entity_id": room.trv_setpoint_helper, "value": round(clamped, 1)},
+            )
+        if room.room_id not in self.room_states:
+            self.room_states[room.room_id] = {}
+        self.room_states[room.room_id]["trv_setpoint"] = clamped
+        gradient_str = f"{avg_gradient:.1f}" if avg_gradient is not None else "unknown"
+        _LOGGER.info(
+            "[%s] TRV setpoint updated to %.1f°C (gradient %s°C, target %.1f°C)",
+            room.room_name, clamped, gradient_str, target_comfort,
         )
 
     async def _async_notify(self, title: str, message: str) -> None:
@@ -1248,14 +1320,44 @@ class SmartHeatingCoordinator:
             return f"Heating increased by {delta:.3f} °C/min in {room_name}."
         return f"Heating decreased by {abs(delta):.3f} °C/min in {room_name}."
 
-    def _format_weekly_outcome(self, room_name: str, current_rate: float, suggested_rate: float) -> str:
-        """Return one-line weekly outcome summary."""
-        delta = suggested_rate - current_rate
-        if abs(delta) < 0.0005:
-            return f"No changes suggested for {room_name}."
-        if delta > 0:
-            return f"Weekly suggestion: increase heating by {delta:.3f} °C/min in {room_name}."
-        return f"Weekly suggestion: decrease heating by {abs(delta):.3f} °C/min in {room_name}."
+    async def _async_send_weekly_summary(
+        self,
+        room_results: list,
+        date_str: str,
+    ) -> None:
+        """Send overall SHA weekly summary persistent notification after all rooms processed."""
+        if not room_results:
+            return
+
+        good_rooms = [(r, s) for r, s in room_results if not s.get("consistent_miss")]
+        bad_rooms = [(r, s) for r, s in room_results if s.get("consistent_miss")]
+        total_rooms = len(room_results)
+        good_count = len(good_rooms)
+
+        body_lines = [f"{good_count} of {total_rooms} rooms performing well.\n"]
+
+        for room, stats in bad_rooms:
+            rc = stats.get("root_cause") or ""
+            rc_plain = _ROOT_CAUSE_PLAIN.get(rc, rc or "unknown")
+            body_lines.append(f"⚠️ {room.room_name}: {rc_plain}")
+            report = stats.get("report", "")
+            if report:
+                first_line = (report.split(".")[0] + ".")[:120]
+                body_lines.append(f"  {first_line}")
+
+        if bad_rooms:
+            body_lines.append("")
+
+        for room, stats in good_rooms:
+            sc = stats.get("session_count", 0)
+            ot = stats.get("on_target", 0)
+            body_lines.append(f"✅ {room.room_name}: target reached {ot} of {sc} sessions")
+
+        await self._async_persistent_notification(
+            title=f"SHA Weekly Report — {date_str}",
+            message="\n".join(body_lines),
+            notification_id=f"sha_weekly_report_{date_str}",
+        )
 
     async def _async_notify_daily_room_result(
         self,
@@ -1288,42 +1390,6 @@ class SmartHeatingCoordinator:
                 f"Details: {details}"
             ),
             notification_id=f"heating_advisor_daily_{room.room_id}",
-        )
-
-    async def _async_notify_weekly_room_result(
-        self,
-        room: RoomConfig,
-        run_ts: str,
-        current_rate: float | None,
-        suggested_rate: float | None,
-        success_rate: int | None,
-        outcome: str,
-        details: str,
-        weekly_report: str,
-    ) -> None:
-        """Create weekly per-room persistent notification summary."""
-        if not room.weekly_report_enabled:
-            _LOGGER.debug("[%s] Weekly persistent report disabled for this room", room.room_name)
-            return
-
-        current_str = f"{current_rate:.3f}" if current_rate is not None else "n/a"
-        suggested_str = f"{suggested_rate:.3f}" if suggested_rate is not None else "n/a"
-        success_str = f"{success_rate}%" if success_rate is not None else "n/a"
-        report_text = weekly_report or "No weekly report generated."
-
-        await self._async_persistent_notification(
-            title=f"📊 {room.room_name} — Weekly Heating Report",
-            message=(
-                f"Run time: {run_ts}\n\n"
-                f"Outcome: {outcome}\n\n"
-                f"Affected sensor: {room.temp_sensor}\n"
-                f"Current value: {current_str} °C/min\n"
-                f"Suggested value: {suggested_str} °C/min\n"
-                f"Success rate (last 30 days): {success_str}\n"
-                f"Details: {details}\n\n"
-                f"Weekly summary:\n{report_text}"
-            ),
-            notification_id=f"heating_advisor_weekly_{room.room_id}",
         )
 
     # ──────────────────────────────────────────────────────────────────
@@ -1539,6 +1605,32 @@ class SmartHeatingCoordinator:
             sessions_on_target, avg_rate, average_miss,
         )
 
+        # ── 7b. TRV gradient and recommended setpoint ────────────────
+        # gradient = TRV setpoint commanded during session
+        #            − comfort sensor reading at schedule ON time
+        # avg_gradient gives the average offset needed to compensate for
+        # heat loss between the radiator and the comfort sensor location.
+        target_comfort_temp = primary["target_temp"]
+        trv_max_temp = self._get_trv_max_temp(room)
+
+        gradients: list[float] = []
+        for s in matched_sessions:
+            trv_t = s.get("trv_target")
+            room_at_on = s.get("room_temp_at_schedule_start") or s.get("temp_at_schedule_start")
+            if trv_t is not None and room_at_on is not None and trv_t > room_at_on:
+                gradients.append(trv_t - room_at_on)
+        avg_gradient: float | None = round(sum(gradients) / len(gradients), 1) if gradients else None
+
+        recommended_trv_setpoint: float | None = None
+        if avg_gradient is not None:
+            raw = target_comfort_temp + avg_gradient
+            rounded = round(raw * 2) / 2  # nearest 0.5°C (TRV step)
+            recommended_trv_setpoint = min(rounded, trv_max_temp)
+            _LOGGER.debug(
+                "[%s] TRV gradient: avg=%.1f°C → raw %.1f°C → rounded %.1f°C → capped %.1f°C",
+                room.room_name, avg_gradient, raw, rounded, recommended_trv_setpoint,
+            )
+
         if sessions_total == 0:
             trvs_early = self._get_room_trvs(room)
             active_since_early = (
@@ -1640,6 +1732,15 @@ class SmartHeatingCoordinator:
             current_rate = DEFAULT_HEATING_RATE
         _LOGGER.debug("[%s] Current heating rate: %.3f °C/min", room.room_name, current_rate)
 
+        # Read current TRV setpoint entity value
+        trv_setpoint_state = self.hass.states.get(room.trv_setpoint_helper)
+        current_trv_setpoint = DEFAULT_TRV_SETPOINT
+        if trv_setpoint_state and trv_setpoint_state.state not in ("unavailable", "unknown"):
+            try:
+                current_trv_setpoint = float(trv_setpoint_state.state)
+            except (ValueError, TypeError):
+                pass
+
         trvs = self._get_room_trvs(room)
         active_since_str = (
             all_trvs_active_since.strftime("%Y-%m-%d %H:%M")
@@ -1677,6 +1778,12 @@ class SmartHeatingCoordinator:
                 "humidity_sensor": humidity_sensor_entity or "not configured",
                 "learning_phase": learning_phase,
                 "sessions_so_far": sessions_so_far,
+                # TRV setpoint and gradient
+                "target_comfort_temp": target_comfort_temp,
+                "trv_max_temp": round(trv_max_temp, 1),
+                "current_trv_setpoint": round(current_trv_setpoint, 1),
+                "avg_gradient": str(round(avg_gradient, 1)) if avg_gradient is not None else "n/a",
+                "recommended_trv_setpoint": str(round(recommended_trv_setpoint, 1)) if recommended_trv_setpoint is not None else "n/a",
                 # Backward-compat aliases for old /config prompt files
                 "schedule_name": primary["name"],
                 "target_temp": primary["target_temp"],
@@ -1722,10 +1829,10 @@ class SmartHeatingCoordinator:
         reasoning = result.get("reasoning", result.get("rate_adjustment_reason", "No reasoning provided"))
         confidence = result.get("confidence", "unknown")
         target_accuracy_percent = result.get("target_accuracy_percent")
-        average_miss_celsius = result.get("average_miss_celsius")
+        average_miss_celsius = result.get("average_miss_celsius") or result.get("average_miss")
         rate_adjustment_reason = result.get("rate_adjustment_reason", reasoning)
         recommendation = result.get("recommendation", "")
-        analysis_summary = result.get("analysis_summary", "")
+        analysis_summary = result.get("analysis_summary") or result.get("daily_summary", "")
 
         # Fallback: if observed rate differs significantly from Ollama's
         # recommendation, apply the observed rate directly.
@@ -1743,12 +1850,24 @@ class SmartHeatingCoordinator:
             )
             new_rate = avg_rate
 
+        # Extract TRV setpoint from Ollama response; fall back to calculated recommendation
+        ollama_trv_setpoint = result.get("trv_setpoint")
+        if ollama_trv_setpoint is not None:
+            try:
+                new_trv_setpoint: float | None = min(float(ollama_trv_setpoint), trv_max_temp)
+            except (TypeError, ValueError):
+                _LOGGER.warning("[%s] Invalid trv_setpoint in Ollama response: %s", room.room_name, ollama_trv_setpoint)
+                new_trv_setpoint = recommended_trv_setpoint
+        else:
+            new_trv_setpoint = recommended_trv_setpoint
+
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "[%s] AI result — new_rate=%.3f, confidence=%s, accuracy=%s%%, "
-                "avg_miss=%s°C, reasoning=%s",
-                room.room_name, new_rate, confidence,
-                target_accuracy_percent, average_miss_celsius, reasoning,
+                "[%s] AI result — new_rate=%.3f, trv_setpoint=%s, confidence=%s, "
+                "accuracy=%s%%, avg_miss=%s°C, reasoning=%s",
+                room.room_name, new_rate,
+                f"{new_trv_setpoint:.1f}" if new_trv_setpoint is not None else "n/a",
+                confidence, target_accuracy_percent, average_miss_celsius, reasoning,
             )
 
         if room.room_id not in self.room_states:
@@ -1760,6 +1879,9 @@ class SmartHeatingCoordinator:
         self.room_states[room.room_id]["analysis_summary"] = analysis_summary
 
         await self._async_apply_heating_rate(room, new_rate, reasoning)
+
+        if new_trv_setpoint is not None:
+            await self._async_apply_trv_setpoint(room, new_trv_setpoint, avg_gradient, target_comfort_temp)
 
         # Fix 3: radiator capacity check — fires hard notification if preheat > 180 min
         await self._async_check_radiator_capacity(
@@ -1809,61 +1931,62 @@ class SmartHeatingCoordinator:
         _LOGGER.info("[SHA] Weekly analysis starting — %d room(s)", total)
         weather = self._get_weather_data()
         season = get_season(datetime.now().month)
+        date_str = datetime.now().strftime("%Y-%m-%d")
 
+        room_results: list[tuple[RoomConfig, dict]] = []
         success_count = 0
         for idx, room in enumerate(rooms, start=1):
-            _LOGGER.info("[%s] Analysis starting (%d of %d)", room.room_name, idx, total)
+            _LOGGER.info("[%s] Weekly analysis starting (%d of %d)", room.room_name, idx, total)
             try:
                 stats = await self._async_run_weekly_analysis_for_room(room, weather, season)
-                new_rate = stats.get("new_rate") if stats else None
-                session_count = stats.get("session_count", 0) if stats else 0
-                on_target = stats.get("on_target", 0) if stats else 0
-                rate_str = f"{new_rate:.3f}" if new_rate is not None else "n/a"
-                _LOGGER.info(
-                    "[%s] Analysis complete — rate: %s°C/min, sessions: %d, target accuracy: %d of %d",
-                    room.room_name, rate_str, session_count, on_target, session_count,
-                )
+                if stats:
+                    room_results.append((room, stats))
+                    _LOGGER.info(
+                        "[%s] Weekly analysis complete — sessions: %d, on_target: %d, "
+                        "consistent_miss: %s",
+                        room.room_name,
+                        stats.get("session_count", 0),
+                        stats.get("on_target", 0),
+                        stats.get("consistent_miss", False),
+                    )
                 success_count += 1
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.error(
-                    "[%s] Analysis failed — %s. Continuing with next room.",
+                    "[%s] Weekly analysis failed — %s. Continuing with next room.",
                     room.room_name, exc,
                 )
 
+        await self._async_send_weekly_summary(room_results, date_str)
         _LOGGER.info("[SHA] Weekly analysis complete — %d of %d rooms processed", success_count, total)
 
     async def _async_run_weekly_analysis_for_room(
         self, room: RoomConfig, weather: dict, season: str
-    ) -> None:
-        """Run weekly analysis for a single room.
+    ) -> dict:
+        """Run weekly performance report for a single room.
 
-        Evaluates session accuracy over the past week, generates a plain-language
-        report for the homeowner, and applies the recommended heating rate to the
-        HA entity (same mechanism as the daily analysis).
+        Report only — no entity updates, no rate or setpoint changes.
+        Queries InfluxDB, calls Ollama for a plain-language homeowner report,
+        sends a persistent notification only when the room is consistently
+        missing target, and returns per-room stats for the overall summary.
         """
+        _EMPTY: dict = {
+            "session_count": 0, "on_target": 0,
+            "consistent_miss": False, "root_cause": None,
+            "report": "", "performance": "unknown",
+        }
         run_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
         # ── 0. Pre-flight checks ─────────────────────────────────────
         if await self._async_check_automation_enabled(room):
-            return {"new_rate": None, "session_count": 0, "on_target": 0}
+            return _EMPTY
 
         # ── 1. Room temperature ──────────────────────────────────────
         readings = await self.async_query_influxdb(room.temp_sensor, days=30)
         if await self._async_check_stale_data(room, readings):
-            return {"new_rate": None, "session_count": 0, "on_target": 0}
+            return _EMPTY
         if len(readings) < 5:
             _LOGGER.warning("[%s] Not enough room-temp data for weekly analysis", room.room_name)
-            await self._async_notify_weekly_room_result(
-                room=room,
-                run_ts=run_ts,
-                current_rate=None,
-                suggested_rate=None,
-                success_rate=None,
-                outcome=f"No changes suggested for {room.room_name}.",
-                details=f"Analysis ran but not enough data ({len(readings)} readings).",
-                weekly_report="No weekly report generated due to insufficient data.",
-            )
-            return {"new_rate": None, "session_count": 0, "on_target": 0}
+            return _EMPTY
 
         # ── 2. TRV data ──────────────────────────────────────────────
         trv_data = await self.async_query_trv_data_full(room, days=30)
@@ -1998,135 +2121,154 @@ class SmartHeatingCoordinator:
                 days_reliable = (datetime.now(timezone.utc) - all_trvs_active_since).days
 
             _LOGGER.warning(
-                "[%s] No sessions detected — %s days of data available. TRVs: %s",
+                "[%s] No sessions detected — %s days of data available.",
                 room.room_name,
                 days_reliable if days_reliable is not None else "unknown",
-                ", ".join(trvs_early) if trvs_early else "none",
             )
 
             if days_reliable is not None and days_reliable < 7:
                 phase_instruction = (
                     f"SHA is still in the learning phase — only {days_reliable} day(s) of "
                     f"reliable TRV data available. Explain to the homeowner that the system "
-                    f"will improve automatically as more data is collected. "
-                    f"A full weekly report will be available after at least 7 days of data."
+                    f"will improve automatically as more data is collected."
                 )
             else:
                 phase_instruction = (
                     f"Reliable TRV data has been available for "
                     f"{days_reliable if days_reliable is not None else 'an unknown number of'} "
-                    f"days, but no heating sessions were detected. This is unexpected. "
-                    f"Flag to the homeowner that TRVs may not be reporting hvac_action_str "
-                    f"to InfluxDB correctly, and suggest checking the InfluxDB integration."
+                    f"days, but no heating sessions were detected. Flag to the homeowner that "
+                    f"TRVs may not be reporting hvac_action_str to InfluxDB correctly."
                 )
 
             no_session_prompt = (
                 f"No heating sessions detected yet for {room.room_name}.\n"
                 f"TRVs configured: {', '.join(trvs_early) if trvs_early else 'none'}\n"
-                f"Reliable data since: {active_since_early}\n"
-                f"Days of reliable data: {days_reliable if days_reliable is not None else 'unknown'}\n\n"
+                f"Reliable data since: {active_since_early}\n\n"
                 f"{phase_instruction}\n\n"
-                f"Current heating rate: {current_rate:.3f}°C/min — keep unchanged.\n\n"
                 f"Respond ONLY with a valid JSON object:\n"
                 f"{{\n"
-                f'  "heating_rate": {current_rate:.3f},\n'
-                f'  "reasoning": "No sessions detected — rate unchanged",\n'
+                f'  "performance": "unknown",\n'
+                f'  "root_cause": "none",\n'
                 f'  "confidence": "low",\n'
-                f'  "weekly_report": "2-3 sentence plain-language weekly report for the homeowner"\n'
+                f'  "report": "2-3 sentence plain-language weekly report for the homeowner"\n'
                 f"}}"
             )
 
             response = await self.ollama.async_generate(no_session_prompt)
             no_session_result = await self.ollama.async_parse_json_response(response)
+            report_text = (no_session_result or {}).get("report") or phase_instruction
 
-            if no_session_result:
-                weekly_report_text = no_session_result.get("weekly_report") or phase_instruction
-                details_text = no_session_result.get("reasoning") or phase_instruction
-            else:
-                weekly_report_text = phase_instruction
-                details_text = phase_instruction
+            return {
+                "session_count": 0,
+                "on_target": 0,
+                "consistent_miss": False,
+                "root_cause": None,
+                "report": report_text,
+                "performance": "unknown",
+            }
 
-            await self._async_notify_weekly_room_result(
-                room=room,
-                run_ts=run_ts,
-                current_rate=current_rate,
-                suggested_rate=current_rate,
-                success_rate=0,
-                outcome=f"No changes suggested for {room.room_name} — no sessions detected.",
-                details=details_text,
-                weekly_report=weekly_report_text,
-            )
-            return {"new_rate": current_rate, "session_count": 0, "on_target": 0}
+        # ── 10. Per-session stats ─────────────────────────────────────
+        all_sessions_sorted = sorted(matched_sessions, key=lambda s: s["date"])
+        target_comfort_temp = primary["target_temp"]
 
-        trvs = self._get_room_trvs(room)
-        active_since_str = (
-            all_trvs_active_since.strftime("%Y-%m-%d %H:%M")
-            if all_trvs_active_since else "n/a"
+        # Gradient: TRV setpoint − comfort sensor at ready time
+        gradients: list[float] = []
+        comfort_at_ready_list: list[float] = []
+        for s in matched_sessions:
+            trv_t = s.get("trv_target")
+            room_at_on = s.get("room_temp_at_schedule_start") or s.get("temp_at_schedule_start")
+            if room_at_on is not None:
+                comfort_at_ready_list.append(room_at_on)
+                if trv_t is not None and trv_t > room_at_on:
+                    gradients.append(trv_t - room_at_on)
+        avg_gradient: float | None = (
+            round(sum(gradients) / len(gradients), 1) if gradients else None
         )
-        previous_rate = self.room_states.get(room.room_id, {}).get("previous_rate", current_rate)
-        rate_was_adjusted = "Yes" if abs(current_rate - previous_rate) >= 0.005 else "No"
+        avg_comfort_at_ready: float | None = (
+            round(sum(comfort_at_ready_list) / len(comfort_at_ready_list), 1)
+            if comfort_at_ready_list else None
+        )
 
+        # ── 11. Consistent miss and root cause ───────────────────────
+        sessions_missed = sessions_total - sessions_on_target
+        consistent_miss = sessions_total > 0 and sessions_missed > sessions_total * 0.6
+
+        root_cause: str | None = None
+        if consistent_miss:
+            avg_rate_val = avg_rate or 0.0
+            if average_miss > 2.0 and avg_rate_val < 0.01:
+                root_cause = "HARDWARE_INSUFFICIENT"
+            elif average_miss > 0.5 and avg_rate_val >= 0.01:
+                root_cause = "PREHEAT_TOO_SHORT"
+            elif avg_gradient is not None and avg_gradient > 3.0:
+                root_cause = "TRV_SETPOINT_TOO_LOW"
+            elif avg_rate_val < 0.005 and weather["outside_temp"] < 5.0:
+                root_cause = "HEAT_LOSS_HIGH"
+            else:
+                # Recent degradation: last 7 full-setup sessions vs overall
+                full_only = [s for s in all_sessions_sorted if s.get("full_setup", True)]
+                if full_setup_count >= 7 and len(full_only) >= 7:
+                    last7 = full_only[-7:]
+                    last7_ot = sum(1 for s in last7 if s.get("target_reached", False))
+                    overall_rate_frac = sessions_on_target / full_setup_count
+                    if (last7_ot / 7) < overall_rate_frac - 0.2:
+                        root_cause = "RECENT_DEGRADATION"
+
+        _LOGGER.debug(
+            "[%s] Weekly: consistent_miss=%s root_cause=%s avg_gradient=%s",
+            room.room_name, consistent_miss, root_cause, avg_gradient,
+        )
+
+        # ── 12. Session detail table (last 5 sessions) ───────────────
+        last5 = all_sessions_sorted[-5:]
+        table_lines = ["Date        Comfort   Target  Miss"]
+        for s in last5:
+            d = str(s.get("date", "?"))[:10]
+            comfort = s.get("room_temp_at_schedule_start") or s.get("temp_at_schedule_start")
+            tgt = s.get("target_temp", target_comfort_temp)
+            miss = s.get("target_miss")
+            comfort_str = f"{comfort:.1f}°C" if comfort is not None else "n/a   "
+            miss_str = f"{miss:+.1f}°C" if miss is not None else "n/a   "
+            table_lines.append(f"{d}  {comfort_str:7}  {tgt:.1f}°C  {miss_str}")
+        session_detail_table = "\n".join(table_lines)
+
+        # ── 13. Build prompt ──────────────────────────────────────────
+        trvs = self._get_room_trvs(room)
         humidity_sensor_entity = self._get_room_humidity_sensor(room)
         humidity_analysis_text = build_humidity_analysis_text(humidity_readings, matched_sessions)
-        learning_phase = full_setup_count < 7
-        sessions_so_far = sessions_total
-
-        # avg temp at schedule start (for compat variables)
-        valid_temps = [
-            s.get("temp_at_schedule_start") or s.get("end_temp")
-            for s in display_sessions
-            if s.get("temp_at_schedule_start") is not None or s.get("end_temp") is not None
-        ]
-        weekly_avg_temp = round(sum(valid_temps) / len(valid_temps), 1) if valid_temps else "n/a"
 
         prompt = await self.hass.async_add_executor_job(
             load_prompt,
             "weekly_analysis.md",
             {
                 "room_name": room.room_name,
-                "heating_rate": round(current_rate, 3),
-                "analysis_days": 30,
+                "target_comfort_temp": target_comfort_temp,
+                "target_ready_time": primary["schedule_time"],
+                "sessions_total": sessions_total,
+                "sessions_on_target": sessions_on_target,
+                "avg_comfort_at_ready": (
+                    str(avg_comfort_at_ready) if avg_comfort_at_ready is not None else "n/a"
+                ),
+                "avg_miss": str(average_miss),
+                "consistent_miss": "Yes" if consistent_miss else "No",
+                "root_cause": root_cause or "none",
+                "outside_temp_now": weather["outside_temp"],
+                "season": season,
+                "session_detail_table": session_detail_table,
+                # Extra context supplied to Ollama
                 "schedule_count": len(schedules),
                 "schedule_lines": build_schedule_lines(schedules),
+                "avg_heating_rate": str(avg_rate or "n/a"),
+                "avg_gradient": str(avg_gradient) if avg_gradient is not None else "n/a",
+                "success_rate_pct": round(success_rate_pct, 1),
                 "schedules_analysis_text": schedules_analysis_text,
                 "humidity_analysis_text": humidity_analysis_text,
-                "rate_was_adjusted": rate_was_adjusted,
-                "previous_rate": round(previous_rate, 3),
-                "avg_outside_temp": weather["outside_temp"],
-                "season": season,
-                "trv_entities": ", ".join(trvs) if trvs else "none configured",
-                "trv_count": len(trvs),
-                "standby_temp": standby_temp_val,
-                "all_trvs_active_since": active_since_str,
-                "full_setup_count": full_setup_count,
-                "partial_setup_count": partial_setup_count,
-                "session_count": sessions_total,
-                "on_target_count": sessions_on_target,
-                "avg_observed_rate": str(avg_rate or "n/a"),
                 "humidity_sensor": humidity_sensor_entity or "not configured",
-                "learning_phase": learning_phase,
-                "sessions_so_far": sessions_so_far,
-                # Backward-compat aliases for old /config prompt files
-                "schedule_name": primary["name"],
-                "target_temp": primary["target_temp"],
-                "schedule_time": primary["schedule_time"],
-                "sessions_text": build_sessions_text({"sessions": display_sessions}, weekly=True),
-                "weekly_accuracy_summary": schedules_analysis_text,
-                "weekly_on_target": sessions_on_target,
-                "weekly_sessions_total": sessions_total,
-                "weekly_avg_temp": weekly_avg_temp,
-                "weekly_average_miss": average_miss,
-                "miss_trend": miss_trend,
-                "consecutive_misses": consecutive_misses,
-                "current_rate": round(current_rate, 3),
-                "days_analyzed": 30,
-                "avg_rate": str(avg_rate or "n/a"),
-                "success_rate": success_rate_pct,
-                "avg_start_time": "n/a",
             },
             self.hass.config.config_dir,
         )
 
+        # ── 14. Ollama ────────────────────────────────────────────────
         response = await self.ollama.async_generate(prompt)
         result = await self.ollama.async_parse_json_response(response)
 
@@ -2135,68 +2277,62 @@ class SmartHeatingCoordinator:
                 "[%s] Invalid weekly Ollama response (first 200 chars): %s",
                 room.room_name, (response or "")[:200],
             )
-            await self._async_notify_weekly_room_result(
-                room=room,
-                run_ts=run_ts,
-                current_rate=current_rate,
-                suggested_rate=current_rate,
-                success_rate=success_rate_pct,
-                outcome=f"No changes suggested for {room.room_name}.",
-                details="AI response was invalid, keeping current value.",
-                weekly_report="No weekly report generated due to invalid AI response.",
-            )
-            return {"new_rate": current_rate, "session_count": sessions_total, "on_target": sessions_on_target}
+            return {
+                "session_count": sessions_total,
+                "on_target": sessions_on_target,
+                "consistent_miss": consistent_miss,
+                "root_cause": root_cause,
+                "report": "Analysis failed — no AI response.",
+                "performance": "unknown",
+            }
 
+        # ── 15. Parse result ──────────────────────────────────────────
+        performance = result.get("performance", "unknown")
+        # Ollama may refine root_cause — accept it when not "none"
+        ollama_root_cause = result.get("root_cause", "")
+        if ollama_root_cause and ollama_root_cause not in ("none", ""):
+            root_cause = ollama_root_cause
         confidence = result.get("confidence", "unknown")
-        weekly_report = result.get("weekly_report", "No weekly report generated.")
-        try:
-            suggested_rate = float(result.get("heating_rate", current_rate))
-        except (TypeError, ValueError):
-            suggested_rate = current_rate
-        reasoning = result.get("reasoning", "")
+        report_text = result.get("report", "No weekly report generated.")
 
-        # Fallback: if observed rate differs significantly from Ollama's
-        # recommendation, apply the observed rate directly.
-        if (
-            avg_rate is not None
-            and abs(avg_rate - suggested_rate) > 0.02
-            and 0.005 <= avg_rate <= 0.30
-        ):
-            _LOGGER.info(
-                "[%s] Ollama recommended %.3f°C/min but observed rate %.3f°C/min "
-                "differs significantly — applying observed rate.",
-                room.room_name,
-                suggested_rate,
-                avg_rate,
-            )
-            suggested_rate = avg_rate
-
-        await self._async_apply_heating_rate(room, suggested_rate, reasoning)
-
+        # ── 16. Persist in room_states ────────────────────────────────
         if room.room_id not in self.room_states:
             self.room_states[room.room_id] = {}
         self.room_states[room.room_id]["confidence"] = confidence
-        self.room_states[room.room_id]["weekly_report"] = weekly_report
+        self.room_states[room.room_id]["weekly_report"] = report_text
+        self.room_states[room.room_id]["consistent_miss"] = consistent_miss
 
-        # Fix 3: radiator capacity check — fires hard notification if preheat > 180 min
-        await self._async_check_radiator_capacity(
-            room, per_schedule, current_rate, avg_rate
+        # ── 17. Radiator capacity check ───────────────────────────────
+        await self._async_check_radiator_capacity(room, per_schedule, current_rate, avg_rate)
+
+        # ── 18. Individual alert when consistently missing ────────────
+        if consistent_miss and room.weekly_report_enabled:
+            rc_plain = _ROOT_CAUSE_PLAIN.get(root_cause or "", root_cause or "unknown")
+            await self._async_persistent_notification(
+                title=f"SHA — {room.room_name} needs attention",
+                message=(
+                    f"Run time: {run_ts}\n\n"
+                    f"Target reached: {sessions_on_target} of {sessions_total} sessions "
+                    f"({int(success_rate_pct)}%)\n"
+                    f"Average miss: {average_miss:+.1f}°C\n"
+                    f"Root cause: {rc_plain}\n\n"
+                    f"{report_text}"
+                ),
+                notification_id=f"sha_room_report_{room.room_id}",
+            )
+
+        _LOGGER.info(
+            "[%s] Weekly report complete — sessions: %d, on_target: %d, "
+            "consistent_miss: %s, root_cause: %s, confidence: %s",
+            room.room_name, sessions_total, sessions_on_target,
+            consistent_miss, root_cause, confidence,
         )
 
-        details = (
-            f"Confidence: {confidence}. "
-            f"Reasoning: {reasoning or 'No reasoning provided.'} "
-            f"Avg observed rate: {avg_rate or 'unknown'} °C/min."
-        )
-        await self._async_notify_weekly_room_result(
-            room=room,
-            run_ts=run_ts,
-            current_rate=current_rate,
-            suggested_rate=suggested_rate,
-            success_rate=success_rate_pct,
-            outcome=self._format_weekly_outcome(room.room_name, current_rate, suggested_rate),
-            details=details,
-            weekly_report=weekly_report,
-        )
-
-        return {"new_rate": suggested_rate, "session_count": sessions_total, "on_target": sessions_on_target}
+        return {
+            "session_count": sessions_total,
+            "on_target": sessions_on_target,
+            "consistent_miss": consistent_miss,
+            "root_cause": root_cause,
+            "report": report_text,
+            "performance": performance,
+        }

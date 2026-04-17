@@ -85,7 +85,7 @@ Use all sessions for usage pattern detection.
 3. If consecutive_misses ≥ 3: treat as urgent — increase rate more aggressively.
 4. If miss trend is "worsening": bias toward increasing rate even if miss is moderate.
 5. If miss trend is "improving": a smaller or no adjustment may suffice.
-6. Keep heating_rate between 0.05 and 0.30.
+6. Keep heating_rate between 0.01 and 0.30.
 7. Only suggest a change when the adjustment is > 0.01°C/min.
 8. Consider outside temperature: colder outside generally requires a higher rate.
 9. If learning_phase is True or session_count < 3:

@@ -1162,13 +1162,19 @@ def _deduplicate_matched_sessions(sessions: list[dict]) -> list[dict]:
 
     TRV cycling (heating → idle → heating) can produce two raw sessions for a
     single morning warm-up, both of which match the same schedule.  This function
-    collapses them:
+    collapses them in two passes:
 
-    1. Group sessions by (date, schedule_entity_id).
-    2. Within each group sort by session start time.
-    3. Cluster consecutive sessions whose starts are ≤ 30 minutes apart —
-       these represent one heating event split by a brief idle period.
-    4. Keep the session with the longest duration from each cluster.
+    Pass 1 — merge clusters (≤ 30 min gap between starts):
+      Sessions whose starts are within 30 minutes are treated as one heating event
+      split by a brief idle period.  They are merged into a single session:
+        start        = earliest start
+        end          = latest end
+        duration_min = sum of individual durations
+        other fields = from the longest session in the cluster (best data quality)
+
+    Pass 2 — discard cross-cluster duplicates (> 30 min gap, same day/schedule):
+      If multiple clusters survive for the same (date, schedule), only the one
+      with the longest total duration is kept; shorter ones are logged and dropped.
     """
     from collections import defaultdict
 
@@ -1183,7 +1189,7 @@ def _deduplicate_matched_sessions(sessions: list[dict]) -> list[dict]:
             result.append(group[0])
             continue
 
-        # Cluster by start proximity (≤ 30 min gap to previous in cluster)
+        # Pass 1: cluster by start proximity (≤ 30 min gap to previous in cluster)
         group_sorted = sorted(group, key=lambda s: s["start"])
         clusters: list[list[dict]] = [[group_sorted[0]]]
         for s in group_sorted[1:]:
@@ -1193,19 +1199,49 @@ def _deduplicate_matched_sessions(sessions: list[dict]) -> list[dict]:
             else:
                 clusters.append([s])
 
+        # Merge each cluster into a single representative session
+        merged_candidates: list[dict] = []
         for cluster in clusters:
             if len(cluster) == 1:
-                result.append(cluster[0])
-            else:
-                best = max(cluster, key=lambda s: s["duration_min"])
-                _LOGGER.debug(
-                    "Deduplicated %d sessions for %s / %s — keeping %s (%.0f min), "
-                    "dropped %d duplicate(s)",
-                    len(cluster), date, eid,
-                    best["start_time"], best["duration_min"],
-                    len(cluster) - 1,
-                )
-                result.append(best)
+                merged_candidates.append(cluster[0])
+                continue
+            # Merge: start from earliest, end from latest, duration = sum
+            earliest = cluster[0]  # already sorted by start
+            latest_end = max(s["end"] for s in cluster)
+            total_duration = sum(s["duration_min"] for s in cluster)
+            best = max(cluster, key=lambda s: s["duration_min"])
+            merged = {**best}
+            merged["start"] = earliest["start"]
+            merged["start_time"] = earliest["start_time"]
+            merged["end"] = latest_end
+            merged["duration_min"] = round(total_duration, 1)
+            # Use start temp from the earliest session (actual cold-start reading)
+            for field in ("room_temp_at_start", "start_temp"):
+                if earliest.get(field) is not None:
+                    merged[field] = earliest[field]
+            _LOGGER.debug(
+                "Merged %d sessions for %s / %s — start %s end %s total %.0f min",
+                len(cluster), date, eid,
+                earliest["start_time"],
+                latest_end.strftime("%H:%M"),
+                total_duration,
+            )
+            merged_candidates.append(merged)
+
+        # Pass 2: if multiple clusters remain, keep only the longest
+        if len(merged_candidates) == 1:
+            result.append(merged_candidates[0])
+        else:
+            kept = max(merged_candidates, key=lambda s: s["duration_min"])
+            for s in merged_candidates:
+                if s is not kept:
+                    _LOGGER.debug(
+                        "Duplicate session removed: %s %s (%.0f min)"
+                        " — kept longer session %s (%.0f min)",
+                        date, s.get("start_time"), s["duration_min"],
+                        kept.get("start_time"), kept["duration_min"],
+                    )
+            result.append(kept)
 
     result.sort(key=lambda s: s["date"])
     return result

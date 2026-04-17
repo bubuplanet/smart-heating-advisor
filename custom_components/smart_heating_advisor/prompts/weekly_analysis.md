@@ -60,7 +60,10 @@ If root_cause is HARDWARE_INSUFFICIENT:
   temperature in time. Suggest lowering the target or adding heating.
 
 If root_cause is PREHEAT_TOO_SHORT:
-  Tell the user SHA is adjusting the pre-heat start time and it should improve.
+  Tell the user SHA has already identified the issue and is automatically
+  adjusting the pre-heat start time each day. The user does not need to do
+  anything. SHA will continue improving accuracy automatically as it learns
+  the room. Do NOT suggest any manual action.
 
 If root_cause is TRV_SETPOINT_TOO_LOW:
   Tell the user SHA has identified the radiator needs to run hotter and has

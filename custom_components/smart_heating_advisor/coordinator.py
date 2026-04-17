@@ -174,6 +174,53 @@ def _do_read_automation_inputs(config_dir: str, room_name: str) -> list[str]:
     return []
 
 
+def _do_read_automation_trvs(config_dir: str, room_name: str) -> list[str]:
+    """Read TRV entity IDs from automations.yaml for a given room.
+
+    This is a blocking function — call via async_add_executor_job.
+    Returns an empty list when automations.yaml is missing, unreadable, or
+    when no matching automation is found.
+    """
+    import os
+    import yaml
+
+    automations_file = os.path.join(config_dir, "automations.yaml")
+    try:
+        with open(automations_file) as fh:
+            automations = yaml.safe_load(fh) or []
+    except Exception as exc:
+        _LOGGER.debug("Could not read automations.yaml for TRV lookup: %s", exc)
+        return []
+
+    if not isinstance(automations, list):
+        return []
+
+    room_id = _room_name_to_id(room_name)
+
+    for automation in automations:
+        if not isinstance(automation, dict):
+            continue
+        blueprint = automation.get("use_blueprint", {})
+        if not isinstance(blueprint, dict):
+            continue
+        inputs = blueprint.get("input", {})
+        if not isinstance(inputs, dict):
+            continue
+
+        auto_room = inputs.get("room_name", "")
+        if _room_name_to_id(str(auto_room)) != room_id:
+            continue
+
+        trvs = inputs.get("radiator_thermostats", [])
+        if isinstance(trvs, str):
+            return [trvs] if trvs.strip() else []
+        if isinstance(trvs, list):
+            return [str(t).strip() for t in trvs if str(t).strip()]
+        return []
+
+    return []
+
+
 class RoomConfig:
     """Holds configuration for a single room discovered from blueprint automations."""
 
@@ -543,6 +590,24 @@ class SmartHeatingCoordinator:
                 return list(trvs) if isinstance(trvs, list) else []
         return []
 
+    async def _async_get_room_trvs_with_fallback(self, room: RoomConfig) -> list[str]:
+        """Return TRV entity IDs, falling back to automations.yaml when subentry is empty."""
+        trvs = self._get_room_trvs(room)
+        if trvs:
+            return trvs
+        config_dir = self.hass.config.config_dir
+        trvs = await self.hass.async_add_executor_job(
+            _do_read_automation_trvs, config_dir, room.room_name
+        )
+        if trvs:
+            _LOGGER.debug(
+                "[%s] TRVs not in subentry — loaded %d TRV(s) from automations.yaml: %s",
+                room.room_name, len(trvs), trvs,
+            )
+        else:
+            _LOGGER.debug("[%s] No TRVs found in subentry or automations.yaml", room.room_name)
+        return trvs
+
     async def async_query_trv_readings(
         self, room: RoomConfig, days: int
     ) -> dict[str, list[tuple]]:
@@ -552,7 +617,7 @@ class SmartHeatingCoordinator:
         Climate setpoints are stored in InfluxDB as field ``temperature``
         (the attribute name) in measurement ``°C``.
         """
-        trvs = self._get_room_trvs(room)
+        trvs = await self._async_get_room_trvs_with_fallback(room)
         if not trvs:
             _LOGGER.debug("[%s] No TRV entities configured — skipping TRV query", room.room_name)
             return {}
@@ -711,7 +776,7 @@ class SmartHeatingCoordinator:
 
         Returns dict[entity_id → dict[field → list[(datetime, value)]]].
         """
-        trvs = self._get_room_trvs(room)
+        trvs = await self._async_get_room_trvs_with_fallback(room)
         if not trvs:
             _LOGGER.debug("[%s] No TRV entities — skipping TRV data query", room.room_name)
             return {}
@@ -980,7 +1045,7 @@ class SmartHeatingCoordinator:
             "tomorrow_max": float(tomorrow_max),
         }
 
-    def _get_trv_max_temp(self, room: "RoomConfig") -> float:
+    def _get_trv_max_temp(self, room: "RoomConfig", trvs: list[str]) -> float:
         """Return the minimum max_temp reported across all TRVs for this room.
 
         Reads live from HA climate entity attributes.  Uses MAX_TRV_SETPOINT
@@ -988,7 +1053,6 @@ class SmartHeatingCoordinator:
         across all TRVs is used so the recommendation never exceeds any single
         TRV's hardware limit.
         """
-        trvs = self._get_room_trvs(room)
         max_temps: list[float] = []
         for trv_entity_id in trvs:
             state = self.hass.states.get(trv_entity_id)
@@ -1473,6 +1537,7 @@ class SmartHeatingCoordinator:
             return {"new_rate": None, "session_count": 0, "on_target": 0}
 
         # ── 2. TRV data (hvac_action_str + setpoints + current_temp) ─
+        room_trvs = await self._async_get_room_trvs_with_fallback(room)
         trv_data = await self.async_query_trv_data_full(room, days=30)
 
         # Standby temp from setpoint readings (backward compat helper)
@@ -1611,7 +1676,7 @@ class SmartHeatingCoordinator:
         # avg_gradient gives the average offset needed to compensate for
         # heat loss between the radiator and the comfort sensor location.
         target_comfort_temp = primary["target_temp"]
-        trv_max_temp = self._get_trv_max_temp(room)
+        trv_max_temp = self._get_trv_max_temp(room, room_trvs)
 
         gradients: list[float] = []
         for s in matched_sessions:
@@ -1639,7 +1704,7 @@ class SmartHeatingCoordinator:
             )
 
         if sessions_total == 0:
-            trvs_early = self._get_room_trvs(room)
+            trvs_early = room_trvs
             active_since_early = (
                 all_trvs_active_since.strftime("%Y-%m-%d %H:%M")
                 if all_trvs_active_since else "n/a"
@@ -1748,7 +1813,7 @@ class SmartHeatingCoordinator:
             except (ValueError, TypeError):
                 pass
 
-        trvs = self._get_room_trvs(room)
+        trvs = room_trvs
         active_since_str = (
             all_trvs_active_since.strftime("%Y-%m-%d %H:%M")
             if all_trvs_active_since else "n/a"
@@ -1996,6 +2061,7 @@ class SmartHeatingCoordinator:
             return _EMPTY
 
         # ── 2. TRV data ──────────────────────────────────────────────
+        room_trvs = await self._async_get_room_trvs_with_fallback(room)
         trv_data = await self.async_query_trv_data_full(room, days=30)
 
         trv_setpoint_readings = {
@@ -2118,7 +2184,7 @@ class SmartHeatingCoordinator:
             current_rate = DEFAULT_HEATING_RATE
 
         if sessions_total == 0:
-            trvs_early = self._get_room_trvs(room)
+            trvs_early = room_trvs
             active_since_early = (
                 all_trvs_active_since.strftime("%Y-%m-%d %H:%M")
                 if all_trvs_active_since else "n/a"
@@ -2247,7 +2313,7 @@ class SmartHeatingCoordinator:
         session_detail_table = "\n".join(table_lines)
 
         # ── 13. Build prompt ──────────────────────────────────────────
-        trvs = self._get_room_trvs(room)
+        trvs = room_trvs
         humidity_sensor_entity = self._get_room_humidity_sensor(room)
         humidity_analysis_text = build_humidity_analysis_text(humidity_readings, matched_sessions)
 

@@ -1123,6 +1123,60 @@ def _match_one_session(
     return matched
 
 
+def _deduplicate_matched_sessions(sessions: list[dict]) -> list[dict]:
+    """Remove duplicate sessions that match the same schedule on the same calendar day.
+
+    TRV cycling (heating → idle → heating) can produce two raw sessions for a
+    single morning warm-up, both of which match the same schedule.  This function
+    collapses them:
+
+    1. Group sessions by (date, schedule_entity_id).
+    2. Within each group sort by session start time.
+    3. Cluster consecutive sessions whose starts are ≤ 30 minutes apart —
+       these represent one heating event split by a brief idle period.
+    4. Keep the session with the longest duration from each cluster.
+    """
+    from collections import defaultdict
+
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for s in sessions:
+        key = (s["date"], s.get("schedule_entity_id", ""))
+        groups[key].append(s)
+
+    result: list[dict] = []
+    for (date, eid), group in groups.items():
+        if len(group) == 1:
+            result.append(group[0])
+            continue
+
+        # Cluster by start proximity (≤ 30 min gap to previous in cluster)
+        group_sorted = sorted(group, key=lambda s: s["start"])
+        clusters: list[list[dict]] = [[group_sorted[0]]]
+        for s in group_sorted[1:]:
+            gap_min = (s["start"] - clusters[-1][-1]["start"]).total_seconds() / 60
+            if gap_min <= 30:
+                clusters[-1].append(s)
+            else:
+                clusters.append([s])
+
+        for cluster in clusters:
+            if len(cluster) == 1:
+                result.append(cluster[0])
+            else:
+                best = max(cluster, key=lambda s: s["duration_min"])
+                _LOGGER.debug(
+                    "Deduplicated %d sessions for %s / %s — keeping %s (%.0f min), "
+                    "dropped %d duplicate(s)",
+                    len(cluster), date, eid,
+                    best["start_time"], best["duration_min"],
+                    len(cluster) - 1,
+                )
+                result.append(best)
+
+    result.sort(key=lambda s: s["date"])
+    return result
+
+
 def match_sessions_to_schedules(
     sessions: list[dict],
     schedule_on_periods: dict,
@@ -1132,7 +1186,8 @@ def match_sessions_to_schedules(
 ) -> list[dict]:
     """Match all raw heating sessions to schedules.
 
-    Returns a flat list of enriched session dicts sorted by date.
+    Returns a flat list of enriched session dicts sorted by date,
+    deduplicated so at most one session per (day, schedule) remains.
     """
     result: list[dict] = []
     for session in sessions:
@@ -1142,7 +1197,7 @@ def match_sessions_to_schedules(
             )
         )
     result.sort(key=lambda s: s["date"])
-    return result
+    return _deduplicate_matched_sessions(result)
 
 
 def analyze_sessions_per_schedule(

@@ -837,18 +837,29 @@ def build_schedule_on_periods(
     return periods
 
 
-def _get_max_setpoint_in_window(
+def _get_trv_setpoint_at_session_start(
     trv_data: dict,
-    start: datetime,
-    end: datetime,
+    session_start: datetime,
+    lookback_hours: int = 24,
 ) -> float | None:
-    """Return the max TRV setpoint (``temperature`` field) seen in [start, end]."""
-    max_val: float | None = None
+    """Return the TRV commanded setpoint (``temperature`` field) active at session start.
+
+    Uses the most recent reading at or before ``session_start`` within the lookback
+    window.  Reads ``temperature`` (what SHA commanded) — NOT ``current_temperature``
+    (radiator surface/body temperature, which can reach 30-33 °C near a hot radiator).
+    """
+    best_ts: datetime | None = None
+    best_val: float | None = None
+    cutoff = session_start - timedelta(hours=lookback_hours)
     for fields in trv_data.values():
-        for ts, val in fields.get("temperature", []):
-            if start <= ts <= end and isinstance(val, (int, float)):
-                max_val = val if max_val is None else max(max_val, val)
-    return max_val
+        for ts, val in fields.get("temperature", []):  # setpoint, NOT current_temperature
+            if not isinstance(val, (int, float)):
+                continue
+            if cutoff <= ts <= session_start:
+                if best_ts is None or ts > best_ts:
+                    best_ts = ts
+                    best_val = val
+    return best_val
 
 
 def _get_current_temp_nearest(
@@ -925,6 +936,16 @@ def detect_heating_sessions_from_hvac(
                 start.strftime("%Y-%m-%d %H:%M"), duration_min, min_duration_min,
             )
             continue
+        if duration_min > 240:
+            _LOGGER.debug(
+                "Spurious session excluded: %s %s-%s (%.0f min) exceeds 240 min maximum"
+                " — TRV may have missed an idle transition",
+                start.strftime("%Y-%m-%d"),
+                start.strftime("%H:%M"),
+                end.strftime("%H:%M"),
+                duration_min,
+            )
+            continue
         full_setup = not (all_trvs_active_since and start < all_trvs_active_since)
         if not full_setup:
             _LOGGER.debug(
@@ -987,8 +1008,8 @@ def _build_matched_session(
     if room_at_on is None:
         room_at_on = _get_current_temp_nearest(trv_data, schedule_on_ts, window_min=30)
 
-    # Max TRV setpoint during the session
-    max_setpoint = _get_max_setpoint_in_window(trv_data, session_start, session_end)
+    # TRV commanded setpoint at session start (temperature field = what SHA set)
+    max_setpoint = _get_trv_setpoint_at_session_start(trv_data, session_start)
 
     # room_rise for display — full session span (start → end)
     room_rise: float | None = None
@@ -1008,12 +1029,25 @@ def _build_matched_session(
     elif room_rise is not None and room_rise > 0 and duration_min > 0:
         observed_rate = round(room_rise / duration_min, 3)
 
-    # Miss = target − room at schedule ON time
+    # Peak comfort temperature: maximum reading in [schedule_on_ts, schedule_on_ts + 30 min].
+    # Room may peak 5-15 min after schedule ON time; measuring exactly at ON time causes false
+    # misses when the target was actually reached shortly after.
+    # Falls back to room_at_on when no readings fall in the window.
+    peak_window_end = schedule_on_ts + timedelta(minutes=30)
+    peak_comfort: float | None = None
+    for ts, temp in room_temp_readings:
+        if schedule_on_ts <= ts <= peak_window_end and isinstance(temp, (int, float)):
+            if peak_comfort is None or temp > peak_comfort:
+                peak_comfort = temp
+    if peak_comfort is None:
+        peak_comfort = room_at_on
+
+    # Miss = target − peak comfort temperature in the 30 min window after schedule ON
     target_miss: float | None = None
     target_reached = False
-    if room_at_on is not None:
-        target_miss = round(target_temp - room_at_on, 1)
-        target_reached = abs(target_miss) <= 0.5
+    if peak_comfort is not None:
+        target_miss = round(target_temp - peak_comfort, 1)
+        target_reached = target_miss <= 0.5
 
     return {
         "date": session["date"],
@@ -1037,7 +1071,7 @@ def _build_matched_session(
         "room_rise": round(room_rise, 1) if room_rise is not None else None,
         # Rate fields — both canonical and compat
         "observed_rate": observed_rate,
-        "rate": observed_rate or 0.0,
+        "rate": observed_rate,
         "target_miss": target_miss,
         "target_reached": target_reached,
         "full_setup": session.get("full_setup", True),

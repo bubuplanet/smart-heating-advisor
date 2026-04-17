@@ -1615,6 +1615,13 @@ class SmartHeatingCoordinator:
 
         gradients: list[float] = []
         for s in matched_sessions:
+            if s.get("observed_rate") is None:
+                _LOGGER.debug(
+                    "[%s] Session %s excluded from rate/gradient calculation"
+                    " — no valid sensor readings",
+                    room.room_name, s.get("date"),
+                )
+                continue
             trv_t = s.get("trv_target")
             room_at_on = s.get("room_temp_at_schedule_start") or s.get("temp_at_schedule_start")
             if trv_t is not None and room_at_on is not None and trv_t > room_at_on:
@@ -1838,7 +1845,7 @@ class SmartHeatingCoordinator:
         # recommendation, apply the observed rate directly.
         if (
             avg_rate is not None
-            and abs(avg_rate - new_rate) > 0.02
+            and abs(avg_rate - new_rate) > 0.005
             and 0.005 <= avg_rate <= 0.30
         ):
             _LOGGER.info(
@@ -2175,6 +2182,13 @@ class SmartHeatingCoordinator:
         gradients: list[float] = []
         comfort_at_ready_list: list[float] = []
         for s in matched_sessions:
+            if s.get("observed_rate") is None:
+                _LOGGER.debug(
+                    "[%s] Session %s excluded from rate/gradient calculation"
+                    " — no valid sensor readings",
+                    room.room_name, s.get("date"),
+                )
+                continue
             trv_t = s.get("trv_target")
             room_at_on = s.get("room_temp_at_schedule_start") or s.get("temp_at_schedule_start")
             if room_at_on is not None:

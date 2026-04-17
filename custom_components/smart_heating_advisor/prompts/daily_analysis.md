@@ -90,11 +90,14 @@ Use all sessions for usage pattern detection.
 8. Consider outside temperature: colder outside generally requires a higher rate.
 9. If learning_phase is True or session_count < 3:
    set confidence to "low" and note that data is limited.
-   However always set heating_rate to the observed real heating rate from the
-   session data regardless of learning phase. The rate must reflect reality
-   even with limited data — it is better to use an observed rate with low
-   confidence than to keep an unobserved default rate.
-   If avg_observed_rate is available use it directly as the recommended heating_rate.
+
+IMPORTANT — heating_rate rule:
+You MUST set heating_rate to the value in "Observed average heating rate" shown above.
+Do not keep the current rate.
+Do not apply conservative adjustments.
+The observed rate IS the correct rate.
+Set heating_rate = {avg_observed_rate} exactly.
+Only deviate if avg_observed_rate is "n/a".
 
 ### trv_setpoint
 10. If avg_gradient is available (not "n/a"):

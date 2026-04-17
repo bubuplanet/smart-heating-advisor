@@ -990,13 +990,23 @@ def _build_matched_session(
     # Max TRV setpoint during the session
     max_setpoint = _get_max_setpoint_in_window(trv_data, session_start, session_end)
 
-    # Observed rate: rise from session_start to session_end divided by duration
-    observed_rate: float | None = None
+    # room_rise for display — full session span (start → end)
     room_rise: float | None = None
     if room_end is not None:
         room_rise = room_end - room_start
-        if room_rise > 0 and duration_min > 0:
-            observed_rate = round(room_rise / duration_min, 3)
+
+    # Observed rate: rise at comfort sensor from session start to schedule ON time
+    # divided by the preheat duration.  This directly measures how fast the comfort
+    # sensor (room thermostat near the door) climbs during the pre-heat window —
+    # which is exactly what SHA uses for timing.
+    # Falls back to full session duration when schedule ON time is unavailable.
+    observed_rate: float | None = None
+    if room_at_on is not None and preheat_min > 0:
+        comfort_rise = room_at_on - room_start
+        if comfort_rise > 0:
+            observed_rate = round(comfort_rise / preheat_min, 3)
+    elif room_rise is not None and room_rise > 0 and duration_min > 0:
+        observed_rate = round(room_rise / duration_min, 3)
 
     # Miss = target − room at schedule ON time
     target_miss: float | None = None

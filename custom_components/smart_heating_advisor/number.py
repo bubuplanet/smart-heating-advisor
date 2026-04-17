@@ -11,7 +11,11 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import DOMAIN, DEFAULT_HEATING_RATE, MIN_HEATING_RATE, MAX_HEATING_RATE
+from .const import (
+    DOMAIN,
+    DEFAULT_HEATING_RATE, MIN_HEATING_RATE, MAX_HEATING_RATE,
+    DEFAULT_TRV_SETPOINT, MIN_TRV_SETPOINT, MAX_TRV_SETPOINT,
+)
 from .coordinator import _room_name_to_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,20 +46,30 @@ async def async_setup_entry(
             if s.data.get("room_name")
         }
 
-        entities: list[SHAHeatingRateNumber] = []
+        entities: list = []
         for room in rooms:
-            entity = SHAHeatingRateNumber(room.room_name, room.room_id, entry.entry_id, room_id_to_subentry.get(room.room_id))
-            entities.append(entity)
-            coordinator.register_heating_rate_entity(room.room_id, entity)
+            rate_entity = SHAHeatingRateNumber(room.room_name, room.room_id, entry.entry_id, room_id_to_subentry.get(room.room_id))
+            entities.append(rate_entity)
+            coordinator.register_heating_rate_entity(room.room_id, rate_entity)
             _LOGGER.debug(
                 "number platform: prepared entity unique_id=%s expected_entity_id=number.sha_%s_heating_rate room='%s'",
-                entity.unique_id,
+                rate_entity.unique_id,
+                room.room_id,
+                room.room_name,
+            )
+
+            setpoint_entity = SHATRVSetpointNumber(room.room_name, room.room_id, entry.entry_id, room_id_to_subentry.get(room.room_id))
+            entities.append(setpoint_entity)
+            coordinator.register_trv_setpoint_entity(room.room_id, setpoint_entity)
+            _LOGGER.debug(
+                "number platform: prepared entity unique_id=%s expected_entity_id=number.sha_%s_trv_setpoint room='%s'",
+                setpoint_entity.unique_id,
                 room.room_id,
                 room.room_name,
             )
 
         async_add_entities(entities)
-        _LOGGER.info("number platform: registered %d heating rate entity(ies)", len(entities))
+        _LOGGER.info("number platform: registered %d entities (%d rooms)", len(entities), len(rooms))
 
     if hass.state == CoreState.running:
         await _create_entities()
@@ -133,6 +147,83 @@ class SHAHeatingRateNumber(NumberEntity, RestoreEntity):
                 )
         else:
             _LOGGER.debug("[%s] No previous state found — using default %.3f °C/min", self._room_name, self._value)
+        if self._subentry_id:
+            er.async_get(self.hass).async_update_entity(
+                self.entity_id, config_subentry_id=self._subentry_id
+            )
+
+
+class SHATRVSetpointNumber(NumberEntity, RestoreEntity):
+    """Per-room TRV setpoint — the temperature SHA commands the TRV to reach.
+
+    SHA daily analysis calculates this from the observed gradient between the
+    TRV setpoint and the comfort sensor reading at schedule ON time.  The value
+    is restored across HA restarts.  Users can also adjust it manually.
+    """
+
+    _attr_should_poll = False
+    _attr_has_entity_name = True
+    _attr_native_min_value = MIN_TRV_SETPOINT
+    _attr_native_max_value = MAX_TRV_SETPOINT
+    _attr_native_step = 0.5
+    _attr_native_unit_of_measurement = "°C"
+    _attr_mode = NumberMode.BOX
+    _attr_icon = "mdi:thermometer-chevron-up"
+
+    def __init__(self, room_name: str, room_id: str, entry_id: str, subentry_id: str | None = None) -> None:
+        self._room_name = room_name
+        self._room_id = room_id
+        self._entry_id = entry_id
+        self._subentry_id = subentry_id
+        self._value = DEFAULT_TRV_SETPOINT
+
+        self._attr_name = "TRV Setpoint"
+        self._attr_unique_id = f"sha_{room_id}_trv_setpoint"
+
+    @property
+    def device_info(self) -> dict:
+        return {
+            "identifiers": {(DOMAIN, f"{self._entry_id}_{self._room_id}")},
+            "name": f"SHA — {self._room_name}",
+            "manufacturer": "Smart Heating Advisor",
+        }
+
+    @property
+    def native_value(self) -> float:
+        return round(self._value, 1)
+
+    async def async_set_native_value(self, value: float) -> None:
+        old = self._value
+        self._value = round(value, 1)
+        _LOGGER.debug(
+            "[%s] TRV setpoint updated: %.1f → %.1f °C",
+            self._room_name, old, self._value,
+        )
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            try:
+                val = float(last.state)
+                if MIN_TRV_SETPOINT <= val <= MAX_TRV_SETPOINT:
+                    self._value = val
+                    _LOGGER.debug(
+                        "[%s] TRV setpoint restored: %.1f °C",
+                        self._room_name, self._value,
+                    )
+                else:
+                    _LOGGER.debug(
+                        "[%s] Restored TRV setpoint %.1f out of range [%.1f, %.1f] — using default",
+                        self._room_name, val, MIN_TRV_SETPOINT, MAX_TRV_SETPOINT,
+                    )
+            except (ValueError, TypeError):
+                _LOGGER.debug(
+                    "[%s] Could not restore TRV setpoint from state '%s' — using default",
+                    self._room_name, last.state,
+                )
+        else:
+            _LOGGER.debug("[%s] No previous TRV setpoint state — using default %.1f °C", self._room_name, self._value)
         if self._subentry_id:
             er.async_get(self.hass).async_update_entity(
                 self.entity_id, config_subentry_id=self._subentry_id

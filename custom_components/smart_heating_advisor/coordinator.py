@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .number import SHAHeatingRateNumber, SHATRVSetpointNumber
     from .switch import SHAOverrideSwitch
+    from .binary_sensor import SHAWindowOpenBinarySensor, SHAVacationBinarySensor
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -276,6 +277,10 @@ class SmartHeatingCoordinator:
         # TRV setpoint entity references — keyed by room_id, populated by number.async_setup_entry
         self.trv_setpoint_entities: dict[str, "SHATRVSetpointNumber"] = {}
 
+        # Binary sensor entity references — keyed by room_id, populated by binary_sensor.async_setup_entry
+        self.window_open_entities: dict[str, "SHAWindowOpenBinarySensor"] = {}
+        self.vacation_entities: dict[str, "SHAVacationBinarySensor"] = {}
+
         # Room registry — persisted per config entry via HA storage
         self._room_registry_store: Store = Store(
             hass,
@@ -310,6 +315,14 @@ class SmartHeatingCoordinator:
     def register_trv_setpoint_entity(self, room_id: str, entity: "SHATRVSetpointNumber") -> None:
         """Store a reference to a room's TRV setpoint entity for direct updates."""
         self.trv_setpoint_entities[room_id] = entity
+
+    def register_window_open_entity(self, room_id: str, entity: "SHAWindowOpenBinarySensor") -> None:
+        """Store a reference to a room's window open binary sensor for direct updates."""
+        self.window_open_entities[room_id] = entity
+
+    def register_vacation_entity(self, room_id: str, entity: "SHAVacationBinarySensor") -> None:
+        """Store a reference to a room's vacation binary sensor for direct updates."""
+        self.vacation_entities[room_id] = entity
 
     # ──────────────────────────────────────────────────────────────────
     # Room registry / discovery

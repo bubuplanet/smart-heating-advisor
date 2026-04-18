@@ -24,6 +24,11 @@ DEFAULT_TRV_SETPOINT = 26.0   # °C — same as typical comfort target
 MIN_TRV_SETPOINT = 5.0        # °C — frost protection floor
 MAX_TRV_SETPOINT = 35.0       # °C — safe cap when HA max_temp unavailable
 
+# ── Default temperature defaults ───────────────────────────────────────
+DEFAULT_DEFAULT_TEMP = 18.0
+MIN_DEFAULT_TEMP = 4.0
+MAX_DEFAULT_TEMP = 35.0
+
 # ── Config keys ───────────────────────────────────────────────────────
 CONF_OLLAMA_URL = "ollama_url"
 CONF_OLLAMA_MODEL = "ollama_model"

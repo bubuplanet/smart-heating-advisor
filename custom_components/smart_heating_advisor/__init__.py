@@ -35,7 +35,7 @@ from .text_store import (
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor", "switch", "number"]
+PLATFORMS = ["sensor", "switch", "number", "binary_sensor"]
 
 
 def _apply_debug_logging(enabled: bool) -> None:

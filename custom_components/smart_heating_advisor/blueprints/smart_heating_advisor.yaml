@@ -2,7 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    **version: 0.0.15**
+    **version: 0.0.16**
 
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
@@ -588,6 +588,10 @@ variables:
   comfort_temp:        "{{ (active_schedule | from_json).temp | float(0) }}"
   active_schedule_name: "{{ (active_schedule | from_json).name | default('') }}"
 
+  sha_trv_setpoint: >
+    {{ states('number.sha_' ~ room_id ~ '_trv_setpoint')
+       | float(comfort_temp) }}
+
   preheat_schedule: >
     {% set ns = namespace(found=false, temp=0.0, name='', mins_needed=0) %}
     {% if not (in_comfort | bool(false)) %}
@@ -646,6 +650,15 @@ variables:
     {% endif %}
 
   target_reached: "{{ in_comfort_bool and room_temp >= (comfort_temp - 0.3) }}"
+
+  main_trv_setpoint: >
+    {% if vacation_active_bool and vacation_mode == 'frost' %}
+      {{ [vacation_temperature | float, 4.0] | max }}
+    {% elif in_comfort_bool or in_preheat_bool %}
+      {{ [sha_trv_setpoint | float, 4.0] | max }}
+    {% else %}
+      {{ [default_temp | float, 4.0] | max }}
+    {% endif %}
 
 triggers:
   - trigger: time_pattern
@@ -867,7 +880,7 @@ action:
                             target:
                               entity_id: !input radiator_thermostats
                             data:
-                              temperature: "{{ target_temperature | float }}"
+                              temperature: "{{ main_trv_setpoint | float }}"
                           - if:
                               - condition: template
                                 value_template: >
@@ -1121,7 +1134,7 @@ action:
                         SHA [{{ room_name }}] {{ 'SCHEDULE STARTED' if trigger.to_state.state == 'on' else 'SCHEDULE ENDED' }}
                         Schedule: "{{ trigger.to_state.attributes.friendly_name | default(trigger.entity_id) }}"
                         Room: {{ room_temp | round(1) }}°C
-                        {{ 'Commanding heat to ' ~ schedule_trigger_temp ~ '°C (mode: ' ~ schedule_trigger_mode ~ ').' if trigger.to_state.state == 'on' else 'Returning to ' ~ default_hvac_mode ~ ' at ' ~ default_temp ~ '°C.' }}
+                        {{ 'Comfort target: ' ~ schedule_trigger_temp ~ '°C — TRV setpoint: ' ~ (sha_trv_setpoint | round(1) | string) ~ '°C (SHA learned) (mode: ' ~ schedule_trigger_mode ~ ').' if trigger.to_state.state == 'on' else 'Returning to ' ~ default_hvac_mode ~ ' at ' ~ default_temp ~ '°C.' }}
                       level: info
                       logger: custom_components.smart_heating_advisor
               - choose:
@@ -1147,7 +1160,7 @@ action:
                         target:
                           entity_id: !input radiator_thermostats
                         data:
-                          temperature: "{{ schedule_trigger_temp | float }}"
+                          temperature: "{{ sha_trv_setpoint | float }}"
               - if:
                   - condition: template
                     value_template: "{{ fixed_radiator_thermostats | list | count > 0 }}"
@@ -1366,7 +1379,7 @@ action:
                 target:
                   entity_id: !input radiator_thermostats
                 data:
-                  temperature: "{{ target_temperature | float }}"
+                  temperature: "{{ main_trv_setpoint | float }}"
               - if:
                   - condition: template
                     value_template: >
@@ -1414,7 +1427,8 @@ action:
               message: |
                 SHA [{{ room_name }}] PRE-HEAT STARTED
                 Schedule: "{{ preheat_schedule_name }}"
-                Target: {{ preheat_temp }}°C
+                Comfort target: {{ preheat_temp }}°C
+                TRV setpoint: {{ sha_trv_setpoint | round(1) }}°C (SHA learned)
                 Room now: {{ room_temp | round(1) }}°C
                 Gap to close: {{ (preheat_temp - room_temp) | round(1) }}°C
                 Heating rate: {{ heating_rate }}°C/min

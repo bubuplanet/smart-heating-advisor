@@ -111,26 +111,25 @@ action:
 
   # ── Extract config from service response ───────────────────────────────
   - variables:
-      room_id:            "{{ room_cfg.room_id }}"
-      room_name:          "{{ room_cfg.room_name }}"
-      temp_sensor:        "{{ room_cfg.temp_sensor }}"
-      trvs:               "{{ room_cfg.trvs }}"
-      fixed_trvs:         "{{ room_cfg.fixed_trvs }}"
-      fixed_trv_temp:     "{{ room_cfg.fixed_trv_temp | float(30) }}"
-      schedules:          "{{ room_cfg.schedules }}"
-      default_hvac_mode:  "{{ room_cfg.default_hvac_mode }}"
-      default_temp:       "{{ room_cfg.default_temp | float(18) }}"
-      vacation_active_bool: "{{ room_cfg.vacation_active | bool(false) }}"
-      vacation_mode:      "{{ room_cfg.vacation_mode }}"
-      vacation_temp:      "{{ room_cfg.vacation_temp | float(7) }}"
+      room_id:           "{{ room_cfg.room_id }}"
+      room_name:         "{{ room_cfg.room_name }}"
+      temp_sensor:       "{{ room_cfg.temp_sensor }}"
+      trvs:              "{{ room_cfg.trvs }}"
+      fixed_trvs:        "{{ room_cfg.fixed_trvs }}"
+      fixed_trv_temp:    "{{ room_cfg.fixed_trv_temp | float(30) }}"
+      schedules:         "{{ room_cfg.schedules }}"
+      default_hvac_mode: "{{ room_cfg.default_hvac_mode }}"
+      vacation_mode:     "{{ room_cfg.vacation_mode }}"
+      vacation_temp:     "{{ room_cfg.vacation_temp | float(7) }}"
 
-  # ── Derived state ──────────────────────────────────────────────────────
+  # ── Live state from SHA entities ───────────────────────────────────────
   - variables:
-      room_temp:           "{{ states(temp_sensor) | float(18) }}"
-      heating_rate:        "{{ states('number.sha_' ~ room_id ~ '_heating_rate') | float(0.15) }}"
+      room_temp:            "{{ states(temp_sensor) | float(18) }}"
+      heating_rate:         "{{ states('number.sha_' ~ room_id ~ '_heating_rate') | float(0.15) }}"
       override_active_bool: "{{ is_state('switch.sha_' ~ room_id ~ '_override', 'on') }}"
-      windows_open_bool:   "{{ is_state('switch.sha_' ~ room_id ~ '_airing_mode', 'on') }}"
-      sha_trv_setpoint_entity: "number.sha_{{ room_id }}_trv_setpoint"
+      windows_open_bool:    "{{ is_state('binary_sensor.sha_' ~ room_id ~ '_window_open', 'on') }}"
+      vacation_active_bool: "{{ is_state('binary_sensor.sha_vacation', 'on') }}"
+      default_temp:         "{{ states('number.sha_' ~ room_id ~ '_default_temp') | float(18.0) }}"
 
   # ── Active schedule ────────────────────────────────────────────────────
   - variables:

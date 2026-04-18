@@ -49,6 +49,8 @@ async def async_setup_entry(
         }
 
         entities: list = []
+
+        # ── Per-room entities ────────────────────────────────────────
         for room in rooms:
             subentry_id = room_id_to_subentry.get(room.room_id)
             window_sensors = room_id_to_window_sensors.get(room.room_id, [])
@@ -70,19 +72,17 @@ async def async_setup_entry(
                 window_entity.unique_id, room.room_id, room.room_name,
             )
 
-            vacation_entity = SHAVacationBinarySensor(
-                room.room_name, room.room_id, entry.entry_id,
-                subentry_id=subentry_id,
-            )
-            entities.append(vacation_entity)
-            coordinator.register_vacation_entity(room.room_id, vacation_entity)
-            _LOGGER.debug(
-                "binary_sensor platform: prepared entity unique_id=%s expected_entity_id=binary_sensor.sha_%s_vacation room='%s'",
-                vacation_entity.unique_id, room.room_id, room.room_name,
-            )
+        # ── Global vacation entity — one for all rooms ───────────────
+        vacation_entity = SHAVacationBinarySensor(entry.entry_id)
+        entities.append(vacation_entity)
+        coordinator.register_vacation_entity(vacation_entity)
+        _LOGGER.debug(
+            "binary_sensor platform: prepared global entity unique_id=%s expected_entity_id=binary_sensor.sha_vacation",
+            vacation_entity.unique_id,
+        )
 
         async_add_entities(entities)
-        _LOGGER.info("binary_sensor platform: registered %d entities (%d rooms)", len(entities), len(rooms))
+        _LOGGER.info("binary_sensor platform: registered %d entities (%d rooms + 1 global vacation)", len(entities), len(rooms))
 
     if hass.state == CoreState.running:
         await _create_entities()
@@ -162,39 +162,30 @@ class SHAWindowOpenBinarySensor(BinarySensorEntity):
 
 
 class SHAVacationBinarySensor(BinarySensorEntity):
-    """SHA computed vacation state.
+    """SHA global vacation state — one entity for all rooms.
 
-    Updated by coordinator when vacation state changes (Phase 4).
-    Read by blueprint instead of person entity templates (Phase 5).
-    Defaults to False until global vacation config is added (Phase 3).
+    Vacation is a global setting; it applies to every room simultaneously.
+    Updated by coordinator when vacation_enabled option or calendar entity changes.
+    Read by blueprint in Phase 5 (binary_sensor.sha_vacation).
     """
 
     _attr_should_poll = False
-    _attr_has_entity_name = True
+    _attr_has_entity_name = False  # standalone entity, not attached to a per-room device
     _attr_icon = "mdi:airplane"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(
-        self,
-        room_name: str,
-        room_id: str,
-        entry_id: str,
-        subentry_id: str | None = None,
-    ) -> None:
-        self._room_name = room_name
-        self._room_id = room_id
+    def __init__(self, entry_id: str) -> None:
         self._entry_id = entry_id
-        self._subentry_id = subentry_id
         self._is_on = False
 
-        self._attr_name = "Vacation"
-        self._attr_unique_id = f"sha_{room_id}_vacation"
+        self._attr_name = "SHA Vacation"
+        self._attr_unique_id = "sha_vacation"
 
     @property
     def device_info(self) -> dict:
         return {
-            "identifiers": {(DOMAIN, f"{self._entry_id}_{self._room_id}")},
-            "name": f"SHA — {self._room_name}",
+            "identifiers": {(DOMAIN, self._entry_id)},
+            "name": "Smart Heating Advisor",
             "manufacturer": "Smart Heating Advisor",
         }
 
@@ -216,16 +207,11 @@ class SHAVacationBinarySensor(BinarySensorEntity):
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         registry = er.async_get(self.hass)
-        expected_entity_id = f"binary_sensor.sha_{self._room_id}_vacation"
+        expected_entity_id = "binary_sensor.sha_vacation"
         current_entity_id = self.entity_id
         if current_entity_id != expected_entity_id:
             _LOGGER.warning(
-                "SHA binary_sensor entity_id mismatch — renaming %s → %s",
+                "SHA vacation binary_sensor entity_id mismatch — renaming %s → %s",
                 current_entity_id, expected_entity_id,
             )
             registry.async_update_entity(current_entity_id, new_entity_id=expected_entity_id)
-            current_entity_id = expected_entity_id
-        if self._subentry_id:
-            registry.async_update_entity(
-                current_entity_id, config_subentry_id=self._subentry_id
-            )

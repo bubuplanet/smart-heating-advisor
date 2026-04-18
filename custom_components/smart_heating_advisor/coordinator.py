@@ -282,7 +282,8 @@ class SmartHeatingCoordinator:
 
         # Binary sensor entity references — keyed by room_id, populated by binary_sensor.async_setup_entry
         self.window_open_entities: dict[str, "SHAWindowOpenBinarySensor"] = {}
-        self.vacation_entities: dict[str, "SHAVacationBinarySensor"] = {}
+        # Global vacation entity — one for all rooms
+        self._vacation_entity: "SHAVacationBinarySensor | None" = None
 
         # State change listener unsubscribe callbacks — cancelled on unload
         self._unsub_callbacks: list = []
@@ -326,9 +327,9 @@ class SmartHeatingCoordinator:
         """Store a reference to a room's window open binary sensor for direct updates."""
         self.window_open_entities[room_id] = entity
 
-    def register_vacation_entity(self, room_id: str, entity: "SHAVacationBinarySensor") -> None:
-        """Store a reference to a room's vacation binary sensor for direct updates."""
-        self.vacation_entities[room_id] = entity
+    def register_vacation_entity(self, entity: "SHAVacationBinarySensor") -> None:
+        """Store the global vacation binary sensor reference."""
+        self._vacation_entity = entity
 
     # ──────────────────────────────────────────────────────────────────
     # Runtime state listeners
@@ -433,8 +434,8 @@ class SmartHeatingCoordinator:
         else:
             vacation_active = False
 
-        for entity in self.vacation_entities.values():
-            entity.set_vacation(vacation_active)
+        if self._vacation_entity is not None:
+            self._vacation_entity.set_vacation(vacation_active)
 
         if source == "init":
             _LOGGER.debug("[SHA] Initial vacation state: active=%s", vacation_active)

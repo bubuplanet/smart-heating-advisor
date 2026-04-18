@@ -239,9 +239,19 @@ class SHAOverrideSwitch(SwitchEntity, RestoreEntity):
         await super().async_added_to_hass()
         # Override does not resume after HA restart — heating resumes immediately.
         self._is_on = False
+        registry = er.async_get(self.hass)
+        expected_entity_id = f"switch.sha_{self._room_id}_override"
+        current_entity_id = self.entity_id
+        if current_entity_id != expected_entity_id:
+            _LOGGER.warning(
+                "SHA switch entity_id mismatch — renaming %s → %s",
+                current_entity_id, expected_entity_id,
+            )
+            registry.async_update_entity(current_entity_id, new_entity_id=expected_entity_id)
+            current_entity_id = expected_entity_id
         if self._subentry_id:
-            er.async_get(self.hass).async_update_entity(
-                self.entity_id, config_subentry_id=self._subentry_id
+            registry.async_update_entity(
+                current_entity_id, config_subentry_id=self._subentry_id
             )
 
     async def async_will_remove_from_hass(self) -> None:

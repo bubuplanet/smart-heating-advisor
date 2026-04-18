@@ -310,7 +310,17 @@ class SHADefaultTempNumber(NumberEntity, RestoreEntity):
                 )
         else:
             _LOGGER.debug("[%s] No previous default temp state — using default %.1f °C", self._room_name, self._value)
+        registry = er.async_get(self.hass)
+        expected_entity_id = f"number.sha_{self._room_id}_default_temp"
+        current_entity_id = self.entity_id
+        if current_entity_id != expected_entity_id:
+            _LOGGER.warning(
+                "SHA number entity_id mismatch — renaming %s → %s",
+                current_entity_id, expected_entity_id,
+            )
+            registry.async_update_entity(current_entity_id, new_entity_id=expected_entity_id)
+            current_entity_id = expected_entity_id
         if self._subentry_id:
-            er.async_get(self.hass).async_update_entity(
-                self.entity_id, config_subentry_id=self._subentry_id
+            registry.async_update_entity(
+                current_entity_id, config_subentry_id=self._subentry_id
             )

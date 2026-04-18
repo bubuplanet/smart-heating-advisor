@@ -709,6 +709,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Set up sensor / switch / number platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # All platform entities are now registered — start runtime state listeners
+    await coordinator.async_start_listeners()
+
     # ── Register services ────────────────────────────────────────────
 
     async def handle_daily_analysis(call):
@@ -931,6 +934,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 len(current_ids),
             )
             await hass.config_entries.async_reload(entry.entry_id)
+            return
+        # Options changed without subentry change — restart listeners so
+        # vacation config (enabled/calendar) picks up the new values.
+        coordinator.async_stop_listeners()
+        await coordinator.async_start_listeners()
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
@@ -940,6 +948,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload Smart Heating Advisor config entry."""
+    coordinator = hass.data[DOMAIN].get(entry.entry_id)
+    if coordinator:
+        coordinator.async_stop_listeners()
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)

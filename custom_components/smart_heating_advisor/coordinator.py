@@ -12,7 +12,8 @@ if TYPE_CHECKING:
     from .binary_sensor import SHAWindowOpenBinarySensor, SHAVacationBinarySensor
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, Event
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.storage import Store
 
 from .const import (
@@ -23,6 +24,8 @@ from .const import (
     CONF_INFLUXDB_ORG,
     CONF_INFLUXDB_BUCKET,
     CONF_WEATHER_ENTITY,
+    CONF_VACATION_ENABLED,
+    CONF_VACATION_CALENDAR,
     DEFAULT_HEATING_RATE,
     MIN_HEATING_RATE,
     MAX_HEATING_RATE,
@@ -281,6 +284,9 @@ class SmartHeatingCoordinator:
         self.window_open_entities: dict[str, "SHAWindowOpenBinarySensor"] = {}
         self.vacation_entities: dict[str, "SHAVacationBinarySensor"] = {}
 
+        # State change listener unsubscribe callbacks — cancelled on unload
+        self._unsub_callbacks: list = []
+
         # Room registry — persisted per config entry via HA storage
         self._room_registry_store: Store = Store(
             hass,
@@ -323,6 +329,120 @@ class SmartHeatingCoordinator:
     def register_vacation_entity(self, room_id: str, entity: "SHAVacationBinarySensor") -> None:
         """Store a reference to a room's vacation binary sensor for direct updates."""
         self.vacation_entities[room_id] = entity
+
+    # ──────────────────────────────────────────────────────────────────
+    # Runtime state listeners
+    # ──────────────────────────────────────────────────────────────────
+
+    async def async_start_listeners(self) -> None:
+        """Subscribe to window sensor and vacation state changes.
+
+        Called once from async_setup_entry in __init__.py after all platforms
+        have finished loading (i.e. after async_forward_entry_setups returns),
+        so all binary sensor entity references are guaranteed to be populated.
+        """
+        # ── Window sensor listeners (per room) ────────────────────────
+        for subentry in self.entry.subentries.values():
+            room_name = subentry.data.get("room_name", "").strip()
+            if not room_name:
+                continue
+            room_id = _room_name_to_id(room_name)
+            window_sensors: list[str] = list(subentry.data.get("window_sensors", []))
+
+            if not window_sensors:
+                _LOGGER.debug(
+                    "[%s] No window sensors configured — window_open sensor will always be off",
+                    room_name,
+                )
+                continue
+
+            # Push initial state from current HA states
+            any_open = any(
+                (s := self.hass.states.get(sid)) is not None
+                and s.state in ("on", "open")
+                for sid in window_sensors
+            )
+            entity = self.window_open_entities.get(room_id)
+            if entity:
+                entity.set_window_open(any_open)
+
+            # Closure captures room_id, room_name, and the sensor list
+            def _make_window_handler(r_id: str, r_name: str, sensors: list[str]):
+                async def _handle(event: Event) -> None:
+                    triggered = event.data.get("entity_id", "")
+                    new_st = event.data.get("new_state")
+                    new_st_str = new_st.state if new_st else "unavailable"
+                    recalc = any(
+                        (s := self.hass.states.get(sid)) is not None
+                        and s.state in ("on", "open")
+                        for sid in sensors
+                    )
+                    ent = self.window_open_entities.get(r_id)
+                    if ent:
+                        ent.set_window_open(recalc)
+                    _LOGGER.info(
+                        "[%s] Window state changed: open=%s triggered by %s → %s",
+                        r_name, recalc, triggered, new_st_str,
+                    )
+                return _handle
+
+            unsub = async_track_state_change_event(
+                self.hass, window_sensors, _make_window_handler(room_id, room_name, window_sensors)
+            )
+            self._unsub_callbacks.append(unsub)
+            _LOGGER.debug(
+                "[%s] Subscribed to %d window sensor(s): %s",
+                room_name, len(window_sensors), window_sensors,
+            )
+
+        # ── Vacation state (global) ───────────────────────────────────
+        await self._async_update_vacation_state(source="init")
+
+        vacation_calendar = self.entry.options.get(CONF_VACATION_CALENDAR, "")
+        if vacation_calendar:
+            async def _handle_vacation_calendar(event: Event) -> None:
+                new_st = event.data.get("new_state")
+                new_st_str = new_st.state if new_st else "unavailable"
+                await self._async_update_vacation_state(
+                    source=f"calendar → {new_st_str}"
+                )
+
+            unsub = async_track_state_change_event(
+                self.hass, [vacation_calendar], _handle_vacation_calendar
+            )
+            self._unsub_callbacks.append(unsub)
+            _LOGGER.debug("[SHA] Subscribed to vacation calendar: %s", vacation_calendar)
+
+    def async_stop_listeners(self) -> None:
+        """Cancel all state change subscriptions. Safe to call from the event loop."""
+        for unsub in self._unsub_callbacks:
+            unsub()
+        self._unsub_callbacks.clear()
+        _LOGGER.debug("[SHA] All state change listeners cancelled")
+
+    async def _async_update_vacation_state(self, source: str = "init") -> None:
+        """Compute vacation active flag and push to every room vacation sensor."""
+        vacation_enabled = self.entry.options.get(CONF_VACATION_ENABLED, False)
+        vacation_calendar = self.entry.options.get(CONF_VACATION_CALENDAR, "")
+
+        if vacation_calendar:
+            cal_state = self.hass.states.get(vacation_calendar)
+            vacation_active = cal_state is not None and cal_state.state == "on"
+        elif vacation_enabled:
+            vacation_active = True
+        else:
+            vacation_active = False
+
+        for entity in self.vacation_entities.values():
+            entity.set_vacation(vacation_active)
+
+        if source == "init":
+            _LOGGER.debug("[SHA] Initial vacation state: active=%s", vacation_active)
+        else:
+            _LOGGER.info(
+                "[SHA] Vacation state changed: active=%s source=%s",
+                vacation_active, source,
+            )
 
     # ──────────────────────────────────────────────────────────────────
     # Room registry / discovery

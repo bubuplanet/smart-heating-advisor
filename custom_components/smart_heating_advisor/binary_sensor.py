@@ -132,6 +132,10 @@ class SHAWindowOpenBinarySensor(BinarySensorEntity):
     def is_on(self) -> bool:
         return self._is_on
 
+    def set_state(self, state: bool) -> None:
+        """Update window open state (coordinator interface)."""
+        self.set_window_open(state)
+
     def set_window_open(self, is_open: bool) -> None:
         """Update the window open state and push to HA."""
         if self._is_on != is_open:
@@ -197,6 +201,10 @@ class SHAVacationBinarySensor(BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         return self._is_on
+
+    def set_state(self, state: bool) -> None:
+        """Update vacation state (coordinator interface)."""
+        self.set_vacation(state)
 
     def set_vacation(self, on_vacation: bool) -> None:
         """Update the vacation state and push to HA."""

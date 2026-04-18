@@ -48,11 +48,11 @@ CONF_DEBUG_LOGGING = "debug_logging"
 CONF_VACATION_ENABLED = "vacation_enabled"
 CONF_VACATION_MODE = "vacation_mode"
 CONF_VACATION_CALENDAR = "vacation_calendar"
-DEFAULT_VACATION_MODE = "eco"
+DEFAULT_VACATION_MODE = "frost"
 
 # ── Room wizard defaults ───────────────────────────────────────────────
-DEFAULT_AIRING_DURATION = 30        # minutes
-DEFAULT_HUMIDITY_THRESHOLD = 60.0   # %
+DEFAULT_AIRING_DURATION = 2         # minutes
+DEFAULT_HUMIDITY_THRESHOLD = 70.0   # %
 MIN_HUMIDITY_THRESHOLD = 30.0
 MAX_HUMIDITY_THRESHOLD = 90.0
 

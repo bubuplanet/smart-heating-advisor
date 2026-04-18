@@ -14,8 +14,12 @@ from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     EntitySelector,
     EntitySelectorConfig,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
@@ -32,17 +36,27 @@ from .const import (
     CONF_WEATHER_ENTITY,
     CONF_DEBUG_LOGGING,
     CONF_ROOM_CONFIGS,
+    CONF_VACATION_ENABLED,
+    CONF_VACATION_MODE,
+    CONF_VACATION_CALENDAR,
     DEFAULT_OLLAMA_URL,
     DEFAULT_OLLAMA_MODEL,
     DEFAULT_INFLUXDB_URL,
     DEFAULT_INFLUXDB_ORG,
     DEFAULT_INFLUXDB_BUCKET,
+    DEFAULT_VACATION_MODE,
+    DEFAULT_DEFAULT_TEMP,
+    DEFAULT_AIRING_DURATION,
+    DEFAULT_HUMIDITY_THRESHOLD,
+    MIN_HUMIDITY_THRESHOLD,
+    MAX_HUMIDITY_THRESHOLD,
+    MIN_DEFAULT_TEMP,
+    MAX_DEFAULT_TEMP,
 )
 from .coordinator import _room_name_to_id
 
 _LOGGER = logging.getLogger(__name__)
 
-# Sentinel value for the "create room manually" option in the area selector
 MANUAL_ENTRY_KEY = "__manual__"
 
 
@@ -130,20 +144,39 @@ def _get_area_entities(
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Subentry flow — Add Room
+# Subentry flow — Add Room (6-step wizard)
 # ──────────────────────────────────────────────────────────────────────
 
 class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
-    """Handle subentry flow for adding a room to Smart Heating Advisor.
+    """6-step room wizard for adding a room to Smart Heating Advisor.
 
-    Flow paths:
-      async_step_user  →  area selected  →  async_step_entities  →  create
-                       →  manual chosen  →  async_step_manual    →  create
+    Step 1 (user):        Room identity — area selection + room name
+    Step 2 (trvs):        TRV configuration — main + fixed TRVs
+    Step 3 (windows):     Window sensors + airing mode
+    Step 4 (temperature): Temperature profile — sensor + standby temp
+    Step 5 (humidity):    Humidity control
+    Step 6 (confirm):     Review and create
     """
 
     def __init__(self) -> None:
         self._area_id: str | None = None
-        self._area_name: str = ""
+        self._room_name: str = ""
+        self._detected_trvs: list[str] = []
+        self._detected_temp: str = ""
+        # accumulated room config
+        self._trvs: list[str] = []
+        self._fixed_trvs: list[str] = []
+        self._fixed_trv_temp: float = DEFAULT_DEFAULT_TEMP
+        self._window_sensors: list[str] = []
+        self._airing_mode_enabled: bool = True
+        self._airing_duration_minutes: int = DEFAULT_AIRING_DURATION
+        self._temp_sensor: str = ""
+        self._thermostat_sensor: str = ""
+        self._default_temp_enabled: bool = True
+        self._default_temp: float = DEFAULT_DEFAULT_TEMP
+        self._humidity_enabled: bool = False
+        self._humidity_sensor: str = ""
+        self._humidity_threshold: float = DEFAULT_HUMIDITY_THRESHOLD
 
     def _existing_room_ids(self) -> set[str]:
         """Return room_ids of rooms already configured as subentries."""
@@ -154,35 +187,54 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
             if s.data.get("room_name")
         }
 
+    # ── Step 1: Room identity ─────────────────────────────────────────
+
     async def async_step_user(
         self, user_input: dict | None = None
     ) -> SubentryFlowResult:
-        """Entry point — select an HA Area or choose manual creation."""
+        """Step 1/6 — Room identity: select area and confirm room name."""
         existing_ids = self._existing_room_ids()
-
-        # Build the area options: manual sentinel first, then available areas
         area_reg = ar.async_get(self.hass)
-        available_areas: dict[str, str] = {}
-        for area in sorted(area_reg.async_list_areas(), key=lambda a: a.name):
-            if _room_name_to_id(area.name) not in existing_ids:
-                available_areas[area.id] = area.name
+        available_areas: dict[str, str] = {
+            area.id: area.name
+            for area in sorted(area_reg.async_list_areas(), key=lambda a: a.name)
+            if _room_name_to_id(area.name) not in existing_ids
+        }
 
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            selected = user_input.get("area_id", MANUAL_ENTRY_KEY)
-            if selected == MANUAL_ENTRY_KEY:
-                return await self.async_step_manual()
-            if selected in available_areas:
-                self._area_id = selected
-                self._area_name = available_areas[selected]
-                return await self.async_step_entities()
-            errors["area_id"] = "no_areas_available"
+            area_id = user_input.get("area_id", MANUAL_ENTRY_KEY)
+            room_name = user_input.get("room_name", "").strip()
+
+            if area_id != MANUAL_ENTRY_KEY:
+                area_name = available_areas.get(area_id, "")
+                if not room_name:
+                    room_name = area_name
+                if _room_name_to_id(room_name) in existing_ids:
+                    errors["room_name"] = "room_already_exists"
+                else:
+                    self._area_id = area_id
+                    self._room_name = room_name
+                    self._detected_trvs = _get_area_entities(self.hass, area_id, "climate")
+                    detected_temps = _get_area_entities(self.hass, area_id, "sensor", "temperature")
+                    self._detected_temp = detected_temps[0] if detected_temps else ""
+                    return await self.async_step_trvs()
+            else:
+                if not room_name:
+                    errors["room_name"] = "required"
+                elif _room_name_to_id(room_name) in existing_ids:
+                    errors["room_name"] = "room_already_exists"
+                else:
+                    self._area_id = None
+                    self._room_name = room_name
+                    self._detected_trvs = []
+                    self._detected_temp = ""
+                    return await self.async_step_trvs()
 
         area_options = [
-            {"value": MANUAL_ENTRY_KEY, "label": "➕ Create room manually (not an HA Area)"},
-        ]
-        area_options += [
+            {"value": MANUAL_ENTRY_KEY, "label": "➕ Enter room name manually"},
+        ] + [
             {"value": aid, "label": aname}
             for aid, aname in available_areas.items()
         ]
@@ -197,113 +249,209 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                             mode=SelectSelectorMode.LIST,
                         )
                     ),
+                    vol.Optional("room_name"): str,
                 }
             ),
             errors=errors,
         )
 
-    async def async_step_entities(
+    # ── Step 2: TRVs ─────────────────────────────────────────────────
+
+    async def async_step_trvs(
         self, user_input: dict | None = None
     ) -> SubentryFlowResult:
-        """Confirm auto-detected entities for the selected HA Area."""
-        if self._area_id:
-            detected_sensors = _get_area_entities(
-                self.hass, self._area_id, "sensor", "temperature"
-            )
-            detected_trvs = _get_area_entities(self.hass, self._area_id, "climate")
-        else:
-            detected_sensors = []
-            detected_trvs = []
-
+        """Step 2/6 — TRV configuration."""
         if user_input is not None:
-            room_name = user_input.get("room_name", self._area_name).strip()
-            trvs_raw = user_input.get("trvs", [])
-            if isinstance(trvs_raw, str):
-                trvs_raw = [trvs_raw] if trvs_raw else []
-            return self.async_create_entry(
-                title=room_name,
-                data={
-                    "room_name": room_name,
-                    "area_id": self._area_id,
-                    "temp_sensor": user_input.get("temp_sensor", ""),
-                    "trvs": trvs_raw,
-                },
-            )
+            trvs = user_input.get("trvs", [])
+            self._trvs = list(trvs) if isinstance(trvs, list) else ([trvs] if trvs else [])
+            fixed_trvs = user_input.get("fixed_trvs", [])
+            self._fixed_trvs = list(fixed_trvs) if isinstance(fixed_trvs, list) else ([fixed_trvs] if fixed_trvs else [])
+            self._fixed_trv_temp = float(user_input.get("fixed_trv_temp", DEFAULT_DEFAULT_TEMP))
+            return await self.async_step_windows()
 
-        detected_temp = detected_sensors[0] if detected_sensors else ""
-        schema_dict: dict = {
-            vol.Required("room_name", default=self._area_name): str,
-        }
-        if detected_temp:
-            schema_dict[vol.Optional("temp_sensor", default=detected_temp)] = EntitySelector(
-                EntitySelectorConfig(domain="sensor", device_class="temperature")
-            )
-        else:
-            schema_dict[vol.Optional("temp_sensor")] = EntitySelector(
-                EntitySelectorConfig(domain="sensor", device_class="temperature")
-            )
-        if detected_trvs:
-            schema_dict[vol.Optional("trvs", default=detected_trvs)] = EntitySelector(
+        schema_dict: dict = {}
+        if self._detected_trvs:
+            schema_dict[vol.Optional("trvs", default=self._detected_trvs)] = EntitySelector(
                 EntitySelectorConfig(domain="climate", multiple=True)
             )
         else:
             schema_dict[vol.Optional("trvs")] = EntitySelector(
                 EntitySelectorConfig(domain="climate", multiple=True)
             )
-
-        return self.async_show_form(
-            step_id="entities",
-            data_schema=vol.Schema(schema_dict),
-            description_placeholders={"room_name": self._area_name},
+        schema_dict[vol.Optional("fixed_trvs")] = EntitySelector(
+            EntitySelectorConfig(domain="climate", multiple=True)
+        )
+        schema_dict[vol.Optional("fixed_trv_temp", default=DEFAULT_DEFAULT_TEMP)] = NumberSelector(
+            NumberSelectorConfig(
+                min=5.0, max=35.0, step=0.5,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="°C",
+            )
         )
 
-    async def async_step_manual(
+        return self.async_show_form(
+            step_id="trvs",
+            data_schema=vol.Schema(schema_dict),
+            description_placeholders={"room_name": self._room_name},
+        )
+
+    # ── Step 3: Windows / airing mode ────────────────────────────────
+
+    async def async_step_windows(
         self, user_input: dict | None = None
     ) -> SubentryFlowResult:
-        """Manual room creation — free-text name + optional entity selectors."""
-        errors: dict[str, str] = {}
-        existing_ids = self._existing_room_ids()
-
+        """Step 3/6 — Window sensors and airing mode."""
         if user_input is not None:
-            room_name = user_input.get("room_name", "").strip()
-            if not room_name:
-                errors["room_name"] = "required"
-            elif _room_name_to_id(room_name) in existing_ids:
-                errors["room_name"] = "room_already_exists"
-            else:
-                trvs_raw = user_input.get("trvs", [])
-                if isinstance(trvs_raw, str):
-                    trvs_raw = [trvs_raw] if trvs_raw else []
-                return self.async_create_entry(
-                    title=room_name,
-                    data={
-                        "room_name": room_name,
-                        "area_id": None,
-                        "temp_sensor": user_input.get("temp_sensor", ""),
-                        "trvs": trvs_raw,
-                    },
-                )
+            sensors = user_input.get("window_sensors", [])
+            self._window_sensors = list(sensors) if isinstance(sensors, list) else ([sensors] if sensors else [])
+            self._airing_mode_enabled = bool(user_input.get("airing_mode_enabled", True))
+            self._airing_duration_minutes = int(user_input.get("airing_duration_minutes", DEFAULT_AIRING_DURATION))
+            return await self.async_step_temperature()
 
         return self.async_show_form(
-            step_id="manual",
+            step_id="windows",
             data_schema=vol.Schema(
                 {
-                    vol.Required("room_name"): str,
-                    vol.Optional("temp_sensor"): EntitySelector(
-                        EntitySelectorConfig(domain="sensor", device_class="temperature")
+                    vol.Optional("window_sensors"): EntitySelector(
+                        EntitySelectorConfig(
+                            domain="binary_sensor",
+                            device_class="window",
+                            multiple=True,
+                        )
                     ),
-                    vol.Optional("trvs"): EntitySelector(
-                        EntitySelectorConfig(domain="climate", multiple=True)
+                    vol.Required("airing_mode_enabled", default=True): BooleanSelector(),
+                    vol.Required(
+                        "airing_duration_minutes", default=DEFAULT_AIRING_DURATION
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=5, max=180, step=5,
+                            mode=NumberSelectorMode.SLIDER,
+                            unit_of_measurement="min",
+                        )
                     ),
                 }
             ),
-            errors=errors,
+            description_placeholders={"room_name": self._room_name},
+        )
+
+    # ── Step 4: Temperature profile ───────────────────────────────────
+
+    async def async_step_temperature(
+        self, user_input: dict | None = None
+    ) -> SubentryFlowResult:
+        """Step 4/6 — Temperature profile: sensor and standby temperature."""
+        if user_input is not None:
+            self._temp_sensor = user_input.get("temp_sensor", "")
+            self._thermostat_sensor = user_input.get("thermostat_sensor", "")
+            self._default_temp_enabled = bool(user_input.get("default_temp_enabled", True))
+            self._default_temp = float(user_input.get("default_temp", DEFAULT_DEFAULT_TEMP))
+            return await self.async_step_humidity()
+
+        schema_dict: dict = {}
+        if self._detected_temp:
+            schema_dict[vol.Optional("temp_sensor", default=self._detected_temp)] = EntitySelector(
+                EntitySelectorConfig(domain="sensor", device_class="temperature")
+            )
+        else:
+            schema_dict[vol.Optional("temp_sensor")] = EntitySelector(
+                EntitySelectorConfig(domain="sensor", device_class="temperature")
+            )
+        schema_dict[vol.Optional("thermostat_sensor")] = EntitySelector(
+            EntitySelectorConfig(domain="sensor", device_class="temperature")
+        )
+        schema_dict[vol.Required("default_temp_enabled", default=True)] = BooleanSelector()
+        schema_dict[vol.Required("default_temp", default=DEFAULT_DEFAULT_TEMP)] = NumberSelector(
+            NumberSelectorConfig(
+                min=MIN_DEFAULT_TEMP, max=MAX_DEFAULT_TEMP, step=0.5,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="°C",
+            )
+        )
+
+        return self.async_show_form(
+            step_id="temperature",
+            data_schema=vol.Schema(schema_dict),
+            description_placeholders={"room_name": self._room_name},
+        )
+
+    # ── Step 5: Humidity control ──────────────────────────────────────
+
+    async def async_step_humidity(
+        self, user_input: dict | None = None
+    ) -> SubentryFlowResult:
+        """Step 5/6 — Humidity control."""
+        if user_input is not None:
+            self._humidity_enabled = bool(user_input.get("humidity_enabled", False))
+            self._humidity_sensor = user_input.get("humidity_sensor", "")
+            self._humidity_threshold = float(user_input.get("humidity_threshold", DEFAULT_HUMIDITY_THRESHOLD))
+            return await self.async_step_confirm()
+
+        return self.async_show_form(
+            step_id="humidity",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("humidity_enabled", default=False): BooleanSelector(),
+                    vol.Optional("humidity_sensor"): EntitySelector(
+                        EntitySelectorConfig(domain="sensor", device_class="humidity")
+                    ),
+                    vol.Required(
+                        "humidity_threshold", default=DEFAULT_HUMIDITY_THRESHOLD
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=MIN_HUMIDITY_THRESHOLD,
+                            max=MAX_HUMIDITY_THRESHOLD,
+                            step=1.0,
+                            mode=NumberSelectorMode.SLIDER,
+                            unit_of_measurement="%",
+                        )
+                    ),
+                }
+            ),
+            description_placeholders={"room_name": self._room_name},
+        )
+
+    # ── Step 6: Confirm and create ────────────────────────────────────
+
+    async def async_step_confirm(
+        self, user_input: dict | None = None
+    ) -> SubentryFlowResult:
+        """Step 6/6 — Confirm room configuration and create subentry."""
+        if user_input is not None:
+            return self.async_create_entry(
+                title=self._room_name,
+                data={
+                    "room_name": self._room_name,
+                    "area_id": self._area_id,
+                    "temp_sensor": self._temp_sensor,
+                    "thermostat_sensor": self._thermostat_sensor,
+                    "trvs": self._trvs,
+                    "fixed_trvs": self._fixed_trvs,
+                    "fixed_trv_temp": self._fixed_trv_temp,
+                    "window_sensors": self._window_sensors,
+                    "airing_mode_enabled": self._airing_mode_enabled,
+                    "airing_duration_minutes": self._airing_duration_minutes,
+                    "default_temp_enabled": self._default_temp_enabled,
+                    "default_temp": self._default_temp,
+                    "humidity_enabled": self._humidity_enabled,
+                    "humidity_sensor": self._humidity_sensor,
+                    "humidity_threshold": self._humidity_threshold,
+                },
+            )
+
+        trv_summary = ", ".join(self._trvs) if self._trvs else "none"
+        window_summary = ", ".join(self._window_sensors) if self._window_sensors else "none"
+        sensor_summary = self._temp_sensor or "none"
+
+        return self.async_show_form(
+            step_id="confirm",
+            data_schema=vol.Schema({}),
             description_placeholders={
-                "tip": (
-                    "Tip: you can also create an Area first in "
-                    "Settings → Areas, then use it here for "
-                    "auto-detection of entities."
-                )
+                "room_name": self._room_name,
+                "trvs": trv_summary,
+                "temp_sensor": sensor_summary,
+                "window_sensors": window_summary,
+                "default_temp": str(self._default_temp),
+                "humidity_enabled": "yes" if self._humidity_enabled else "no",
             },
         )
 
@@ -315,16 +463,14 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
 class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle config flow for Smart Heating Advisor.
 
-    5 steps:
+    2 steps:
       1. Ollama — URL + model, connection tested
-      2. InfluxDB — URL, token, org, bucket, connection tested
-      3. Rooms — multi-select HA Areas (optional, skip for later)
-      4. Room entities — per-room entity confirmation (iterates once per area)
-      5. HA entities — weather entity
+      2. InfluxDB — URL, token, org, bucket, connection tested → create entry
 
     Room management after initial setup:
       Add Room: "➕ Add Room" button on integration card → SHARoomSubentryFlowHandler
       Remove Room: ⋮ → Delete on a room subentry card
+    Global settings: gear icon → options flow (connection settings + vacation)
     """
 
     VERSION = 1
@@ -346,9 +492,6 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._ollama_data: dict = {}
-        self._influxdb_data: dict = {}
-        self._pending_rooms: list[dict] = []
-        self._room_configs: list[dict] = []
 
     # ── Step 1: Ollama ────────────────────────────────────────────────
 
@@ -376,10 +519,10 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    # ── Step 2: InfluxDB ──────────────────────────────────────────────
+    # ── Step 2: InfluxDB → create entry ──────────────────────────────
 
     async def async_step_influxdb(self, user_input=None) -> ConfigFlowResult:
-        """Step 2 — InfluxDB configuration."""
+        """Step 2 — InfluxDB configuration. Creates the config entry on success."""
         errors = {}
 
         if user_input is not None:
@@ -389,8 +532,15 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 user_input[CONF_INFLUXDB_ORG],
                 user_input[CONF_INFLUXDB_BUCKET],
             ):
-                self._influxdb_data = user_input
-                return await self.async_step_rooms()
+                return self.async_create_entry(
+                    title="Smart Heating Advisor",
+                    data={
+                        **self._ollama_data,
+                        **user_input,
+                        CONF_WEATHER_ENTITY: "weather.forecast_home",
+                        CONF_ROOM_CONFIGS: [],
+                    },
+                )
             errors["base"] = "influxdb_connection_failed"
 
         return self.async_show_form(
@@ -406,204 +556,30 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    # ── Step 3: Room selection ────────────────────────────────────────
-
-    async def async_step_rooms(self, user_input=None) -> ConfigFlowResult:
-        """Step 3 — Select rooms from HA Areas (optional)."""
-        area_reg = ar.async_get(self.hass)
-        areas = {a.id: a.name for a in area_reg.async_list_areas()}
-
-        if not areas:
-            _LOGGER.info("SHA config flow: no HA areas found — skipping room selection")
-            self._pending_rooms = []
-            self._room_configs = []
-            return await self.async_step_entities()
-
-        if user_input is not None:
-            selected_ids = user_input.get("selected_areas", [])
-            if not selected_ids:
-                self._pending_rooms = []
-                self._room_configs = []
-                return await self.async_step_entities()
-
-            self._room_configs = []
-            self._pending_rooms = []
-            for area_id in selected_ids:
-                area_name = areas.get(area_id, area_id)
-                temp_sensors = _get_area_entities(self.hass, area_id, "sensor", "temperature")
-                trvs = _get_area_entities(self.hass, area_id, "climate")
-                self._pending_rooms.append({
-                    "area_id": area_id,
-                    "room_name": area_name,
-                    "temp_sensor": temp_sensors[0] if temp_sensors else "",
-                    "trvs": trvs,
-                })
-                _LOGGER.debug(
-                    "SHA config flow: area '%s' — temp_sensors=%s trvs=%s",
-                    area_name, temp_sensors, trvs,
-                )
-            return await self.async_step_room_entities()
-
-        sorted_areas = sorted(areas.items(), key=lambda x: x[1])
-        return self.async_show_form(
-            step_id="rooms",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional("selected_areas"): SelectSelector(
-                        SelectSelectorConfig(
-                            options=[
-                                {"value": aid, "label": aname}
-                                for aid, aname in sorted_areas
-                            ],
-                            multiple=True,
-                            mode=SelectSelectorMode.LIST,
-                        )
-                    ),
-                }
-            ),
-        )
-
-    # ── Step 4: Per-room entity confirmation ──────────────────────────
-
-    async def async_step_room_entities(self, user_input=None) -> ConfigFlowResult:
-        """Step 4 — Confirm detected entities for each selected room (iterates)."""
-        if user_input is not None and self._pending_rooms:
-            room_draft = self._pending_rooms[0]
-            trvs_raw = user_input.get("trvs", [])
-            if isinstance(trvs_raw, str):
-                trvs_raw = [trvs_raw] if trvs_raw else []
-            self._room_configs.append({
-                "area_id": room_draft["area_id"],
-                "room_name": user_input.get("room_name", room_draft["room_name"]).strip(),
-                "temp_sensor": user_input.get("temp_sensor", ""),
-                "trvs": trvs_raw,
-            })
-            self._pending_rooms.pop(0)
-
-        if not self._pending_rooms:
-            return await self.async_step_entities()
-
-        room_draft = self._pending_rooms[0]
-        room_name = room_draft["room_name"]
-        detected_temp = room_draft.get("temp_sensor", "")
-        detected_trvs = room_draft.get("trvs", [])
-
-        schema_dict: dict = {
-            vol.Required("room_name", default=room_name): str,
-        }
-        if detected_temp:
-            schema_dict[vol.Optional("temp_sensor", default=detected_temp)] = EntitySelector(
-                EntitySelectorConfig(domain="sensor")
-            )
-        else:
-            schema_dict[vol.Optional("temp_sensor")] = EntitySelector(
-                EntitySelectorConfig(domain="sensor")
-            )
-        if detected_trvs:
-            schema_dict[vol.Optional("trvs", default=detected_trvs)] = EntitySelector(
-                EntitySelectorConfig(domain="climate", multiple=True)
-            )
-        else:
-            schema_dict[vol.Optional("trvs")] = EntitySelector(
-                EntitySelectorConfig(domain="climate", multiple=True)
-            )
-
-        remaining = len(self._pending_rooms)
-        return self.async_show_form(
-            step_id="room_entities",
-            data_schema=vol.Schema(schema_dict),
-            description_placeholders={
-                "room_name": room_name,
-                "remaining": str(remaining),
-            },
-        )
-
-    # ── Step 5: Weather entity ────────────────────────────────────────
-
-    async def async_step_entities(self, user_input=None) -> ConfigFlowResult:
-        """Step 5 — HA entity configuration (weather)."""
-        errors = {}
-
-        if user_input is not None:
-            weather = self.hass.states.get(user_input[CONF_WEATHER_ENTITY])
-            if not weather:
-                errors[CONF_WEATHER_ENTITY] = "entity_not_found"
-            else:
-                return self.async_create_entry(
-                    title="Smart Heating Advisor",
-                    data={
-                        **self._ollama_data,
-                        **self._influxdb_data,
-                        **user_input,
-                        CONF_ROOM_CONFIGS: self._room_configs,
-                    },
-                )
-
-        return self.async_show_form(
-            step_id="entities",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_WEATHER_ENTITY, default="weather.forecast_home"): str,
-                }
-            ),
-            errors=errors,
-        )
-
 
 # ──────────────────────────────────────────────────────────────────────
-# Options flow — global settings only
+# Options flow — global settings (2 steps)
 # ──────────────────────────────────────────────────────────────────────
 
 class SHAOptionsFlow(config_entries.OptionsFlow):
-    """Handle SHA options — global connection settings and debug toggle.
+    """Handle SHA options — connection settings, weather entity, debug, and vacation.
 
-    Room management is done via:
-      ➕ Add Room button on the integration card (subentry flow)
-      ⋮ Delete on each room card (triggers full cleanup via reload)
+    Step 1 (init):     Connection settings + weather entity + debug toggle
+    Step 2 (vacation): Vacation mode configuration
     """
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
+        self._init_data: dict = {}
 
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
-        """Show global settings form."""
+        """Step 1 — Connection settings and global entities."""
         cd = self._config_entry.data
         current_debug = self._config_entry.options.get(CONF_DEBUG_LOGGING, False)
 
         if user_input is not None:
-            debug = user_input.get(CONF_DEBUG_LOGGING, current_debug)
-
-            # If any connection/entity setting changed, update entry.data and reload.
-            # Debug logging is always saved to entry.options (live update, no reload).
-            data_keys = [
-                CONF_OLLAMA_URL, CONF_OLLAMA_MODEL,
-                CONF_INFLUXDB_URL, CONF_INFLUXDB_TOKEN,
-                CONF_INFLUXDB_ORG, CONF_INFLUXDB_BUCKET,
-                CONF_WEATHER_ENTITY,
-            ]
-            data_changed = any(
-                user_input.get(k) != cd.get(k)
-                for k in data_keys
-                if k in user_input
-            )
-
-            if data_changed:
-                new_data = dict(cd)
-                for k in data_keys:
-                    if k in user_input:
-                        new_data[k] = user_input[k]
-                self.hass.config_entries.async_update_entry(
-                    self._config_entry, data=new_data
-                )
-                _LOGGER.info("SHA options: connection settings changed — scheduling reload")
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(self._config_entry.entry_id)
-                )
-
-            return self.async_create_entry(
-                title="",
-                data={CONF_DEBUG_LOGGING: debug},
-            )
+            self._init_data = user_input
+            return await self.async_step_vacation()
 
         return self.async_show_form(
             step_id="init",
@@ -638,6 +614,78 @@ class SHAOptionsFlow(config_entries.OptionsFlow):
                         default=cd.get(CONF_WEATHER_ENTITY, "weather.forecast_home"),
                     ): str,
                     vol.Required(CONF_DEBUG_LOGGING, default=current_debug): bool,
+                }
+            ),
+        )
+
+    async def async_step_vacation(self, user_input=None) -> ConfigFlowResult:
+        """Step 2 — Vacation mode settings."""
+        current_opts = self._config_entry.options
+
+        if user_input is not None:
+            init = self._init_data
+            debug = init.get(CONF_DEBUG_LOGGING, False)
+
+            data_keys = [
+                CONF_OLLAMA_URL, CONF_OLLAMA_MODEL,
+                CONF_INFLUXDB_URL, CONF_INFLUXDB_TOKEN,
+                CONF_INFLUXDB_ORG, CONF_INFLUXDB_BUCKET,
+                CONF_WEATHER_ENTITY,
+            ]
+            cd = self._config_entry.data
+            data_changed = any(
+                init.get(k) != cd.get(k)
+                for k in data_keys
+                if k in init
+            )
+
+            if data_changed:
+                new_data = dict(cd)
+                for k in data_keys:
+                    if k in init:
+                        new_data[k] = init[k]
+                self.hass.config_entries.async_update_entry(
+                    self._config_entry, data=new_data
+                )
+                _LOGGER.info("SHA options: connection settings changed — scheduling reload")
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self._config_entry.entry_id)
+                )
+
+            return self.async_create_entry(
+                title="",
+                data={
+                    CONF_DEBUG_LOGGING: debug,
+                    CONF_VACATION_ENABLED: bool(user_input.get(CONF_VACATION_ENABLED, False)),
+                    CONF_VACATION_MODE: user_input.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
+                    CONF_VACATION_CALENDAR: user_input.get(CONF_VACATION_CALENDAR, ""),
+                },
+            )
+
+        return self.async_show_form(
+            step_id="vacation",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_VACATION_ENABLED,
+                        default=current_opts.get(CONF_VACATION_ENABLED, False),
+                    ): BooleanSelector(),
+                    vol.Required(
+                        CONF_VACATION_MODE,
+                        default=current_opts.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=["frost", "eco", "off"],
+                            mode=SelectSelectorMode.LIST,
+                            translation_key="vacation_mode",
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_VACATION_CALENDAR,
+                        default=current_opts.get(CONF_VACATION_CALENDAR, ""),
+                    ): EntitySelector(
+                        EntitySelectorConfig(domain="calendar")
+                    ),
                 }
             ),
         )

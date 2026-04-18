@@ -25,6 +25,9 @@ from .const import (
     WEEKLY_ANALYSIS_WEEKDAY,
     WEEKLY_ANALYSIS_HOUR,
     WEEKLY_ANALYSIS_MINUTE,
+    DEFAULT_DEFAULT_TEMP,
+    DEFAULT_AIRING_DURATION,
+    DEFAULT_HUMIDITY_THRESHOLD,
 )
 from .coordinator import SmartHeatingCoordinator, _room_name_to_id
 from .text_store import (
@@ -583,6 +586,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry, data={**entry.data, "sha_trv_migration_complete": True}
         )
         _LOGGER.info("SHA: TRV backfill migration complete")
+
+    # ── Phase 3: Subentry schema migration — add new room wizard fields ──
+    # New fields introduced in Phase 3 config flow redesign.
+    # Safe defaults preserve all existing behaviour for rooms configured
+    # before the wizard was added.
+    if not entry.data.get("sha_phase3_migration_complete"):
+        _LOGGER.info("SHA: starting Phase 3 subentry migration")
+        for subentry in list(entry.subentries.values()):
+            sub_room = subentry.data.get("room_name", "")
+            if not sub_room:
+                continue
+            existing = dict(subentry.data)
+            needs_update = False
+            defaults: dict = {
+                "thermostat_sensor": "",
+                "fixed_trvs": [],
+                "fixed_trv_temp": DEFAULT_DEFAULT_TEMP,
+                "window_sensors": [],
+                "airing_mode_enabled": True,
+                "airing_duration_minutes": DEFAULT_AIRING_DURATION,
+                "default_temp_enabled": True,
+                "default_temp": DEFAULT_DEFAULT_TEMP,
+                "humidity_enabled": False,
+                "humidity_sensor": "",
+                "humidity_threshold": DEFAULT_HUMIDITY_THRESHOLD,
+            }
+            for key, default_val in defaults.items():
+                if key not in existing:
+                    existing[key] = default_val
+                    needs_update = True
+            if needs_update:
+                hass.config_entries.async_update_subentry(
+                    entry, subentry, data=existing
+                )
+                _LOGGER.info(
+                    "SHA: Phase 3 migration — updated subentry for room '%s'", sub_room
+                )
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, "sha_phase3_migration_complete": True}
+        )
+        _LOGGER.info("SHA: Phase 3 subentry migration complete")
 
     # ── Phase 2: Sync coordinator with SubEntries (authoritative source) ──
     # SubEntries are the single source of truth after migration.

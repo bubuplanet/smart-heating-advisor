@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Smart Heating Advisor — Ollama",
-        "description": "Step 1 of 5 — Configure your local Ollama AI instance",
+        "description": "Step 1 of 2 — Configure your local Ollama AI instance",
         "data": {
           "ollama_url": "Ollama URL",
           "ollama_model": "Ollama Model Name"
@@ -11,42 +11,18 @@
       },
       "influxdb": {
         "title": "Smart Heating Advisor — InfluxDB",
-        "description": "Step 2 of 5 — Configure your InfluxDB 2.x connection",
+        "description": "Step 2 of 2 — Configure your InfluxDB 2.x connection. Once saved, add rooms using the **➕ Add Room** button on the integration card.",
         "data": {
           "influxdb_url": "InfluxDB URL",
           "influxdb_token": "InfluxDB API Token",
           "influxdb_org": "InfluxDB Organisation",
           "influxdb_bucket": "InfluxDB Bucket"
         }
-      },
-      "rooms": {
-        "title": "Smart Heating Advisor — Select Rooms",
-        "description": "Step 3 of 5 — Select the rooms (HA Areas) you want SHA to manage. SHA will auto-detect temperature sensors and TRVs assigned to each area. Leave empty to skip and configure rooms later.",
-        "data": {
-          "selected_areas": "Rooms to manage"
-        }
-      },
-      "room_entities": {
-        "title": "Smart Heating Advisor — {room_name} Entities",
-        "description": "Step 4 of 5 — Confirm the entities detected for **{room_name}**. SHA will create helper entities and a blueprint automation for this room. Leave sensors blank if none were detected — you can configure them in the automation later.",
-        "data": {
-          "room_name": "Room display name",
-          "temp_sensor": "Temperature sensor",
-          "trvs": "Radiator thermostats"
-        }
-      },
-      "entities": {
-        "title": "Smart Heating Advisor — HA Entities",
-        "description": "Step 5 of 5 — Configure global HA entities used for weather context in AI analysis.",
-        "data": {
-          "weather_entity": "Weather entity"
-        }
       }
     },
     "error": {
       "ollama_connection_failed": "Cannot connect to Ollama or model not found. Check URL and model name.",
-      "influxdb_connection_failed": "Cannot connect to InfluxDB. Check URL, token, org and bucket.",
-      "entity_not_found": "Entity not found in Home Assistant. Check the entity ID."
+      "influxdb_connection_failed": "Cannot connect to InfluxDB. Check URL, token, org and bucket."
     },
     "abort": {
       "already_configured": "Smart Heating Advisor is already configured."
@@ -60,29 +36,60 @@
       },
       "step": {
         "user": {
-          "title": "Add Room — Select Area",
-          "description": "Select an HA Area to use as a room. SHA will auto-detect temperature sensors and TRVs. Already-configured rooms are excluded. Choose **➕ Create room manually** if the room is not yet an HA Area.",
+          "title": "Add Room — Step 1/6: Room Identity",
+          "description": "Select an HA Area to auto-detect entities, or enter a custom room name. Already-configured rooms are excluded.",
           "data": {
-            "area_id": "Room / Area"
+            "area_id": "Select area (or enter manually)",
+            "room_name": "Room name (leave blank to use area name)"
           }
         },
-        "entities": {
-          "title": "Add Room — {room_name} Entities",
-          "description": "Confirm the entities detected for **{room_name}**. SHA will create helper entities and a blueprint automation. Leave sensors blank if none were detected — you can configure them in the automation later.",
+        "trvs": {
+          "title": "Add Room — Step 2/6: Radiator Thermostats ({room_name})",
+          "description": "Select the TRVs (radiator thermostats) SHA should control for **{room_name}**.\n\n**Main TRVs** are fully controlled by SHA. **Fixed TRVs** are kept at a constant setpoint (e.g. a bathroom towel rail).",
           "data": {
-            "room_name": "Room display name",
-            "temp_sensor": "Temperature sensor (optional)",
-            "trvs": "Radiator thermostats (optional)"
+            "trvs": "Main TRVs (SHA-controlled)",
+            "fixed_trvs": "Fixed TRVs (constant setpoint, optional)",
+            "fixed_trv_temp": "Fixed TRV temperature"
+          },
+          "data_description": {
+            "fixed_trv_temp": "Temperature setpoint for fixed TRVs. Only applies when Fixed TRVs are selected above."
           }
         },
-        "manual": {
-          "title": "Add Room — Manual Setup",
-          "description": "Enter a name for the new room and optionally select its entities. Entities can also be configured later in the room automation.\n\n{tip}",
+        "windows": {
+          "title": "Add Room — Step 3/6: Windows & Airing ({room_name})",
+          "description": "Configure window sensors and airing mode for **{room_name}**. SHA will pause heating when a window is detected open.",
           "data": {
-            "room_name": "Room name",
-            "temp_sensor": "Temperature sensor (optional)",
-            "trvs": "Radiator thermostats (optional)"
+            "window_sensors": "Window / door sensors (optional)",
+            "airing_mode_enabled": "Enable airing mode (pause heating when window open)",
+            "airing_duration_minutes": "Minimum airing duration before resuming heating"
           }
+        },
+        "temperature": {
+          "title": "Add Room — Step 4/6: Temperature Profile ({room_name})",
+          "description": "Configure temperature sensing and standby temperature for **{room_name}**.",
+          "data": {
+            "temp_sensor": "Room temperature sensor",
+            "thermostat_sensor": "Thermostat / comfort sensor (optional)",
+            "default_temp_enabled": "Enable standby temperature (setback when schedule is off)",
+            "default_temp": "Standby temperature"
+          },
+          "data_description": {
+            "thermostat_sensor": "Alternative sensor read by the TRV thermostat. Used by SHA for accuracy analysis.",
+            "default_temp": "Temperature SHA sets when no schedule is active. Only applies when standby temperature is enabled."
+          }
+        },
+        "humidity": {
+          "title": "Add Room — Step 5/6: Humidity Control ({room_name})",
+          "description": "Optionally enable humidity monitoring for **{room_name}**. SHA will include humidity data in its AI analysis.",
+          "data": {
+            "humidity_enabled": "Enable humidity monitoring",
+            "humidity_sensor": "Humidity sensor (optional)",
+            "humidity_threshold": "High humidity alert threshold"
+          }
+        },
+        "confirm": {
+          "title": "Add Room — Step 6/6: Confirm ({room_name})",
+          "description": "Review the configuration for **{room_name}** and click **Submit** to create the room.\n\n- **Temperature sensor:** {temp_sensor}\n- **Main TRVs:** {trvs}\n- **Window sensors:** {window_sensors}\n- **Standby temperature:** {default_temp}°C\n- **Humidity monitoring:** {humidity_enabled}"
         }
       },
       "error": {
@@ -98,8 +105,8 @@
   "options": {
     "step": {
       "init": {
-        "title": "Smart Heating Advisor — Settings",
-        "description": "Update global settings. Use the **➕ Add Room** button on the integration card to add rooms, or click **⋮** next to a room to remove it.",
+        "title": "Smart Heating Advisor — Settings (1/2)",
+        "description": "Update connection settings. Use **➕ Add Room** to add rooms, or **⋮** next to a room to remove it.",
         "data": {
           "ollama_url": "Ollama URL",
           "ollama_model": "Ollama Model Name",
@@ -115,6 +122,28 @@
           "influxdb_token": "Changes to connection settings (Ollama, InfluxDB, weather entity) will trigger an integration reload.",
           "ollama_url": "Changes to connection settings (Ollama, InfluxDB, weather entity) will trigger an integration reload."
         }
+      },
+      "vacation": {
+        "title": "Smart Heating Advisor — Vacation Settings (2/2)",
+        "description": "Configure vacation mode. When enabled, SHA uses a reduced heating profile while you are away.",
+        "data": {
+          "vacation_enabled": "Enable vacation mode",
+          "vacation_mode": "Vacation heating mode",
+          "vacation_calendar": "Vacation calendar (optional)"
+        },
+        "data_description": {
+          "vacation_calendar": "When set, SHA will automatically activate vacation mode during calendar events. Leave blank to control vacation mode manually.",
+          "vacation_mode": "Heating strategy to apply when vacation mode is active."
+        }
+      }
+    }
+  },
+  "selector": {
+    "vacation_mode": {
+      "options": {
+        "frost": "Frost protection (7°C)",
+        "eco": "Eco mode (15°C)",
+        "off": "Off (no heating)"
       }
     }
   }

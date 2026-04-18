@@ -44,6 +44,18 @@ CONF_ROOM_CONFIGS = "room_configs"
 # ── Options keys ──────────────────────────────────────────────────────
 CONF_DEBUG_LOGGING = "debug_logging"
 
+# ── Vacation config keys ───────────────────────────────────────────────
+CONF_VACATION_ENABLED = "vacation_enabled"
+CONF_VACATION_MODE = "vacation_mode"
+CONF_VACATION_CALENDAR = "vacation_calendar"
+DEFAULT_VACATION_MODE = "eco"
+
+# ── Room wizard defaults ───────────────────────────────────────────────
+DEFAULT_AIRING_DURATION = 30        # minutes
+DEFAULT_HUMIDITY_THRESHOLD = 60.0   # %
+MIN_HUMIDITY_THRESHOLD = 30.0
+MAX_HUMIDITY_THRESHOLD = 90.0
+
 # ── Blueprint tag ─────────────────────────────────────────────────────
 # Automations created from the SHA blueprint embed this tag in their
 # description field so SHA can discover rooms automatically.

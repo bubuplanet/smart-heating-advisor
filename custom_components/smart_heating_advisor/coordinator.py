@@ -244,10 +244,6 @@ class RoomConfig:
         self.trv_setpoint_helper = f"number.sha_{self.room_id}_trv_setpoint"
         self.override_switch = f"switch.sha_{self.room_id}_override"
         self.airing_mode = f"switch.sha_{self.room_id}_airing_mode"
-        self.preheat_notified = f"switch.sha_{self.room_id}_preheat_notified"
-        self.target_notified = f"switch.sha_{self.room_id}_target_notified"
-        self.standby_notified = f"switch.sha_{self.room_id}_standby_notified"
-        self.vacation_notified = f"switch.sha_{self.room_id}_vacation_notified"
 
     def __repr__(self):
         return (
@@ -1153,64 +1149,19 @@ class SmartHeatingCoordinator:
             room.room_name, clamped, gradient_str, target_comfort,
         )
 
-    async def _async_notify(self, title: str, message: str) -> None:
-        """Send HA mobile notification."""
-        await self.hass.services.async_call(
-            "notify", "notify", {"title": title, "message": message}
-        )
-
-    async def _async_persistent_notification(
-        self,
-        title: str,
-        message: str,
-        notification_id: str,
-        dismiss: bool = False,
-    ) -> None:
-        """Create, replace, or dismiss a persistent notification in HA UI.
-
-        Pass ``dismiss=True`` to silently remove an existing notification.
-        No-ops if the notification does not exist when dismissing.
-        """
-        if dismiss:
-            await self.hass.services.async_call(
-                "persistent_notification",
-                "dismiss",
-                {"notification_id": notification_id},
-            )
-        else:
-            await self.hass.services.async_call(
-                "persistent_notification",
-                "create",
-                {"title": title, "message": message, "notification_id": notification_id},
-            )
-
     async def _async_check_stale_data(
         self, room: "RoomConfig", readings: list
     ) -> bool:
         """Check whether InfluxDB data for this room is stale (> 48 h old).
 
-        Creates a persistent notification and logs at WARNING when stale or empty.
-        Dismisses any existing stale notification when data is fresh.
-
         Returns True when analysis should be skipped (no data or data is stale).
         Returns False when data is fresh.
         """
         if not readings:
-            await self._async_persistent_notification(
-                title=f"SHA — {room.room_name} InfluxDB unreachable",
-                message=(
-                    f"SHA could not retrieve any data for "
-                    f"{room.room_name} from InfluxDB. "
-                    f"Check that InfluxDB is running and "
-                    f"recording {room.temp_sensor} correctly. "
-                    f"Analysis has been skipped."
-                ),
-                notification_id=f"sha_influxdb_unreachable_{room.room_id}",
-            )
             _LOGGER.warning(
-                "[%s] InfluxDB returned no data — "
-                "is InfluxDB running?",
-                room.room_name,
+                "[%s] InfluxDB returned no data — is InfluxDB running? "
+                "Check that InfluxDB is recording %s correctly. Analysis skipped.",
+                room.room_name, room.temp_sensor,
             )
             return True
 
@@ -1219,51 +1170,27 @@ class SmartHeatingCoordinator:
         if last_ts.tzinfo is None:
             last_ts = last_ts.replace(tzinfo=timezone.utc)
         hours_since = (now_utc - last_ts).total_seconds() / 3600
-        notification_id = f"sha_stale_data_{room.room_id}"
 
         if hours_since > 48:
             last_reading_time = last_ts.strftime("%Y-%m-%d %H:%M UTC")
             _LOGGER.warning(
                 "[%s] InfluxDB data is stale — last reading: %s (%d hours ago). "
-                "SHA cannot run accurate analysis for this room. "
-                "Check that InfluxDB is recording %s correctly.",
-                room.room_name,
-                last_reading_time,
-                int(hours_since),
-                room.temp_sensor,
-            )
-            await self._async_persistent_notification(
-                title=f"SHA — {room.room_name} data issue",
-                message=(
-                    f"SHA has not received temperature data for {room.room_name} "
-                    f"in {int(hours_since)} hours.\n"
-                    f"Last reading: {last_reading_time}.\n"
-                    f"Check that InfluxDB is recording {room.temp_sensor} correctly.\n"
-                    f"Analysis for {room.room_name} has been skipped "
-                    f"until data is available again."
-                ),
-                notification_id=notification_id,
+                "SHA cannot run accurate analysis. "
+                "Check that InfluxDB is recording %s correctly. Analysis skipped.",
+                room.room_name, last_reading_time, int(hours_since), room.temp_sensor,
             )
             return True
 
-        # Data is fresh — dismiss any leftover stale notification
-        await self._async_persistent_notification(
-            title="", message="", notification_id=notification_id, dismiss=True
-        )
         return False
 
     async def _async_check_automation_enabled(self, room: "RoomConfig") -> bool:
         """Check whether the SHA blueprint automation for this room is enabled.
-
-        Creates a persistent notification and logs at WARNING when disabled.
-        Dismisses any existing disabled notification when enabled.
 
         Returns True when analysis should be skipped (automation disabled).
         Returns False when enabled — or when no automation is found (room
         may be newly configured; analysis still runs in that case).
         """
         alias = f"SHA — {room.room_name}"
-        notification_id = f"sha_automation_disabled_{room.room_id}"
 
         automation_state = None
         for state in self.hass.states.async_all("automation"):
@@ -1275,18 +1202,7 @@ class SmartHeatingCoordinator:
             _LOGGER.warning(
                 "[%s] No SHA automation found (alias: '%s') — "
                 "analysis will still run (automation may not yet be configured).",
-                room.room_name,
-                alias,
-            )
-            await self._async_persistent_notification(
-                title="",
-                message="",
-                notification_id=notification_id,
-                dismiss=True,
-            )
-            _LOGGER.debug(
-                "[%s] No SHA automation found — proceeding",
-                room.room_name,
+                room.room_name, alias,
             )
             return False
 
@@ -1296,21 +1212,8 @@ class SmartHeatingCoordinator:
                 "Pre-heat will not run until the automation is re-enabled.",
                 room.room_name,
             )
-            await self._async_persistent_notification(
-                title=f"SHA — {room.room_name} automation disabled",
-                message=(
-                    f"The SHA automation for {room.room_name} is currently disabled. "
-                    f"Pre-heating will not run for this room.\n"
-                    f"Enable the automation in Settings → Automations to restore heating."
-                ),
-                notification_id=notification_id,
-            )
             return True
 
-        # Automation is enabled — dismiss any leftover disabled notification
-        await self._async_persistent_notification(
-            title="", message="", notification_id=notification_id, dismiss=True
-        )
         return False
 
     async def _async_check_radiator_capacity(
@@ -1320,59 +1223,24 @@ class SmartHeatingCoordinator:
         current_rate: float,
         avg_rate: float | None,
     ) -> None:
-        """Check per-schedule recommended_preheat_min and warn if > 180 min.
-
-        Creates a per-schedule persistent notification when the preheat
-        exceeds the threshold; dismisses it when the value is back in range.
-        No-ops when ``per_schedule`` is empty (fallback / no-session path).
-        """
+        """Check per-schedule recommended_preheat_min and warn if > 180 min."""
         for eid, sched_stats in per_schedule.items():
             preheat_min = sched_stats.get("recommended_preheat_min")
             sched_name = sched_stats.get("name", eid)
             target_temp = sched_stats.get("target_temp", 21.0)
-            sched_id = _room_name_to_id(sched_name)
-            notification_id = f"sha_radiator_warning_{room.room_id}_{sched_id}"
 
             if preheat_min is None:
                 continue
 
             if preheat_min > 180:
-                observed_str = (
-                    f"{avg_rate:.3f}" if avg_rate is not None else "unknown"
-                )
-                lower_target = max(int(target_temp) - 4, 18)
+                observed_str = f"{avg_rate:.3f}" if avg_rate is not None else "unknown"
                 _LOGGER.warning(
                     "[%s] Radiator may be underpowered — recommended pre-heat is "
                     "%d minutes for schedule '%s'. "
-                    "Target %.0f°C may not be achievable in a reasonable time "
-                    "with current setup.",
-                    room.room_name,
-                    int(preheat_min),
-                    sched_name,
-                    target_temp,
-                )
-                await self._async_persistent_notification(
-                    title=f"SHA — {room.room_name} heating capacity warning",
-                    message=(
-                        f"SHA has detected that {room.room_name} needs "
-                        f"{int(preheat_min)} minutes of pre-heating to reach "
-                        f"{target_temp:.0f}°C for {sched_name}.\n\n"
-                        f"This suggests the radiator may be underpowered for "
-                        f"the target temperature in this room.\n\n"
-                        f"Consider one of these actions:\n"
-                        f"- Lower the target temperature in the schedule "
-                        f"(e.g. from {target_temp:.0f}°C to {lower_target}°C)\n"
-                        f"- Check that all radiators in the room are working correctly\n"
-                        f"- Check that the room is not losing heat through open "
-                        f"windows or poor insulation\n\n"
-                        f"Current heating rate: {current_rate:.2f}°C/min\n"
-                        f"Observed rate: {observed_str}°C/min"
-                    ),
-                    notification_id=notification_id,
-                )
-            else:
-                await self._async_persistent_notification(
-                    title="", message="", notification_id=notification_id, dismiss=True
+                    "Target %.0f°C may not be achievable. "
+                    "Current rate: %.2f°C/min, observed: %s°C/min.",
+                    room.room_name, int(preheat_min), sched_name,
+                    target_temp, current_rate, observed_str,
                 )
 
     def _format_daily_outcome(self, room_name: str, old_rate: float, new_rate: float) -> str:
@@ -1384,12 +1252,8 @@ class SmartHeatingCoordinator:
             return f"Heating increased by {delta:.3f} °C/min in {room_name}."
         return f"Heating decreased by {abs(delta):.3f} °C/min in {room_name}."
 
-    async def _async_send_weekly_summary(
-        self,
-        room_results: list,
-        date_str: str,
-    ) -> None:
-        """Send overall SHA weekly summary persistent notification after all rooms processed."""
+    def _async_log_weekly_summary(self, room_results: list, date_str: str) -> None:
+        """Log overall SHA weekly summary after all rooms are processed."""
         if not room_results:
             return
 
@@ -1398,63 +1262,17 @@ class SmartHeatingCoordinator:
         total_rooms = len(room_results)
         good_count = len(good_rooms)
 
-        body_lines = [f"{good_count} of {total_rooms} rooms performing well.\n"]
-
+        lines = [f"[SHA] Weekly summary {date_str}: {good_count}/{total_rooms} rooms on target."]
         for room, stats in bad_rooms:
             rc = stats.get("root_cause") or ""
             rc_plain = _ROOT_CAUSE_PLAIN.get(rc, rc or "unknown")
-            body_lines.append(f"⚠️ {room.room_name}: {rc_plain}")
-            report = stats.get("report", "")
-            if report:
-                first_line = (report.split(".")[0] + ".")[:120]
-                body_lines.append(f"  {first_line}")
-
-        if bad_rooms:
-            body_lines.append("")
-
+            lines.append(f"  ⚠ {room.room_name}: {rc_plain}")
         for room, stats in good_rooms:
             sc = stats.get("session_count", 0)
             ot = stats.get("on_target", 0)
-            body_lines.append(f"✅ {room.room_name}: target reached {ot} of {sc} sessions")
+            lines.append(f"  ✓ {room.room_name}: {ot}/{sc} sessions on target")
 
-        await self._async_persistent_notification(
-            title=f"SHA Weekly Report — {date_str}",
-            message="\n".join(body_lines),
-            notification_id=f"sha_weekly_report_{date_str}",
-        )
-
-    async def _async_notify_daily_room_result(
-        self,
-        room: RoomConfig,
-        run_ts: str,
-        old_rate: float | None,
-        new_rate: float | None,
-        success_rate: int | None,
-        outcome: str,
-        details: str,
-    ) -> None:
-        """Create daily per-room persistent notification summary."""
-        if not room.daily_report_enabled:
-            _LOGGER.debug("[%s] Daily persistent report disabled for this room", room.room_name)
-            return
-
-        old_str = f"{old_rate:.3f}" if old_rate is not None else "n/a"
-        new_str = f"{new_rate:.3f}" if new_rate is not None else "n/a"
-        success_str = f"{success_rate}%" if success_rate is not None else "n/a"
-
-        await self._async_persistent_notification(
-            title=f"📅 {room.room_name} — Daily Heating Report",
-            message=(
-                f"Run time: {run_ts}\n\n"
-                f"Outcome: {outcome}\n\n"
-                f"Affected sensor: {room.temp_sensor}\n"
-                f"Old value: {old_str} °C/min\n"
-                f"New value: {new_str} °C/min\n"
-                f"Success rate (last 7 days): {success_str}\n"
-                f"Details: {details}"
-            ),
-            notification_id=f"heating_advisor_daily_{room.room_id}",
-        )
+        _LOGGER.info("\n".join(lines))
 
     # ──────────────────────────────────────────────────────────────────
     # Daily analysis
@@ -1463,10 +1281,7 @@ class SmartHeatingCoordinator:
     async def async_run_daily_analysis(self) -> None:
         """Run daily heating rate analysis for all discovered rooms."""
         if not await self.ollama.async_test_connection():
-            await self._async_notify(
-                "⚠️ SHA — Daily Analysis Failed",
-                "Daily analysis skipped — cannot connect to Ollama.",
-            )
+            _LOGGER.error("[SHA] Daily analysis skipped — cannot connect to Ollama.")
             return
 
         rooms = self.discover_rooms()
@@ -1524,15 +1339,6 @@ class SmartHeatingCoordinator:
             _LOGGER.warning(
                 "[%s] Not enough room-temp data (%d readings) — skipping",
                 room.room_name, len(readings),
-            )
-            await self._async_notify_daily_room_result(
-                room=room,
-                run_ts=run_ts,
-                old_rate=None,
-                new_rate=None,
-                success_rate=None,
-                outcome=f"No changes needed in {room.room_name}.",
-                details=f"Analysis ran but not enough data ({len(readings)} readings).",
             )
             return {"new_rate": None, "session_count": 0, "on_target": 0}
 
@@ -1779,14 +1585,9 @@ class SmartHeatingCoordinator:
             else:
                 details_text = phase_instruction
 
-            await self._async_notify_daily_room_result(
-                room=room,
-                run_ts=run_ts,
-                old_rate=current_rate,
-                new_rate=current_rate,
-                success_rate=0,
-                outcome=f"No changes — no heating sessions detected in {room.room_name}.",
-                details=details_text,
+            _LOGGER.info(
+                "[%s] Daily result: no heating sessions detected — rate unchanged at %.3f°C/min. %s",
+                room.room_name, current_rate, details_text,
             )
             return {"new_rate": current_rate, "session_count": 0, "on_target": 0}
 
@@ -1886,14 +1687,9 @@ class SmartHeatingCoordinator:
                 room.room_name,
                 (response or "")[:200],
             )
-            await self._async_notify_daily_room_result(
-                room=room,
-                run_ts=run_ts,
-                old_rate=current_rate,
-                new_rate=current_rate,
-                success_rate=success_rate_pct,
-                outcome=f"No changes needed in {room.room_name}.",
-                details="AI response was invalid, keeping previous heating rate.",
+            _LOGGER.error(
+                "[%s] Daily result: invalid AI response — rate unchanged at %.3f°C/min.",
+                room.room_name, current_rate,
             )
             return {"new_rate": current_rate, "session_count": sessions_total, "on_target": sessions_on_target}
 
@@ -1955,28 +1751,15 @@ class SmartHeatingCoordinator:
         if new_trv_setpoint is not None:
             await self._async_apply_trv_setpoint(room, new_trv_setpoint, avg_gradient, target_comfort_temp)
 
-        # Fix 3: radiator capacity check — fires hard notification if preheat > 180 min
         await self._async_check_radiator_capacity(
             room, per_schedule, current_rate, avg_rate
         )
 
-        await self._async_notify_daily_room_result(
-            room=room,
-            run_ts=run_ts,
-            old_rate=current_rate,
-            new_rate=new_rate,
-            success_rate=success_rate_pct,
-            outcome=self._format_daily_outcome(room.room_name, current_rate, new_rate),
-            details=analysis_summary or rate_adjustment_reason or reasoning,
-        )
-
-        await self._async_notify(
-            f"🌡️ {room.room_name} — Heating Rate Updated",
-            f"New rate: {new_rate:.3f}°C/min (was {current_rate:.3f}°C/min)\n"
-            f"Accuracy: {target_accuracy_percent}% on target, "
-            f"avg miss {average_miss_celsius}°C\n"
-            f"Confidence: {confidence}\n"
-            f"Reason: {rate_adjustment_reason or reasoning}",
+        _LOGGER.info(
+            "[%s] Daily result: %s | accuracy=%s%% avg_miss=%s°C confidence=%s",
+            room.room_name,
+            self._format_daily_outcome(room.room_name, current_rate, new_rate),
+            target_accuracy_percent, average_miss_celsius, confidence,
         )
 
         return {"new_rate": new_rate, "session_count": sessions_total, "on_target": sessions_on_target}
@@ -1988,10 +1771,7 @@ class SmartHeatingCoordinator:
     async def async_run_weekly_analysis(self) -> None:
         """Run weekly report analysis for all discovered rooms."""
         if not await self.ollama.async_test_connection():
-            await self._async_notify(
-                "⚠️ SHA — Weekly Report Failed",
-                "Weekly report skipped — cannot connect to Ollama.",
-            )
+            _LOGGER.error("[SHA] Weekly report skipped — cannot connect to Ollama.")
             return
 
         rooms = self.discover_rooms()
@@ -2028,7 +1808,7 @@ class SmartHeatingCoordinator:
                     room.room_name, exc,
                 )
 
-        await self._async_send_weekly_summary(room_results, date_str)
+        self._async_log_weekly_summary(room_results, date_str)
         _LOGGER.info("[SHA] Weekly analysis complete — %d of %d rooms processed", success_count, total)
 
     async def _async_run_weekly_analysis_for_room(
@@ -2385,20 +2165,14 @@ class SmartHeatingCoordinator:
         # ── 17. Radiator capacity check ───────────────────────────────
         await self._async_check_radiator_capacity(room, per_schedule, current_rate, avg_rate)
 
-        # ── 18. Individual alert when consistently missing ────────────
-        if consistent_miss and room.weekly_report_enabled:
+        # ── 18. Log when consistently missing target ──────────────────
+        if consistent_miss:
             rc_plain = _ROOT_CAUSE_PLAIN.get(root_cause or "", root_cause or "unknown")
-            await self._async_persistent_notification(
-                title=f"SHA — {room.room_name} needs attention",
-                message=(
-                    f"Run time: {run_ts}\n\n"
-                    f"Target reached: {sessions_on_target} of {sessions_total} sessions "
-                    f"({int(success_rate_pct)}%)\n"
-                    f"Average miss: {average_miss:+.1f}°C\n"
-                    f"Root cause: {rc_plain}\n\n"
-                    f"{report_text}"
-                ),
-                notification_id=f"sha_room_report_{room.room_id}",
+            _LOGGER.warning(
+                "[%s] Weekly: room needs attention — %d/%d sessions on target (%d%%), "
+                "avg miss %+.1f°C, root cause: %s.",
+                room.room_name, sessions_on_target, sessions_total,
+                int(success_rate_pct), average_miss, rc_plain,
             )
 
         _LOGGER.info(

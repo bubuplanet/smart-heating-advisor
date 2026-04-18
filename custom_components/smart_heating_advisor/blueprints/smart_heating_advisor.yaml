@@ -41,10 +41,7 @@ blueprint:
 
     Required entities (auto-created by SHA):
     - number.sha_ROOM_heating_rate
-    - switch.sha_ROOM_preheat_notified
-    - switch.sha_ROOM_schedule_notified
-    - switch.sha_ROOM_standby_notified
-    - switch.sha_ROOM_window_timeout_notified
+    - number.sha_ROOM_trv_setpoint
     - switch.sha_ROOM_airing_mode
     - switch.sha_ROOM_override
 
@@ -158,68 +155,6 @@ blueprint:
               step: 0.5
               unit_of_measurement: "°C"
 
-        notify_preheat:
-          name: Notify when pre-heat starts
-          description: >
-            Fires once when pre-heating begins — typically minutes before the schedule starts.
-            Only sent if the room needs warming up before the schedule activates.
-            Also fires when pre-heat is blocked by an open window.
-          default: false
-          selector:
-            boolean:
-
-        tpl_preheat_started_body:
-          name: Pre-heat Started — Message Body
-          description: "Sent when pre-heating begins. Variables: {{ room_name }}, {{ room_temp }}, {{ target_temp }}, {{ schedule_name }}, {{ eta_minutes }}, {{ start_time }}"
-          default: >-
-            Pre-heat started at {{ '{{ start_time }}' }} in {{ '{{ room_name }}' }} for "{{ '{{ schedule_name }}' }}".
-            Room: {{ '{{ room_temp }}' }}°C → target {{ '{{ target_temp }}' }}°C.
-            Ready in approx. {{ '{{ eta_minutes }}' }} min.
-          selector:
-            text:
-              multiline: true
-
-        notify_schedule:
-          name: Notify when schedule starts or ends
-          description: >
-            Fires once when a schedule activates (Comfort Phase) and once when a
-            schedule ends (Heating Ended). Enable per room using the Schedule
-            Notifications Enabled switch.
-          default: false
-          selector:
-            boolean:
-
-        tpl_schedule_header:
-          name: Schedule Notification Header
-          description: >
-            Shared header for all schedule notifications.
-            Variables: {{ room_name }}, {{ status }}
-          default: "🔔 {{ '{{ room_name }}' }} — {{ '{{ status }}' }}"
-          selector:
-            text:
-
-        tpl_schedule_started_body:
-          name: Schedule Started — Message Body
-          description: "Sent when a schedule activates. Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}, {{ target_temp }}, {{ slot_end_time }}"
-          default: >-
-            Comfort Phase started in {{ '{{ room_name }}' }}.
-            "{{ '{{ schedule_name }}' }}" active until {{ '{{ slot_end_time }}' }}.
-            Target: {{ '{{ target_temp }}' }}°C — Current: {{ '{{ room_temp }}' }}°C.
-          selector:
-            text:
-              multiline: true
-
-        tpl_schedule_finished_body:
-          name: Schedule Ended — Message Body
-          description: "Sent when a schedule ends and heating returns to default. Variables: {{ room_name }}, {{ room_temp }}, {{ schedule_name }}, {{ mode_detail }}, {{ default_hvac_mode }}, {{ default_temp }}"
-          default: >-
-            "{{ '{{ schedule_name }}' }}" ended in {{ '{{ room_name }}' }}.
-            {{ '{{ mode_detail }}' }}
-            Current: {{ '{{ room_temp }}' }}°C.
-          selector:
-            text:
-              multiline: true
-
     default_section:
       name: "🌡️ Default — No Active Schedule"
       icon: mdi:thermostat-auto
@@ -282,72 +217,6 @@ blueprint:
             seconds: 0
           selector:
             duration:
-
-        notify_window:
-          name: Notify on window events
-          description: >
-            Fires when heating is paused (window open too long), when heating
-            resumes (window closed), and when a schedule or pre-heat is blocked
-            by an open window.
-          default: false
-          selector:
-            boolean:
-
-        tpl_window_header:
-          name: Window Notification Header
-          description: >
-            Header for window notifications.
-            Variables: {{ room_name }}, {{ window_name }}, {{ status }}
-          default: "🪟 {{ '{{ room_name }}' }} — {{ '{{ window_name }}' }} is {{ '{{ status }}' }}"
-          selector:
-            text:
-
-        tpl_window_timeout_body:
-          name: Window Paused — Message Body
-          description: >
-            Sent when heating is paused because a window has been open longer than the reaction time.
-            Variables: {{ room_name }}, {{ window_name }}, {{ room_temp }}
-          default: >-
-            {{ '{{ window_name }}' }} has been open too long in {{ '{{ room_name }}' }}.
-            Heating paused to save energy. It will resume when all windows are closed.
-            Current: {{ '{{ room_temp }}' }}°C.
-          selector:
-            text:
-              multiline: true
-
-        tpl_window_blocked_body:
-          name: Heating Blocked — Message Body
-          description: >
-            Sent once when a schedule or pre-heat wants to start but cannot because
-            a window is open.
-            Variables: {{ room_name }}, {{ window_name }}, {{ schedule_name }}, {{ room_temp }}
-          default: >-
-            Heating cannot start in {{ '{{ room_name }}' }} — {{ '{{ window_name }}' }} is open.
-            Schedule "{{ '{{ schedule_name }}' }}" is ready but blocked.
-            Close {{ '{{ window_name }}' }} to allow heating to begin.
-            Current: {{ '{{ room_temp }}' }}°C.
-          selector:
-            text:
-              multiline: true
-
-        tpl_window_closed_body:
-          name: Window Closed — Message Body
-          description: >
-            Sent only when windows close after a pause was previously triggered.
-            Variables: {{ room_name }}, {{ window_name }}, {{ room_temp }},
-            {{ resume_mode }} (Pre-heat / Schedule / Standby),
-            {{ phase_detail }} (phase-aware context — schedule name and target in
-            comfort phase, pre-heat target in pre-heat phase, standby temperature
-            otherwise). Also available: {{ in_comfort_bool }}, {{ in_preheat_bool }},
-            {{ active_schedule_name }}, {{ comfort_temp }},
-            {{ preheat_schedule_name }}, {{ preheat_temp }}, {{ default_temp }}.
-          default: |
-            All windows closed in {{ '{{ room_name }}' }}. Heating resumed.
-            {{ '{{ phase_detail }}' }}
-            Current: {{ '{{ room_temp }}' }}°C.
-          selector:
-            text:
-              multiline: true
 
     vacation_section:
       name: "🏖️ Vacation"
@@ -418,63 +287,6 @@ blueprint:
               step: 5
               unit_of_measurement: min
 
-        notify_override:
-          name: Notify when override is activated or ended
-          default: false
-          selector:
-            boolean:
-
-        tpl_override_header:
-          name: Override Notification Header
-          description: >
-            Header for override active and override ended notifications.
-            Variables: {{ room_name }}, {{ status }}
-          default: "✋ Manual Override in {{ '{{ room_name }}' }} — {{ '{{ status }}' }}"
-          selector:
-            text:
-
-        tpl_override_active_body:
-          name: Override Active — Message Body
-          description: "Sent when a manual TRV change triggers an override. Variables: {{ room_name }}, {{ device_name }}, {{ override_minutes }}, {{ resume_time }}, {{ room_temp }}"
-          default: >-
-            Manual adjustment detected on {{ '{{ device_name }}' }} in {{ '{{ room_name }}' }}.
-            Smart heating paused for {{ '{{ override_minutes }}' }} min.
-            Auto-resume at {{ '{{ resume_time }}' }}. Current: {{ '{{ room_temp }}' }}°C.
-          selector:
-            text:
-              multiline: true
-
-        tpl_override_ended_body:
-          name: Override Ended — Message Body
-          description: "Sent when the override expires and smart heating resumes. Variables: {{ room_name }}, {{ room_temp }}, {{ target_temp }}"
-          default: >-
-            Manual override in {{ '{{ room_name }}' }} has ended.
-            Smart heating has resumed control.
-            Current: {{ '{{ room_temp }}' }}°C.
-          selector:
-            text:
-              multiline: true
-
-    ai_report_section:
-      name: "🤖 AI Report"
-      icon: mdi:robot
-      collapsed: true
-      description: Enable daily and weekly AI-generated heating analysis reports.
-      input:
-
-        notify_daily_report:
-          name: Notify daily analysis report
-          description: Show a persistent daily analysis report notification for this room.
-          default: false
-          selector:
-            boolean:
-
-        notify_weekly_report:
-          name: Notify weekly analysis report
-          description: Show a persistent weekly analysis report notification for this room.
-          default: false
-          selector:
-            boolean:
 
 variables:
   room_name:                  !input room_name
@@ -493,74 +305,20 @@ variables:
   vacation_mode:              !input vacation_mode
   vacation_temperature:       !input vacation_temperature
   override_minutes:           !input override_minutes
-  notify_preheat:             !input notify_preheat
-  notify_schedule:            !input notify_schedule
-  notify_window:              !input notify_window
-  notify_override:            !input notify_override
-  tpl_window_header:            !input tpl_window_header
-  tpl_window_timeout_body:      !input tpl_window_timeout_body
-  tpl_window_blocked_body:      !input tpl_window_blocked_body
-  tpl_window_closed_body:       !input tpl_window_closed_body
-  tpl_schedule_header:          !input tpl_schedule_header
-  tpl_override_header:          !input tpl_override_header
-  tpl_preheat_started_body:     !input tpl_preheat_started_body
-  tpl_schedule_started_body:    !input tpl_schedule_started_body
-  tpl_schedule_finished_body:   !input tpl_schedule_finished_body
-  tpl_override_active_body:     !input tpl_override_active_body
-  tpl_override_ended_body:      !input tpl_override_ended_body
-  notify_daily_report:        !input notify_daily_report
-  notify_weekly_report:       !input notify_weekly_report
-
   room_id: >
     {{ room_name | lower
                  | replace("'", '')
                  | regex_replace('[\s\-]+', '_')
                  | regex_replace('[^a-z0-9_]', '') }}
 
-  sha_heating_rate:      "number.sha_{{ room_id }}_heating_rate"
-  sha_override_switch:   "switch.sha_{{ room_id }}_override"
-  sha_preheat_notified:        "switch.sha_{{ room_id }}_preheat_notified"
-  sha_schedule_notified:       "switch.sha_{{ room_id }}_schedule_notified"
-  sha_standby_notified:        "switch.sha_{{ room_id }}_standby_notified"
-  sha_window_timeout_notified: "switch.sha_{{ room_id }}_window_timeout_notified"
-  sha_notify_preheat_enabled:   "switch.sha_{{ room_id }}_preheat_notifications_enabled"
-  sha_notify_schedule_enabled:  "switch.sha_{{ room_id }}_schedule_notifications_enabled"
-  sha_notify_window_enabled:    "switch.sha_{{ room_id }}_window_notifications_enabled"
-  sha_notify_override_enabled:  "switch.sha_{{ room_id }}_override_notifications_enabled"
+  sha_heating_rate:    "number.sha_{{ room_id }}_heating_rate"
+  sha_override_switch: "switch.sha_{{ room_id }}_override"
 
   room_temp:    "{{ states(temperature_sensor) | float(18) }}"
   heating_rate: "{{ states(sha_heating_rate) | float(0.15) }}"
 
   override_active: "{{ is_state(sha_override_switch, 'on') }}"
   windows_open:    "{{ is_state('switch.sha_' ~ room_id ~ '_airing_mode', 'on') }}"
-  preheat_notified_state:        "{{ states(sha_preheat_notified) }}"
-  schedule_notified_state:       "{{ states(sha_schedule_notified) }}"
-  standby_notified_state:        "{{ states(sha_standby_notified) }}"
-  window_timeout_notified_state: "{{ states(sha_window_timeout_notified) }}"
-  preheat_notified_available:        "{{ preheat_notified_state not in ['unknown', 'unavailable'] }}"
-  schedule_notified_available:       "{{ schedule_notified_state not in ['unknown', 'unavailable'] }}"
-  standby_notified_available:        "{{ standby_notified_state not in ['unknown', 'unavailable'] }}"
-  window_timeout_notified_available: "{{ window_timeout_notified_state not in ['unknown', 'unavailable'] }}"
-  preheat_notified_on:        "{{ preheat_notified_state == 'on' }}"
-  schedule_notified_on:       "{{ schedule_notified_state == 'on' }}"
-  standby_notified_on:        "{{ standby_notified_state == 'on' }}"
-  window_timeout_notified_on: "{{ window_timeout_notified_state == 'on' }}"
-
-  notify_preheat_effective: >
-    {% set s = states(sha_notify_preheat_enabled) %}
-    {{ notify_preheat and s != 'off' }}
-
-  notify_schedule_effective: >
-    {% set s = states(sha_notify_schedule_enabled) %}
-    {{ notify_schedule and s != 'off' }}
-
-  notify_window_effective: >
-    {% set s = states(sha_notify_window_enabled) %}
-    {{ notify_window and s != 'off' }}
-
-  notify_override_effective: >
-    {% set s = states(sha_notify_override_enabled) %}
-    {{ notify_override and s != 'off' }}
 
   vacation_active: >
     {% if not vacation_enabled or not vacation_calendar %}
@@ -743,39 +501,6 @@ action:
                   entity_id: "{{ fixed_radiator_thermostats }}"
                 data:
                   hvac_mode: "off"
-          - if:
-              - condition: template
-                value_template: "{{ notify_window_effective and not window_timeout_notified_on }}"
-            then:
-              - action: system_log.write
-                data:
-                  message: >-
-                    SHA [{{ room_name }}] Notification sent: window_paused
-                    (effective={{ notify_window_effective }},
-                    already_sent={{ window_timeout_notified_on }}).
-                  level: debug
-                  logger: custom_components.smart_heating_advisor
-              - action: notify.notify
-                data:
-                  title: >
-                    {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
-                    {% set tpl = tpl_window_header | trim %}
-                    {% set base = tpl if tpl else "🪟 {{ room_name }} — {{ window_name }} is {{ status }}" %}
-                    {{ base
-                       | replace('{{ room_name }}', room_name)
-                       | replace('{{ window_name }}', win_name)
-                       | replace('{{ status }}', 'Open') }}
-                  message: >
-                    {% set body_tpl = tpl_window_timeout_body | trim %}
-                    {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
-                    {% set body_base = body_tpl if body_tpl else "Heating in {{ room_name }} has been paused because a window is open. It will resume when all windows are closed. Current temperature: {{ room_temp }}°C." %}
-                    {{ body_base
-                       | replace('{{ room_name }}', room_name)
-                       | replace('{{ window_name }}', win_name)
-                       | replace('{{ room_temp }}', (room_temp | round(1) | string)) }}
-          - action: switch.turn_on
-            target:
-              entity_id: "{{ sha_window_timeout_notified }}"
 
       - conditions:
           - condition: template
@@ -791,47 +516,6 @@ action:
               - action: switch.turn_off
                 target:
                   entity_id: "switch.sha_{{ room_id }}_airing_mode"
-              - if:
-                  - condition: template
-                    value_template: "{{ notify_window_effective and window_timeout_notified_on }}"
-                then:
-                  - action: system_log.write
-                    data:
-                      message: >-
-                        SHA [{{ room_name }}] Notification sent: window_closed
-                        (effective={{ notify_window_effective }},
-                        previously_sent={{ window_timeout_notified_on }}).
-                      level: debug
-                      logger: custom_components.smart_heating_advisor
-                  - action: notify.notify
-                    data:
-                      title: >
-                        {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
-                        {% set tpl = tpl_window_header | trim %}
-                        {% set base = tpl if tpl else "🪟 {{ room_name }} — {{ window_name }} is {{ status }}" %}
-                        {{ base
-                           | replace('{{ room_name }}', room_name)
-                           | replace('{{ window_name }}', win_name)
-                           | replace('{{ status }}', 'Closed') }}
-                      message: >
-                        {% set body_tpl = tpl_window_closed_body | trim %}
-                        {% set win_name = trigger.to_state.attributes.friendly_name | default('Window') %}
-                        {% set resume_mode = 'Pre-heat' if in_preheat_bool else ('Schedule' if in_comfort_bool else 'Standby') %}
-                        {% set phase_detail = ('Schedule "' ~ active_schedule_name ~ '" active — target ' ~ (comfort_temp | round(1) | string) ~ '°C.') if in_comfort_bool else ('Pre-heating for "' ~ preheat_schedule_name ~ '" — target ' ~ (preheat_temp | round(1) | string) ~ '°C.' if in_preheat_bool else ('Returning to standby at ' ~ (default_temp | string) ~ '°C.')) %}
-                        {% set body_base = body_tpl if body_tpl else "All windows in {{ room_name }} are now closed. Heating resumed ({{ resume_mode }}). Current temperature: {{ room_temp }}°C." %}
-                        {{ body_base
-                           | replace('{{ room_name }}', room_name)
-                           | replace('{{ window_name }}', win_name)
-                           | replace('{{ resume_mode }}', resume_mode)
-                           | replace('{{ phase_detail }}', phase_detail)
-                           | replace('{{ room_temp }}', (room_temp | round(1) | string)) }}
-                  - if:
-                      - condition: template
-                        value_template: "{{ window_timeout_notified_available }}"
-                    then:
-                      - action: switch.turn_off
-                        target:
-                          entity_id: "{{ sha_window_timeout_notified }}"
               - action: system_log.write
                 data:
                   message: |
@@ -922,14 +606,6 @@ action:
                   - condition: template
                     value_template: "{{ trigger.to_state.state == 'on' }}"
                 sequence:
-                  - if:
-                      - condition: template
-                        value_template: "{{ standby_notified_available }}"
-                    then:
-                      - action: switch.turn_off
-                        target:
-                          entity_id:
-                            - "{{ sha_standby_notified }}"
                   - variables:
                       slot_end_time: >
                         {% set nev = state_attr(trigger.entity_id, 'next_event') %}
@@ -938,162 +614,10 @@ action:
                         {% else %}
                           unknown
                         {% endif %}
-                  - if:
-                      - condition: template
-                        value_template: >
-                          {{ not windows_open_bool and
-                             notify_schedule_effective and
-                             not schedule_notified_on }}
-                    then:
-                      - action: system_log.write
-                        data:
-                          message: |
-                            SHA [{{ room_name }}] STARTING COMFORT PHASE
-                            Schedule: "{{ state_attr(trigger.entity_id, 'friendly_name') | default('n/a') }}"
-                            Target: {{ comfort_temp }}°C
-                            Active until: {{ slot_end_time }}
-                            Room now: {{ room_temp | round(1) }}°C
-                            {{ 'Target already reached — maintaining.' if target_reached else 'Heating to reach target.' }}
-                            TRVs commanding: {{ radiator_thermostats }}
-                            Fixed TRVs at {{ fixed_radiator_temperature }}°C: {{ fixed_radiator_thermostats if fixed_radiator_thermostats | list | count > 0 else 'none' }}
-                          level: info
-                          logger: custom_components.smart_heating_advisor
-                      - action: notify.notify
-                        data:
-                          title: >
-                            {% set tpl = tpl_schedule_header | trim %}
-                            {% set base = tpl if tpl else "🔔 {{ room_name }} — {{ status }}" %}
-                            {{ base
-                               | replace('{{ room_name }}', room_name)
-                               | replace('{{ status }}', 'Comfort Phase') }}
-                          message: >
-                            {% set body_tpl = tpl_schedule_started_body | trim %}
-                            {% set body_base = body_tpl if body_tpl else "Comfort Phase started in {{ room_name }}. \"{{ schedule_name }}\" active until {{ slot_end_time }}. Target: {{ target_temp }}°C — Current: {{ room_temp }}°C." %}
-                            {% set triggered_name = state_attr(trigger.entity_id, 'friendly_name') | default('n/a') %}
-                            {{ body_base
-                               | replace('{{ room_name }}', room_name)
-                               | replace('{{ room_temp }}', (room_temp | round(1) | string))
-                               | replace('{{ schedule_name }}', triggered_name)
-                               | replace('{{ target_temp }}', (comfort_temp | string))
-                               | replace('{{ slot_end_time }}', slot_end_time) }}
-                      - if:
-                          - condition: template
-                            value_template: "{{ schedule_notified_available }}"
-                        then:
-                          - action: switch.turn_on
-                            target:
-                              entity_id: "{{ sha_schedule_notified }}"
-                  - if:
-                      - condition: template
-                        value_template: >
-                          {{ windows_open_bool and
-                             notify_window_effective and
-                             not schedule_notified_on }}
-                    then:
-                      - action: system_log.write
-                        data:
-                          message: |
-                            SHA [{{ room_name }}] HEATING BLOCKED — WINDOW OPEN
-                            Schedule: "{{ state_attr(trigger.entity_id, 'friendly_name') | default('n/a') }}"
-                            Target: {{ comfort_temp }}°C
-                            Open window(s): {{ expand(window_sensors) | selectattr('state', 'in', ['on', 'open']) | map(attribute='name') | list | join(', ') }}
-                            Heating will begin when all windows are closed.
-                          level: info
-                          logger: custom_components.smart_heating_advisor
-                      - action: notify.notify
-                        data:
-                          title: >
-                            {% set win_name = expand(window_sensors) | selectattr('state', 'in', ['on', 'open']) | map(attribute='attributes.friendly_name') | list | first | default('a window') %}
-                            {% set tpl = tpl_window_header | trim %}
-                            {% set base = tpl if tpl else "🪟 {{ room_name }} — {{ window_name }} is {{ status }}" %}
-                            {{ base
-                               | replace('{{ room_name }}', room_name)
-                               | replace('{{ window_name }}', win_name)
-                               | replace('{{ status }}', 'Blocking Heat') }}
-                          message: >
-                            {% set body_tpl = tpl_window_blocked_body | trim %}
-                            {% set win_name = expand(window_sensors) | selectattr('state', 'in', ['on', 'open']) | map(attribute='attributes.friendly_name') | list | first | default('a window') %}
-                            {% set triggered_name = state_attr(trigger.entity_id, 'friendly_name') | default('n/a') %}
-                            {% set body_base = body_tpl if body_tpl else "Heating cannot start in {{ room_name }} — {{ window_name }} is open. Schedule \"{{ schedule_name }}\" is ready but blocked. Close {{ window_name }} to allow heating to begin. Current: {{ room_temp }}°C." %}
-                            {{ body_base
-                               | replace('{{ room_name }}', room_name)
-                               | replace('{{ window_name }}', win_name)
-                               | replace('{{ schedule_name }}', triggered_name)
-                               | replace('{{ room_temp }}', (room_temp | round(1) | string)) }}
-                  - if:
-                      - condition: template
-                        value_template: "{{ preheat_notified_available }}"
-                    then:
-                      - action: switch.turn_off
-                        target:
-                          entity_id: "{{ sha_preheat_notified }}"
               - conditions:
                   - condition: template
                     value_template: "{{ trigger.to_state.state == 'off' }}"
-                sequence:
-                  - if:
-                      - condition: template
-                        value_template: >
-                          {{ notify_schedule_effective and
-                             not standby_notified_on and
-                             schedule_notified_on and
-                             not vacation_active_bool and
-                             not windows_open_bool and
-                             (schedules | select('string') | list
-                              | select('match', '.+')
-                              | map('states') | select('eq', 'on')
-                              | list | count == 0) }}
-                    then:
-                      - action: system_log.write
-                        data:
-                          message: >-
-                            SHA [{{ room_name }}] Notification sent: schedule_ended
-                            (effective={{ notify_schedule_effective }},
-                            already_sent={{ standby_notified_on }}).
-                          level: debug
-                          logger: custom_components.smart_heating_advisor
-                      - action: notify.notify
-                        data:
-                          title: >
-                            {% set tpl = tpl_schedule_header | trim %}
-                            {% set base = tpl if tpl else "🔔 {{ room_name }} — {{ status }}" %}
-                            {{ base
-                               | replace('{{ room_name }}', room_name)
-                               | replace('{{ status }}', 'Heating Ended') }}
-                          message: >
-                            {% set body_tpl = tpl_schedule_finished_body | trim %}
-                            {% set ended_name = trigger.to_state.attributes.friendly_name | default('n/a') %}
-                            {% set mode_detail = 'Heating off — maintaining ' ~ (default_temp | string) ~ '°C.' if default_hvac_mode == 'off' else 'Returning to heat at ' ~ (default_temp | string) ~ '°C.' %}
-                            {% set body_base = body_tpl if body_tpl else "\"{{ schedule_name }}\" ended in {{ room_name }}. {{ mode_detail }} Current: {{ room_temp }}°C." %}
-                            {{ body_base
-                               | replace('{{ room_name }}', room_name)
-                               | replace('{{ room_temp }}', (room_temp | round(1) | string))
-                               | replace('{{ schedule_name }}', ended_name)
-                               | replace('{{ mode_detail }}', mode_detail)
-                               | replace('{{ default_hvac_mode }}', default_hvac_mode)
-                               | replace('{{ default_temp }}', (default_temp | string)) }}
-                      - if:
-                          - condition: template
-                            value_template: "{{ standby_notified_available }}"
-                        then:
-                          - action: switch.turn_on
-                            target:
-                              entity_id: "{{ sha_standby_notified }}"
-                  - if:
-                      - condition: template
-                        value_template: "{{ schedule_notified_available }}"
-                    then:
-                      - action: switch.turn_off
-                        target:
-                          entity_id: "{{ sha_schedule_notified }}"
-                  - if:
-                      - condition: template
-                        value_template: >
-                          {{ preheat_notified_available and not in_preheat_bool }}
-                    then:
-                      - action: switch.turn_off
-                        target:
-                          entity_id: "{{ sha_preheat_notified }}"
+                sequence: []
           - if:
               - condition: template
                 value_template: "{{ not override_active_bool }}"
@@ -1124,9 +648,7 @@ action:
                     {% endif %}
               - if:
                   - condition: template
-                    value_template: >
-                      {{ trigger.to_state.state == 'on' or
-                         schedule_notified_on }}
+                    value_template: "{{ trigger.to_state.state == 'on' }}"
                 then:
                   - action: system_log.write
                     data:
@@ -1224,36 +746,6 @@ action:
                 data:
                   room_name: "{{ room_name }}"
                   duration_minutes: "{{ override_minutes | int(120) }}"
-              - if:
-                  - condition: template
-                    value_template: "{{ notify_override_effective }}"
-                then:
-                  - action: system_log.write
-                    data:
-                      message: >-
-                        SHA [{{ room_name }}] Notification sent: override_active
-                        (effective={{ notify_override_effective }},
-                        parent_id={{ trigger.to_state.context.parent_id | default('none') }}).
-                      level: debug
-                      logger: custom_components.smart_heating_advisor
-                  - action: notify.notify
-                    data:
-                      title: >
-                        {% set tpl = tpl_override_header | trim %}
-                        {% set base = tpl if tpl else "✋ {{ room_name }} — {{ status }}" %}
-                        {{ base
-                           | replace('{{ room_name }}', room_name)
-                           | replace('{{ status }}', 'Override Active') }}
-                      message: >
-                        {% set body_tpl = tpl_override_active_body | trim %}
-                        {% set resume = (now() + timedelta(minutes=override_minutes | int)).strftime('%H:%M') %}
-                        {% set body_base = body_tpl if body_tpl else "Manual override on {{ device_name }} in {{ room_name }}. Resumes in {{ override_minutes }} min ({{ resume_time }}). Current: {{ room_temp }}°C." %}
-                        {{ body_base
-                           | replace('{{ room_name }}', room_name)
-                           | replace('{{ device_name }}', trigger.to_state.attributes.friendly_name | default('device'))
-                           | replace('{{ override_minutes }}', (override_minutes | string))
-                           | replace('{{ resume_time }}', resume)
-                           | replace('{{ room_temp }}', (room_temp | round(1) | string)) }}
 
       - conditions:
           - condition: template
@@ -1296,17 +788,6 @@ action:
             Vacation: {{ 'yes' if vacation_active_bool else 'no' }}
             Heating rate: {{ heating_rate }}°C/min
             ──────────────────────────────────────────────────────────────────────────────
-          level: debug
-          logger: custom_components.smart_heating_advisor
-
-      - action: system_log.write
-        data:
-          message: |
-            SHA [{{ room_name }}] Notification gates:
-            preheat_started={{ 'SEND' if (notify_preheat_effective and in_preheat_bool and not windows_open_bool and not preheat_notified_on) else 'skip' }}
-            heating_blocked={{ 'SEND' if (notify_window_effective and in_preheat_bool and windows_open_bool and not preheat_notified_on) else 'skip' }}
-            window_paused={{ 'SEND' if (notify_window_effective and windows_open_bool and not window_timeout_notified_on) else 'skip' }}
-            override={{ 'SEND' if (notify_override_effective and override_active_bool) else 'skip' }}
           level: debug
           logger: custom_components.smart_heating_advisor
 
@@ -1417,10 +898,7 @@ action:
 
       - if:
           - condition: template
-            value_template: >
-              {{ in_preheat_bool and
-                 not windows_open_bool and
-                 not preheat_notified_on }}
+            value_template: "{{ in_preheat_bool and not windows_open_bool }}"
         then:
           - action: system_log.write
             data:
@@ -1440,104 +918,6 @@ action:
 
       - if:
           - condition: template
-            value_template: >
-              {{ notify_preheat_effective and
-                 in_preheat_bool and
-                 not windows_open_bool and
-                 not preheat_notified_on }}
-        then:
-          - action: system_log.write
-            data:
-              message: >-
-                SHA [{{ room_name }}] Notification sent: preheat_started
-                (effective={{ notify_preheat_effective }}, in_preheat={{ in_preheat_bool }},
-                windows_open={{ windows_open_bool }}, already_sent={{ preheat_notified_on }}).
-              level: debug
-              logger: custom_components.smart_heating_advisor
-          - action: notify.notify
-            data:
-              title: >
-                {% set tpl = tpl_schedule_header | trim %}
-                {% set base = tpl if tpl else "🔔 {{ room_name }} — {{ status }}" %}
-                {{ base
-                   | replace('{{ room_name }}', room_name)
-                   | replace('{{ status }}', 'Pre-heat Started') }}
-              message: >
-                {% set body_tpl = tpl_preheat_started_body | trim %}
-                {% set body_base = body_tpl if body_tpl else "Pre-heat started at {{ start_time }} in {{ room_name }} for \"{{ schedule_name }}\". Room: {{ room_temp }}°C → target {{ target_temp }}°C. Ready in approx. {{ eta_minutes }} min." %}
-                {{ body_base
-                   | replace('{{ room_name }}', room_name)
-                   | replace('{{ room_temp }}', (room_temp | round(1) | string))
-                   | replace('{{ target_temp }}', (preheat_temp | string))
-                   | replace('{{ schedule_name }}', preheat_schedule_name if preheat_schedule_name else 'n/a')
-                   | replace('{{ eta_minutes }}', preheat_schedule_mins | string)
-                   | replace('{{ start_time }}', now().strftime('%H:%M')) }}
-
-      - if:
-          - condition: template
-            value_template: >
-              {{ in_preheat_bool and
-                 not windows_open_bool and
-                 preheat_notified_available and
-                 not preheat_notified_on }}
-        then:
-          - action: switch.turn_on
-            target:
-              entity_id: "{{ sha_preheat_notified }}"
-
-      - if:
-          - condition: template
-            value_template: >
-              {{ notify_window_effective and
-                 in_preheat_bool and
-                 windows_open_bool and
-                 not preheat_notified_on }}
-        then:
-          - action: system_log.write
-            data:
-              message: |
-                SHA [{{ room_name }}] HEATING BLOCKED — WINDOW OPEN (pre-heat)
-                Schedule: "{{ preheat_schedule_name }}"
-                Target: {{ preheat_temp }}°C
-                Room now: {{ room_temp | round(1) }}°C
-                Open window(s): {{ expand(window_sensors) | selectattr('state', 'in', ['on', 'open']) | map(attribute='name') | list | join(', ') }}
-                Heating will begin when all windows are closed.
-              level: info
-              logger: custom_components.smart_heating_advisor
-          - action: notify.notify
-            data:
-              title: >
-                {% set win_name = expand(window_sensors) | selectattr('state', 'in', ['on', 'open']) | map(attribute='attributes.friendly_name') | list | first | default('a window') %}
-                {% set tpl = tpl_window_header | trim %}
-                {% set base = tpl if tpl else "🪟 {{ room_name }} — {{ window_name }} is {{ status }}" %}
-                {{ base
-                   | replace('{{ room_name }}', room_name)
-                   | replace('{{ window_name }}', win_name)
-                   | replace('{{ status }}', 'Blocking Heat') }}
-              message: >
-                {% set body_tpl = tpl_window_blocked_body | trim %}
-                {% set win_name = expand(window_sensors) | selectattr('state', 'in', ['on', 'open']) | map(attribute='attributes.friendly_name') | list | first | default('a window') %}
-                {% set body_base = body_tpl if body_tpl else "Heating cannot start in {{ room_name }} — {{ window_name }} is open. Schedule \"{{ schedule_name }}\" is ready but blocked. Close {{ window_name }} to allow heating to begin. Current: {{ room_temp }}°C." %}
-                {{ body_base
-                   | replace('{{ room_name }}', room_name)
-                   | replace('{{ window_name }}', win_name)
-                   | replace('{{ schedule_name }}', preheat_schedule_name if preheat_schedule_name else 'n/a')
-                   | replace('{{ room_temp }}', (room_temp | round(1) | string)) }}
-
-      - if:
-          - condition: template
-            value_template: >
-              {{ in_preheat_bool and
-                 windows_open_bool and
-                 preheat_notified_available and
-                 not preheat_notified_on }}
-        then:
-          - action: switch.turn_on
-            target:
-              entity_id: "{{ sha_preheat_notified }}"
-
-      - if:
-          - condition: template
             value_template: "{{ trigger.id == 'override_ended' }}"
         then:
           - action: system_log.write
@@ -1550,32 +930,6 @@ action:
                 Mode: {{ target_mode | upper }}
               level: info
               logger: custom_components.smart_heating_advisor
-
-      - if:
-          - condition: template
-            value_template: "{{ notify_override_effective and trigger.id == 'override_ended' }}"
-        then:
-          - action: system_log.write
-            data:
-              message: >-
-                SHA [{{ room_name }}] Notification sent: override_ended.
-              level: debug
-              logger: custom_components.smart_heating_advisor
-          - action: notify.notify
-            data:
-              title: >
-                {% set tpl = tpl_override_header | trim %}
-                {% set base = tpl if tpl else "✋ {{ room_name }} — {{ status }}" %}
-                {{ base
-                   | replace('{{ room_name }}', room_name)
-                   | replace('{{ status }}', 'Override Ended') }}
-              message: >
-                {% set body_tpl = tpl_override_ended_body | trim %}
-                {% set body_base = body_tpl if body_tpl else "Override in {{ room_name }} has ended. Resuming scheduled heating. Current: {{ room_temp }}°C." %}
-                {{ body_base
-                   | replace('{{ room_name }}', room_name)
-                   | replace('{{ room_temp }}', (room_temp | round(1) | string))
-                   | replace('{{ target_temp }}', (target_temperature | string)) }}
 
 
 mode: queued

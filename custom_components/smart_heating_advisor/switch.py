@@ -1,4 +1,4 @@
-"""SHA switch entities — boolean state helpers and override switch."""
+"""SHA switch entities — airing mode and manual override."""
 from __future__ import annotations
 
 import logging
@@ -8,7 +8,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -24,22 +23,10 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Discover rooms and create all boolean switch and override switch entities."""
+    """Discover rooms and create airing mode and override switch entities."""
     from .coordinator import SmartHeatingCoordinator
 
     coordinator: SmartHeatingCoordinator = hass.data[DOMAIN][entry.entry_id]
-
-    boolean_defs = [
-        ("airing_mode",                    "Airing Mode",                       "mdi:window-open",       False, None),
-        ("preheat_notifications_enabled",  "Preheat Notifications Enabled",     "mdi:bell-ring",         False, EntityCategory.CONFIG),
-        ("schedule_notifications_enabled", "Schedule Notifications Enabled",    "mdi:calendar-check",    False, EntityCategory.CONFIG),
-        ("window_notifications_enabled",   "Window Notifications Enabled",      "mdi:window-open",       False, EntityCategory.CONFIG),
-        ("override_notifications_enabled", "Override Notifications Enabled",    "mdi:hand-back-right",   False, EntityCategory.CONFIG),
-        ("preheat_notified",               "Preheat Notification Sent",         "mdi:bell",              False, EntityCategory.DIAGNOSTIC),
-        ("schedule_notified",              "Schedule Notification Sent",        "mdi:bell-check",        False, EntityCategory.DIAGNOSTIC),
-        ("standby_notified",               "Schedule Ended Notification Sent",  "mdi:calendar-remove",   False, EntityCategory.DIAGNOSTIC),
-        ("window_timeout_notified",        "Window Timeout Notification Sent",  "mdi:window-open",       False, EntityCategory.DIAGNOSTIC),
-    ]
 
     async def _create_entities(_event=None) -> None:
         _LOGGER.debug(
@@ -59,34 +46,24 @@ async def async_setup_entry(
         entities: list = []
         for room in rooms:
             subentry_id = room_id_to_subentry.get(room.room_id)
-            for purpose, label, icon, default_on, entity_category in boolean_defs:
-                e = SHABooleanSwitch(
-                    room.room_name,
-                    room.room_id,
-                    entry.entry_id,
-                    purpose,
-                    label,
-                    icon,
-                    default_on=default_on,
-                    entity_category=entity_category,
-                    subentry_id=subentry_id,
-                )
-                entities.append(e)
-                _LOGGER.debug(
-                    "switch platform: prepared entity unique_id=%s expected_entity_id=switch.sha_%s_%s room='%s'",
-                    e.unique_id,
-                    room.room_id,
-                    purpose,
-                    room.room_name,
-                )
+
+            airing = SHABooleanSwitch(
+                room.room_name, room.room_id, entry.entry_id,
+                "airing_mode", "Airing Mode", "mdi:window-open",
+                default_on=False, subentry_id=subentry_id,
+            )
+            entities.append(airing)
+            _LOGGER.debug(
+                "switch platform: prepared entity unique_id=%s expected_entity_id=switch.sha_%s_airing_mode room='%s'",
+                airing.unique_id, room.room_id, room.room_name,
+            )
+
             override = SHAOverrideSwitch(room.room_name, room.room_id, entry.entry_id, subentry_id=subentry_id)
             entities.append(override)
             coordinator._override_switches[room.room_id] = override
             _LOGGER.debug(
                 "switch platform: prepared entity unique_id=%s expected_entity_id=switch.sha_%s_override room='%s'",
-                override.unique_id,
-                room.room_id,
-                room.room_name,
+                override.unique_id, room.room_id, room.room_name,
             )
 
         async_add_entities(entities)
@@ -99,7 +76,7 @@ async def async_setup_entry(
 
 
 class SHABooleanSwitch(SwitchEntity, RestoreEntity):
-    """Persistent on/off helper — notification flags and airing-mode tracking."""
+    """Persistent on/off helper — airing-mode tracking."""
 
     _attr_should_poll = False
     _attr_has_entity_name = True
@@ -113,7 +90,6 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
         purpose_label: str,
         icon: str,
         default_on: bool = False,
-        entity_category: EntityCategory | None = None,
         subentry_id: str | None = None,
     ) -> None:
         self._room_name = room_name
@@ -127,12 +103,6 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
         self._attr_name = purpose_label
         self._attr_unique_id = f"sha_{room_id}_{purpose}"
         self._attr_icon = icon
-
-        if entity_category is not None:
-            self._attr_entity_category = entity_category
-
-        if purpose.endswith("_notifications_enabled") or entity_category == EntityCategory.DIAGNOSTIC:
-            self._attr_entity_registry_enabled_default = False
 
     @property
     def device_info(self) -> dict:
@@ -148,21 +118,9 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        if self._purpose == "airing_mode":
-            return {
-                "meaning": "When on, heating is paused because a window/door is considered open.",
-                "manual_use": "Advanced use only. Normally managed by the blueprint window logic.",
-            }
-
-        if self._purpose.endswith("_notifications_enabled"):
-            return {
-                "meaning": "When on, this class of room notifications is enabled.",
-                "manual_use": "Toggle on/off to resume or pause this notification type for this room.",
-            }
-
         return {
-            "meaning": "Notification flag: on means this notification already fired for current cycle.",
-            "manual_use": "Set off to re-arm this notification manually. It may auto-reset on schedule or state changes.",
+            "meaning": "When on, heating is paused because a window/door is considered open.",
+            "manual_use": "Advanced use only. Normally managed by the blueprint window logic.",
         }
 
     async def async_turn_on(self, **kwargs) -> None:

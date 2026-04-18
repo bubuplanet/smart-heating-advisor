@@ -2,7 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    **version: 0.0.16**
+    **version: 0.0.17**
 
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
@@ -13,13 +13,12 @@ blueprint:
 
     ✨ Features
     - ⏱️ Smart pre-heat: timing calculated from room temp + heating rate
-    - 📅 Unlimited schedules — add as many HA Schedule helpers as you need
+    - 📅 Unlimited schedules — configured once in the SHA integration
     - 🌡️ Per-schedule target temperature — encoded in the schedule name (e.g. "Morning Shower 26C")
     - 🔥 Optional fixed-temperature radiator thermostat (towel rails, floor heating, etc.)
-    - 🏖️ Vacation mode via calendar keyword
-    - 🪟 Window & door detection with configurable reaction delays
-    - ✋ Manual override with automatic resume
-    - 🔔 Toggleable notifications — each fires only once per event
+    - 🏖️ Vacation mode — configured once in SHA integration settings
+    - 🪟 Window & door detection — configured once per room in SHA integration
+    - ✋ Manual override switch — toggle switch.sha_ROOM_override
     - 🤖 AI heating rate calibration — auto-adjusted daily by SHA
 
     📝 Schedule naming convention
@@ -29,394 +28,43 @@ blueprint:
       ✅ "Night Standby 16C"
       ✅ "Weekend 20C"
     The blueprint reads the temperature automatically from the name.
-    If no temperature is found in the name, the configured fallback temperature is used.
+    If no temperature is found in the name, 21°C is used as fallback.
 
     🛠️ Setup
     Install SHA via HACS, then complete the setup wizard:
     1. Connect Ollama and InfluxDB
     2. Select your rooms from HA Areas
-    3. SHA creates helper entities and automations automatically
-    4. Open each room's automation and add your Schedule helpers
-    5. Enable the automation
+    3. Configure TRVs, schedules, window sensors, and vacation in the integration
+    4. SHA creates this automation automatically — just enable it
+    5. Vacation mode and all room config is managed centrally in SHA settings
 
     Required entities (auto-created by SHA):
     - number.sha_ROOM_heating_rate
     - number.sha_ROOM_trv_setpoint
     - switch.sha_ROOM_airing_mode
     - switch.sha_ROOM_override
+    - binary_sensor.sha_ROOM_window_open
+    - binary_sensor.sha_vacation
 
   source_url: https://raw.githubusercontent.com/bubuplanet/smart-heating-advisor/main/blueprints/automation/smart_heating_advisor/smart_heating_advisor.yaml
   domain: automation
 
   input:
 
-    room_section:
-      name: "🏠 Room — Mandatory"
-      icon: mdi:radiator
-      collapsed: true
-      description: Required. Room name, temperature sensor, and TRV thermostats.
-      input:
-
-        room_name:
-          name: Room Name
-          description: |
-            Friendly name of the room — used in notifications and to
-            derive the SHA helper entity IDs automatically.
-            Use the exact same name you configured in the SHA integration.
-            Examples: Bathroom, Alessio's Bedroom, Living Room, Office
-          default: Bathroom
-          selector:
-            text:
-
-        temperature_sensor:
-          name: Room Temperature Sensor
-          description: The sensor measuring actual room temperature.
-          selector:
-            entity:
-              filter:
-                - domain: sensor
-                  device_class: temperature
-
-        radiator_thermostats:
-          name: Radiator Thermostat
-          description: >
-            Main room radiators that follow the schedule target temperature.
-            These are commanded to the schedule comfort temperature (e.g. 26°C)
-            during pre-heat and comfort phases.
-            Do NOT add towel rails or fixed-temperature devices here —
-            use the Fixed Radiator Thermostats input for those.
-          selector:
-            entity:
-              filter:
-                - domain: climate
-              multiple: true
-
-        fixed_radiator_thermostats:
-          name: Fixed Radiator Thermostat (optional)
-          description: >
-            Optional. Devices that always heat to a fixed temperature when heating
-            is active — typically heated towel rails.
-            These are NOT controlled by the schedule temperature.
-            Set their target temperature using the Fixed Radiator Temperature input
-            below. Leave empty if you have no fixed-temperature devices.
-          default: []
-          selector:
-            entity:
-              filter:
-                - domain: climate
-              multiple: true
-
-        fixed_radiator_temperature:
-          name: Fixed Radiator Temperature (optional)
-          description: >
-            Target temperature for fixed radiator thermostats such as heated towel
-            rails. This value is used during pre-heat, comfort and window-close
-            resume phases. Ignored if Fixed Radiator Thermostats is empty.
-            Typical value: 30–35°C.
-          default: 30
-          selector:
-            number:
-              min: 15
-              max: 60
-              step: 0.5
-              unit_of_measurement: "°C"
-
-    schedule_section:
-      name: "📅 Schedules — Mandatory"
-      icon: mdi:clock-outline
-      collapsed: true
-      description: Required. Schedule helpers, fallback temperature, and notification templates.
-      input:
-
-        schedules:
-          name: Schedule Helpers
-          description: |
-            Select one or more HA Schedule helpers.
-            Name each helper with the target temperature at the end:
-              ✅ "Morning Shower 26C"
-              ✅ "Evening Bath 28C"
-              ✅ "Weekend 20C"
-            Create Schedule helpers in: Settings → Helpers → Schedule
-          selector:
-            entity:
-              filter:
-                - domain: schedule
-              multiple: true
-
-        schedule_fallback_temp:
-          name: Schedule Fallback Temperature
-          description: >
-            Temperature used when no temperature is found in the schedule name.
-          default: 21
-          selector:
-            number:
-              min: 12
-              max: 30
-              step: 0.5
-              unit_of_measurement: "°C"
-
-    default_section:
-      name: "🌡️ Default — No Active Schedule"
-      icon: mdi:thermostat-auto
-      collapsed: true
-      description: Heating behaviour when no schedule is active.
-      input:
-
-        default_hvac_mode:
-          name: Default Heating Mode
-          description: >
-            Off — disables heating outside schedules.
-            Heat — maintains the default temperature at all times.
-          default: "off"
-          selector:
-            select:
-              options:
-                - label: "Off (no heating outside schedules)"
-                  value: "off"
-                - label: "Heat (maintain default temperature)"
-                  value: heat
-
-        default_temp:
-          name: Default Temperature
-          description: >
-            Temperature to maintain when no schedule is active
-            and Default Heating Mode is set to Heat.
-          default: 16
-          selector:
-            number:
-              min: 8
-              max: 24
-              step: 0.5
-              unit_of_measurement: "°C"
-
-    window_section:
-      name: "🪟 Window & Door Detection"
-      icon: mdi:door-open
-      collapsed: true
-      description: Optional. Pause heating when windows or doors are open.
-      input:
-
-        window_sensors:
-          name: Window & Door Sensors
-          description: >
-            Optional. Select binary sensors for windows and doors.
-            Leave empty if not needed.
-          default: []
-          selector:
-            entity:
-              filter:
-                - domain: binary_sensor
-              multiple: true
-
-        window_open_reaction_time:
-          name: Open Reaction Time
-          description: How long a window must stay open before heating is paused.
-          default:
-            hours: 0
-            minutes: 5
-            seconds: 0
-          selector:
-            duration:
-
-    vacation_section:
-      name: "🏖️ Vacation"
-      icon: mdi:calendar-clock
-      collapsed: true
-      description: Optional. Automatically reduce heating during calendar vacation events.
-      input:
-
-        vacation_enabled:
-          name: Enable Vacation Mode
-          default: false
-          selector:
-            boolean:
-
-        vacation_calendar:
-          name: Vacation Calendar
-          description: Leave empty if vacation mode is disabled.
-          default: ""
-          selector:
-            entity:
-              filter:
-                - domain: calendar
-
-        vacation_keyword:
-          name: Vacation Keyword
-          description: Event title must start with this keyword. Case insensitive.
-          default: vacation
-          selector:
-            text:
-
-        vacation_mode:
-          name: Vacation Behavior
-          default: "off"
-          selector:
-            select:
-              options:
-                - label: "Off (no heating)"
-                  value: "off"
-                - label: "Frost protection"
-                  value: frost
-
-        vacation_temperature:
-          name: Vacation Frost Temperature
-          description: Used only when Vacation Behavior is set to Frost protection.
-          default: 12
-          selector:
-            number:
-              min: 5
-              max: 16
-              step: 0.5
-              unit_of_measurement: "°C"
-
-    override_section:
-      name: "✋ Manual Override"
-      icon: mdi:hand-back-right
-      collapsed: true
-      description: Pause automation temporarily when the TRV is adjusted manually.
-      input:
-
-        override_minutes:
-          name: Override Duration
-          description: How long to pause automation after a manual TRV change.
-          default: 120
-          selector:
-            number:
-              min: 5
-              max: 1440
-              step: 5
-              unit_of_measurement: min
+    room_id:
+      name: Room ID
+      description: |
+        The SHA room identifier — snake_case version of the room name.
+        Examples: bathroom, living_room, alessios_bedroom, office
+        This is set automatically when SHA creates the automation.
+      default: bathroom
+      selector:
+        text:
 
 
-variables:
-  room_name:                  !input room_name
-  temperature_sensor:         !input temperature_sensor
-  radiator_thermostats:       !input radiator_thermostats
-  fixed_radiator_thermostats: !input fixed_radiator_thermostats
-  fixed_radiator_temperature: !input fixed_radiator_temperature
-  schedules:                  !input schedules
-  schedule_fallback_temp:     !input schedule_fallback_temp
-  default_hvac_mode:          !input default_hvac_mode
-  default_temp:               !input default_temp
-  window_sensors:             !input window_sensors
-  vacation_enabled:           !input vacation_enabled
-  vacation_calendar:          !input vacation_calendar
-  vacation_keyword:           !input vacation_keyword
-  vacation_mode:              !input vacation_mode
-  vacation_temperature:       !input vacation_temperature
-  override_minutes:           !input override_minutes
-  room_id: >
-    {{ room_name | lower
-                 | replace("'", '')
-                 | regex_replace('[\s\-]+', '_')
-                 | regex_replace('[^a-z0-9_]', '') }}
+trigger_variables:
+  _room_id: !input room_id
 
-  sha_heating_rate:    "number.sha_{{ room_id }}_heating_rate"
-  sha_override_switch: "switch.sha_{{ room_id }}_override"
-
-  room_temp:    "{{ states(temperature_sensor) | float(18) }}"
-  heating_rate: "{{ states(sha_heating_rate) | float(0.15) }}"
-
-  override_active: "{{ is_state(sha_override_switch, 'on') }}"
-  windows_open:    "{{ is_state('switch.sha_' ~ room_id ~ '_airing_mode', 'on') }}"
-
-  vacation_active: >
-    {% if not vacation_enabled or not vacation_calendar %}
-      false
-    {% else %}
-      {% set message = state_attr(vacation_calendar, 'message') | default('') | string %}
-      {{ is_state(vacation_calendar, 'on') and
-         message | lower | regex_search('^' ~ vacation_keyword | lower) }}
-    {% endif %}
-
-  active_schedule: >
-    {% set ns = namespace(found=false, temp=0.0, name='') %}
-    {% for s in schedules %}
-      {% if not ns.found and is_state(s, 'on') %}
-        {% set fname = state_attr(s, 'friendly_name') | default('') %}
-        {% set temps = fname | regex_findall('(\d+(?:\.\d+)?)C$', ignorecase=True) %}
-        {% set ns.found = true %}
-        {% set ns.temp = temps | first | float(schedule_fallback_temp) if temps else schedule_fallback_temp | float %}
-        {% set ns.name = fname %}
-      {% endif %}
-    {% endfor %}
-    {{ {'active': ns.found, 'temp': ns.temp, 'name': ns.name} | tojson }}
-
-  in_comfort:          "{{ (active_schedule | from_json).active }}"
-  comfort_temp:        "{{ (active_schedule | from_json).temp | float(0) }}"
-  active_schedule_name: "{{ (active_schedule | from_json).name | default('') }}"
-
-  sha_trv_setpoint: >
-    {{ states('number.sha_' ~ room_id ~ '_trv_setpoint')
-       | float(comfort_temp) }}
-
-  preheat_schedule: >
-    {% set ns = namespace(found=false, temp=0.0, name='', mins_needed=0) %}
-    {% if not (in_comfort | bool(false)) %}
-      {% for s in schedules %}
-        {% if not ns.found and is_state(s, 'off') %}
-          {% set fname = state_attr(s, 'friendly_name') | default('') %}
-          {% set nev = state_attr(s, 'next_event') %}
-          {% if nev %}
-            {% set temps = fname | regex_findall('(\d+(?:\.\d+)?)C$', ignorecase=True) %}
-            {% set target_temp = temps | first | float(schedule_fallback_temp) if temps else schedule_fallback_temp | float %}
-            {% set temp_delta = target_temp - room_temp %}
-            {% set mins_needed = [(temp_delta / heating_rate) | int(10), 5] | max %}
-            {% set mins_to_start = ((as_datetime(nev) - now()).total_seconds() / 60) | int(0) %}
-            {% if temp_delta > 0.5 and 0 <= mins_to_start <= mins_needed %}
-              {% set ns.found = true %}
-              {% set ns.temp = target_temp %}
-              {% set ns.name = fname %}
-              {% set ns.mins_needed = mins_needed %}
-            {% endif %}
-          {% endif %}
-        {% endif %}
-      {% endfor %}
-    {% endif %}
-    {{ {'active': ns.found, 'temp': ns.temp, 'name': ns.name, 'mins_needed': ns.mins_needed} | tojson }}
-
-  in_preheat:           "{{ (preheat_schedule | from_json).active }}"
-  preheat_temp:         "{{ (preheat_schedule | from_json).temp | float(0) }}"
-  preheat_schedule_name: "{{ (preheat_schedule | from_json).name | default('') }}"
-  preheat_schedule_mins: "{{ (preheat_schedule | from_json).mins_needed | int(10) }}"
-  in_comfort_bool:      "{{ in_comfort | bool(false) }}"
-  in_preheat_bool:      "{{ in_preheat | bool(false) }}"
-  windows_open_bool:    "{{ windows_open | bool(false) }}"
-  override_active_bool: "{{ override_active | bool(false) }}"
-  vacation_active_bool: "{{ vacation_active | bool(false) }}"
-
-  target_temperature: >
-    {% if vacation_active_bool and vacation_mode == 'frost' %}
-      {{ [vacation_temperature | float, 4.0] | max }}
-    {% elif in_comfort_bool %}
-      {{ [comfort_temp | float, 4.0] | max }}
-    {% elif in_preheat_bool %}
-      {{ [preheat_temp | float, 4.0] | max }}
-    {% else %}
-      {{ [default_temp | float, 4.0] | max }}
-    {% endif %}
-
-  target_mode: >
-    {% if windows_open_bool %}
-      off
-    {% elif vacation_active_bool and vacation_mode == 'off' %}
-      off
-    {% elif not in_comfort_bool and not in_preheat_bool and default_hvac_mode == 'off' %}
-      off
-    {% else %}
-      heat
-    {% endif %}
-
-  target_reached: "{{ in_comfort_bool and room_temp >= (comfort_temp - 0.3) }}"
-
-  main_trv_setpoint: >
-    {% if vacation_active_bool and vacation_mode == 'frost' %}
-      {{ [vacation_temperature | float, 4.0] | max }}
-    {% elif in_comfort_bool or in_preheat_bool %}
-      {{ [sha_trv_setpoint | float, 4.0] | max }}
-    {% else %}
-      {{ [default_temp | float, 4.0] | max }}
-    {% endif %}
 
 triggers:
   - trigger: time_pattern
@@ -424,33 +72,18 @@ triggers:
     id: control_loop
 
   - trigger: state
-    entity_id: !input schedules
-    id: schedule_changed
-
-  - trigger: state
-    entity_id: !input window_sensors
-    to:
-      - "on"
-      - "open"
-    for: !input window_open_reaction_time
+    entity_id: "binary_sensor.sha_{{ _room_id }}_window_open"
+    to: "on"
+    for:
+      hours: 0
+      minutes: 5
+      seconds: 0
     id: window_airing_start
 
   - trigger: state
-    entity_id: !input window_sensors
-    to:
-      - "off"
-      - "closed"
+    entity_id: "binary_sensor.sha_{{ _room_id }}_window_open"
+    to: "off"
     id: window_airing_end
-
-  - trigger: state
-    entity_id: !input radiator_thermostats
-    attribute: temperature
-    id: manual_override
-
-  - trigger: state
-    entity_id: !input radiator_thermostats
-    attribute: hvac_mode
-    id: manual_override
 
   - trigger: event
     event_type: sha_override_ended
@@ -466,9 +99,128 @@ action:
           - condition: template
             value_template: >
               {{ trigger.id == 'override_ended' and
-                 trigger.event.data.get('room_id') != room_id }}
+                 trigger.event.data.get('room_id') != _room_id }}
         sequence:
           - stop: "Override ended for a different room — ignoring."
+
+  # ── Load room config from SHA ──────────────────────────────────────────
+  - action: smart_heating_advisor.get_room_config
+    data:
+      room_id: !input room_id
+    response_variable: room_cfg
+
+  # ── Extract config from service response ───────────────────────────────
+  - variables:
+      room_id:            "{{ room_cfg.room_id }}"
+      room_name:          "{{ room_cfg.room_name }}"
+      temp_sensor:        "{{ room_cfg.temp_sensor }}"
+      trvs:               "{{ room_cfg.trvs }}"
+      fixed_trvs:         "{{ room_cfg.fixed_trvs }}"
+      fixed_trv_temp:     "{{ room_cfg.fixed_trv_temp | float(30) }}"
+      schedules:          "{{ room_cfg.schedules }}"
+      default_hvac_mode:  "{{ room_cfg.default_hvac_mode }}"
+      default_temp:       "{{ room_cfg.default_temp | float(18) }}"
+      vacation_active_bool: "{{ room_cfg.vacation_active | bool(false) }}"
+      vacation_mode:      "{{ room_cfg.vacation_mode }}"
+      vacation_temp:      "{{ room_cfg.vacation_temp | float(7) }}"
+
+  # ── Derived state ──────────────────────────────────────────────────────
+  - variables:
+      room_temp:           "{{ states(temp_sensor) | float(18) }}"
+      heating_rate:        "{{ states('number.sha_' ~ room_id ~ '_heating_rate') | float(0.15) }}"
+      override_active_bool: "{{ is_state('switch.sha_' ~ room_id ~ '_override', 'on') }}"
+      windows_open_bool:   "{{ is_state('switch.sha_' ~ room_id ~ '_airing_mode', 'on') }}"
+      sha_trv_setpoint_entity: "number.sha_{{ room_id }}_trv_setpoint"
+
+  # ── Active schedule ────────────────────────────────────────────────────
+  - variables:
+      active_schedule: >
+        {% set ns = namespace(found=false, temp=0.0, name='') %}
+        {% for s in schedules %}
+          {% if not ns.found and is_state(s, 'on') %}
+            {% set fname = state_attr(s, 'friendly_name') | default('') %}
+            {% set temps = fname | regex_findall('(\d+(?:\.\d+)?)C$', ignorecase=True) %}
+            {% set ns.found = true %}
+            {% set ns.temp = temps | first | float(21) if temps else 21.0 %}
+            {% set ns.name = fname %}
+          {% endif %}
+        {% endfor %}
+        {{ {'active': ns.found, 'temp': ns.temp, 'name': ns.name} | tojson }}
+      in_comfort_bool:       "{{ (active_schedule | from_json).active | bool(false) }}"
+      comfort_temp:          "{{ (active_schedule | from_json).temp | float(0) }}"
+      active_schedule_name:  "{{ (active_schedule | from_json).name | default('') }}"
+      sha_trv_setpoint: >
+        {{ states('number.sha_' ~ room_id ~ '_trv_setpoint')
+           | float(comfort_temp) }}
+
+  # ── Pre-heat (needs in_comfort_bool from above) ────────────────────────
+  - variables:
+      preheat_schedule: >
+        {% set ns = namespace(found=false, temp=0.0, name='', mins_needed=0) %}
+        {% if not in_comfort_bool %}
+          {% for s in schedules %}
+            {% if not ns.found and is_state(s, 'off') %}
+              {% set fname = state_attr(s, 'friendly_name') | default('') %}
+              {% set nev = state_attr(s, 'next_event') %}
+              {% if nev %}
+                {% set temps = fname | regex_findall('(\d+(?:\.\d+)?)C$', ignorecase=True) %}
+                {% set target_temp = temps | first | float(21) if temps else 21.0 %}
+                {% set temp_delta = target_temp - room_temp %}
+                {% set mins_needed = [(temp_delta / heating_rate) | int(10), 5] | max %}
+                {% set mins_to_start = ((as_datetime(nev) - now()).total_seconds() / 60) | int(0) %}
+                {% if temp_delta > 0.5 and 0 <= mins_to_start <= mins_needed %}
+                  {% set ns.found = true %}
+                  {% set ns.temp = target_temp %}
+                  {% set ns.name = fname %}
+                  {% set ns.mins_needed = mins_needed %}
+                {% endif %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+        {% endif %}
+        {{ {'active': ns.found, 'temp': ns.temp, 'name': ns.name, 'mins_needed': ns.mins_needed} | tojson }}
+      in_preheat_bool:        "{{ (preheat_schedule | from_json).active | bool(false) }}"
+      preheat_temp:           "{{ (preheat_schedule | from_json).temp | float(0) }}"
+      preheat_schedule_name:  "{{ (preheat_schedule | from_json).name | default('') }}"
+      preheat_schedule_mins:  "{{ (preheat_schedule | from_json).mins_needed | int(10) }}"
+
+  # ── Target temp / mode (needs in_comfort_bool, in_preheat_bool) ────────
+  - variables:
+      target_temperature: >
+        {% if vacation_active_bool and vacation_mode in ['frost', 'eco'] %}
+          {{ [vacation_temp | float, 4.0] | max }}
+        {% elif in_comfort_bool %}
+          {{ [comfort_temp | float, 4.0] | max }}
+        {% elif in_preheat_bool %}
+          {{ [preheat_temp | float, 4.0] | max }}
+        {% else %}
+          {{ [default_temp | float, 4.0] | max }}
+        {% endif %}
+
+      target_mode: >
+        {% if windows_open_bool %}
+          off
+        {% elif vacation_active_bool and vacation_mode == 'off' %}
+          off
+        {% elif not in_comfort_bool and not in_preheat_bool and default_hvac_mode == 'off' %}
+          off
+        {% else %}
+          heat
+        {% endif %}
+
+      target_reached: "{{ in_comfort_bool and room_temp >= (comfort_temp - 0.3) }}"
+
+      main_trv_setpoint: >
+        {% if vacation_active_bool and vacation_mode in ['frost', 'eco'] %}
+          {{ [vacation_temp | float, 4.0] | max }}
+        {% elif in_comfort_bool or in_preheat_bool %}
+          {{ [sha_trv_setpoint | float, 4.0] | max }}
+        {% else %}
+          {{ [default_temp | float, 4.0] | max }}
+        {% endif %}
+
+  # ── Dispatch ───────────────────────────────────────────────────────────
+  - choose:
 
       - conditions:
           - condition: template
@@ -478,7 +230,7 @@ action:
             data:
               message: |
                 SHA [{{ room_name }}] WINDOW OPEN — HEATING SUSPENDED
-                Open sensor(s): {{ expand(window_sensors) | selectattr('state', 'in', ['on', 'open']) | map(attribute='name') | list | join(', ') }}
+                Detected by: binary_sensor.sha_{{ room_id }}_window_open
                 Room: {{ room_temp | round(1) }}°C
                 TRVs commanded off.
                 Heating will resume automatically when all windows close.
@@ -489,16 +241,16 @@ action:
               entity_id: "switch.sha_{{ room_id }}_airing_mode"
           - action: climate.set_hvac_mode
             target:
-              entity_id: !input radiator_thermostats
+              entity_id: "{{ trvs }}"
             data:
               hvac_mode: "off"
           - if:
               - condition: template
-                value_template: "{{ fixed_radiator_thermostats | list | count > 0 }}"
+                value_template: "{{ fixed_trvs | list | count > 0 }}"
             then:
               - action: climate.set_hvac_mode
                 target:
-                  entity_id: "{{ fixed_radiator_thermostats }}"
+                  entity_id: "{{ fixed_trvs }}"
                 data:
                   hvac_mode: "off"
 
@@ -506,254 +258,96 @@ action:
           - condition: template
             value_template: "{{ trigger.id == 'window_airing_end' }}"
         sequence:
-          - if:
-              - condition: template
-                value_template: >
-                  {{ expand(window_sensors)
-                     | selectattr('state', 'in', ['on', 'open'])
-                     | list | count == 0 }}
-            then:
-              - action: switch.turn_off
-                target:
-                  entity_id: "switch.sha_{{ room_id }}_airing_mode"
-              - action: system_log.write
-                data:
-                  message: |
-                    SHA [{{ room_name }}] WINDOW CLOSED — HEATING RESUMED
-                    Room: {{ room_temp | round(1) }}°C
-                    Resume mode: {{ 'PRE-HEAT' if in_preheat_bool else ('SCHEDULE' if in_comfort_bool else 'STANDBY') }}
-                    Resume target: {{ target_temperature | round(1) }}°C
-                    {{ 'In comfort phase: ' ~ active_schedule_name if in_comfort_bool else ('In pre-heat for: ' ~ preheat_schedule_name if in_preheat_bool else 'Returning to standby.') }}
-                  level: info
-                  logger: custom_components.smart_heating_advisor
-              - if:
-                  - condition: template
-                    value_template: "{{ not override_active_bool }}"
-                then:
-                  - variables:
-                      resume_target_mode: >
-                        {% if vacation_active_bool and vacation_mode == 'off' %}
-                          off
-                        {% elif in_comfort_bool or in_preheat_bool or (vacation_active_bool and vacation_mode == 'frost') %}
-                          heat
-                        {% elif default_hvac_mode == 'heat' %}
-                          heat
-                        {% else %}
-                          off
-                        {% endif %}
-                  - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ resume_target_mode == 'off' }}"
-                        sequence:
-                          - action: climate.set_hvac_mode
-                            target:
-                              entity_id: !input radiator_thermostats
-                            data:
-                              hvac_mode: "off"
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ resume_target_mode == 'heat' }}"
-                        sequence:
-                          - action: climate.set_hvac_mode
-                            target:
-                              entity_id: !input radiator_thermostats
-                            data:
-                              hvac_mode: heat
-                          - action: climate.set_temperature
-                            target:
-                              entity_id: !input radiator_thermostats
-                            data:
-                              temperature: "{{ main_trv_setpoint | float }}"
-                          - if:
-                              - condition: template
-                                value_template: >
-                                  {{ fixed_radiator_thermostats | list | count > 0 }}
-                            then:
-                              - action: system_log.write
-                                data:
-                                  message: |
-                                    SHA [{{ room_name }}] Fixed TRV — commanding heat on window close resume
-                                    Target: {{ fixed_radiator_temperature | float(30) }}°C
-                                    Entities: {{ fixed_radiator_thermostats }}
-                                  level: info
-                                  logger: custom_components.smart_heating_advisor
-                              - action: climate.set_hvac_mode
-                                target:
-                                  entity_id: "{{ fixed_radiator_thermostats }}"
-                                data:
-                                  hvac_mode: heat
-                              - action: climate.set_temperature
-                                target:
-                                  entity_id: "{{ fixed_radiator_thermostats }}"
-                                data:
-                                  temperature: "{{ fixed_radiator_temperature | float(30) }}"
-                  - if:
-                      - condition: template
-                        value_template: "{{ fixed_radiator_thermostats | list | count > 0 and resume_target_mode == 'off' }}"
-                    then:
-                      - action: climate.set_hvac_mode
-                        target:
-                          entity_id: "{{ fixed_radiator_thermostats }}"
-                        data:
-                          hvac_mode: "off"
-      - conditions:
-          - condition: template
-            value_template: "{{ trigger.id == 'schedule_changed' }}"
-        sequence:
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ trigger.to_state.state == 'on' }}"
-                sequence:
-                  - variables:
-                      slot_end_time: >
-                        {% set nev = state_attr(trigger.entity_id, 'next_event') %}
-                        {% if nev %}
-                          {{ (as_datetime(nev) | as_local).strftime('%H:%M') }}
-                        {% else %}
-                          unknown
-                        {% endif %}
-              - conditions:
-                  - condition: template
-                    value_template: "{{ trigger.to_state.state == 'off' }}"
-                sequence: []
+          - action: switch.turn_off
+            target:
+              entity_id: "switch.sha_{{ room_id }}_airing_mode"
+          - action: system_log.write
+            data:
+              message: |
+                SHA [{{ room_name }}] WINDOW CLOSED — HEATING RESUMED
+                Room: {{ room_temp | round(1) }}°C
+                Resume mode: {{ 'PRE-HEAT' if in_preheat_bool else ('SCHEDULE' if in_comfort_bool else 'STANDBY') }}
+                Resume target: {{ target_temperature | round(1) }}°C
+                {{ 'In comfort phase: ' ~ active_schedule_name if in_comfort_bool else ('In pre-heat for: ' ~ preheat_schedule_name if in_preheat_bool else 'Returning to standby.') }}
+              level: info
+              logger: custom_components.smart_heating_advisor
           - if:
               - condition: template
                 value_template: "{{ not override_active_bool }}"
             then:
               - variables:
-                  schedule_trigger_mode: >
-                    {% set new_state = trigger.to_state.state %}
-                    {% if windows_open_bool %}
+                  resume_target_mode: >
+                    {% if vacation_active_bool and vacation_mode == 'off' %}
                       off
-                    {% elif vacation_active_bool and vacation_mode == 'off' %}
-                      off
-                    {% elif new_state == 'on' %}
-                      heat
-                    {% elif in_comfort_bool %}
+                    {% elif in_comfort_bool or in_preheat_bool or (vacation_active_bool and vacation_mode in ['frost', 'eco']) %}
                       heat
                     {% elif default_hvac_mode == 'heat' %}
                       heat
                     {% else %}
                       off
                     {% endif %}
-                  schedule_trigger_temp: >
-                    {% if trigger.to_state.state == 'on' %}
-                      {% set fname = state_attr(trigger.entity_id, 'friendly_name') | default('') %}
-                      {% set temps = fname | regex_findall('(\d+(?:\.\d+)?)C$', ignorecase=True) %}
-                      {{ temps | first | float(schedule_fallback_temp) if temps else schedule_fallback_temp | float }}
-                    {% else %}
-                      {{ default_temp | float }}
-                    {% endif %}
-              - if:
-                  - condition: template
-                    value_template: "{{ trigger.to_state.state == 'on' }}"
-                then:
-                  - action: system_log.write
-                    data:
-                      message: |
-                        SHA [{{ room_name }}] {{ 'SCHEDULE STARTED' if trigger.to_state.state == 'on' else 'SCHEDULE ENDED' }}
-                        Schedule: "{{ trigger.to_state.attributes.friendly_name | default(trigger.entity_id) }}"
-                        Room: {{ room_temp | round(1) }}°C
-                        {{ 'Comfort target: ' ~ schedule_trigger_temp ~ '°C — TRV setpoint: ' ~ (sha_trv_setpoint | round(1) | string) ~ '°C (SHA learned) (mode: ' ~ schedule_trigger_mode ~ ').' if trigger.to_state.state == 'on' else 'Returning to ' ~ default_hvac_mode ~ ' at ' ~ default_temp ~ '°C.' }}
-                      level: info
-                      logger: custom_components.smart_heating_advisor
               - choose:
                   - conditions:
                       - condition: template
-                        value_template: "{{ schedule_trigger_mode == 'off' }}"
+                        value_template: "{{ resume_target_mode == 'off' }}"
                     sequence:
                       - action: climate.set_hvac_mode
                         target:
-                          entity_id: !input radiator_thermostats
+                          entity_id: "{{ trvs }}"
                         data:
                           hvac_mode: "off"
                   - conditions:
                       - condition: template
-                        value_template: "{{ schedule_trigger_mode == 'heat' }}"
+                        value_template: "{{ resume_target_mode == 'heat' }}"
                     sequence:
                       - action: climate.set_hvac_mode
                         target:
-                          entity_id: !input radiator_thermostats
+                          entity_id: "{{ trvs }}"
                         data:
                           hvac_mode: heat
                       - action: climate.set_temperature
                         target:
-                          entity_id: !input radiator_thermostats
+                          entity_id: "{{ trvs }}"
                         data:
-                          temperature: "{{ sha_trv_setpoint | float }}"
-              - if:
-                  - condition: template
-                    value_template: "{{ fixed_radiator_thermostats | list | count > 0 }}"
-                then:
-                  - choose:
-                      - conditions:
+                          temperature: "{{ main_trv_setpoint | float }}"
+                      - if:
                           - condition: template
-                            value_template: "{{ schedule_trigger_mode == 'off' }}"
-                        sequence:
-                          - action: climate.set_hvac_mode
-                            target:
-                              entity_id: "{{ fixed_radiator_thermostats }}"
+                            value_template: >
+                              {{ fixed_trvs | list | count > 0 }}
+                        then:
+                          - action: system_log.write
                             data:
-                              hvac_mode: "off"
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ schedule_trigger_mode == 'heat' }}"
-                        sequence:
+                              message: |
+                                SHA [{{ room_name }}] Fixed TRV — commanding heat on window close resume
+                                Target: {{ fixed_trv_temp | float(30) }}°C
+                                Entities: {{ fixed_trvs }}
+                              level: info
+                              logger: custom_components.smart_heating_advisor
                           - action: climate.set_hvac_mode
                             target:
-                              entity_id: "{{ fixed_radiator_thermostats }}"
+                              entity_id: "{{ fixed_trvs }}"
                             data:
                               hvac_mode: heat
                           - action: climate.set_temperature
                             target:
-                              entity_id: "{{ fixed_radiator_thermostats }}"
+                              entity_id: "{{ fixed_trvs }}"
                             data:
-                              temperature: "{{ fixed_radiator_temperature | float(30) }}"
-
-      - conditions:
-          - condition: template
-            value_template: "{{ trigger.id == 'manual_override' }}"
-        sequence:
-          - if:
-              - condition: template
-                value_template: >
-                  {{ not windows_open_bool and
-                     not override_active_bool and
-                     is_state(sha_override_switch, 'off') and
-                     trigger.to_state is not none and
-                     trigger.to_state.context.parent_id is none and
-                     trigger.from_state is not none and (
-                       (trigger.attribute == 'temperature' and
-                        (trigger.to_state.attributes.temperature | float(-1)) != (target_temperature | float(0))) or
-                       (trigger.attribute == 'hvac_mode' and
-                        trigger.to_state.attributes.hvac_mode != target_mode)
-                     ) }}
-            then:
-              - action: system_log.write
-                data:
-                  message: |
-                    SHA [{{ room_name }}] MANUAL OVERRIDE ACTIVATED
-                    Changed by user on: {{ trigger.to_state.attributes.friendly_name | default(trigger.entity_id) }}
-                    Duration: {{ override_minutes }} min
-                    Auto-resume at: {{ (now() + timedelta(minutes=override_minutes | int)).strftime('%H:%M') }}
-                    Room: {{ room_temp | round(1) }}°C
-                    SHA heating suspended for {{ override_minutes }} min.
-                  level: info
-                  logger: custom_components.smart_heating_advisor
-              - action: smart_heating_advisor.start_override
-                data:
-                  room_name: "{{ room_name }}"
-                  duration_minutes: "{{ override_minutes | int(120) }}"
+                              temperature: "{{ fixed_trv_temp | float(30) }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ fixed_trvs | list | count > 0 and resume_target_mode == 'off' }}"
+                then:
+                  - action: climate.set_hvac_mode
+                    target:
+                      entity_id: "{{ fixed_trvs }}"
+                    data:
+                      hvac_mode: "off"
 
       - conditions:
           - condition: template
             value_template: >
               {{ override_active_bool and
-                 trigger.id not in ['override_ended', 'manual_override',
-                                    'window_airing_start', 'window_airing_end',
-                                    'schedule_changed'] }}
+                 trigger.id not in ['override_ended', 'window_airing_start', 'window_airing_end'] }}
         sequence:
           - action: system_log.write
             data:
@@ -785,7 +379,7 @@ action:
             Pre-heat: {{ 'yes — ' ~ preheat_schedule_mins ~ ' min needed' if in_preheat_bool else 'no' }}
             Override: {{ 'yes' if override_active_bool else 'no' }}
             Windows: {{ 'open' if windows_open_bool else 'closed' }}
-            Vacation: {{ 'yes' if vacation_active_bool else 'no' }}
+            Vacation: {{ 'yes (' ~ vacation_mode ~ ')' if vacation_active_bool else 'no' }}
             Heating rate: {{ heating_rate }}°C/min
             ──────────────────────────────────────────────────────────────────────────────
           level: debug
@@ -823,7 +417,7 @@ action:
                       {%- set temps = fname | regex_findall('(\d+(?:\.\d+)?)C$', ignorecase=True) -%}
                       {%- set ns.mins = m -%}
                       {%- set ns.name = fname -%}
-                      {%- set ns.temp = temps | first | float(schedule_fallback_temp) if temps else schedule_fallback_temp | float -%}
+                      {%- set ns.temp = temps | first | float(21) if temps else 21.0 -%}
                     {%- endif -%}
                   {%- endif -%}
                 {%- endfor -%}
@@ -844,7 +438,7 @@ action:
             sequence:
               - action: climate.set_hvac_mode
                 target:
-                  entity_id: !input radiator_thermostats
+                  entity_id: "{{ trvs }}"
                 data:
                   hvac_mode: "off"
           - conditions:
@@ -853,46 +447,46 @@ action:
             sequence:
               - action: climate.set_hvac_mode
                 target:
-                  entity_id: !input radiator_thermostats
+                  entity_id: "{{ trvs }}"
                 data:
                   hvac_mode: heat
               - action: climate.set_temperature
                 target:
-                  entity_id: !input radiator_thermostats
+                  entity_id: "{{ trvs }}"
                 data:
                   temperature: "{{ main_trv_setpoint | float }}"
               - if:
                   - condition: template
                     value_template: >
-                      {{ fixed_radiator_thermostats | list | count > 0 }}
+                      {{ fixed_trvs | list | count > 0 }}
                 then:
                   - action: system_log.write
                     data:
                       message: |
                         SHA [{{ room_name }}] Fixed TRV — commanding heat (control loop)
                         Phase: {{ 'comfort' if in_comfort_bool else ('pre-heat' if in_preheat_bool else 'default') }}
-                        Target: {{ fixed_radiator_temperature | float(30) }}°C
-                        Entities: {{ fixed_radiator_thermostats }}
+                        Target: {{ fixed_trv_temp | float(30) }}°C
+                        Entities: {{ fixed_trvs }}
                       level: info
                       logger: custom_components.smart_heating_advisor
                   - action: climate.set_hvac_mode
                     target:
-                      entity_id: "{{ fixed_radiator_thermostats }}"
+                      entity_id: "{{ fixed_trvs }}"
                     data:
                       hvac_mode: heat
                   - action: climate.set_temperature
                     target:
-                      entity_id: "{{ fixed_radiator_thermostats }}"
+                      entity_id: "{{ fixed_trvs }}"
                     data:
-                      temperature: "{{ fixed_radiator_temperature | float(30) }}"
+                      temperature: "{{ fixed_trv_temp | float(30) }}"
 
       - if:
           - condition: template
-            value_template: "{{ fixed_radiator_thermostats | list | count > 0 and target_mode == 'off' }}"
+            value_template: "{{ fixed_trvs | list | count > 0 and target_mode == 'off' }}"
         then:
           - action: climate.set_hvac_mode
             target:
-              entity_id: "{{ fixed_radiator_thermostats }}"
+              entity_id: "{{ fixed_trvs }}"
             data:
               hvac_mode: "off"
 
@@ -911,8 +505,8 @@ action:
                 Gap to close: {{ (preheat_temp - room_temp) | round(1) }}°C
                 Heating rate: {{ heating_rate }}°C/min
                 Estimated time needed: {{ preheat_schedule_mins }} min
-                TRVs commanding: {{ radiator_thermostats }}
-                Fixed TRVs: {{ fixed_radiator_thermostats if fixed_radiator_thermostats | list | count > 0 else 'none' }}
+                TRVs commanding: {{ trvs }}
+                Fixed TRVs: {{ fixed_trvs if fixed_trvs | list | count > 0 else 'none' }}
               level: info
               logger: custom_components.smart_heating_advisor
 

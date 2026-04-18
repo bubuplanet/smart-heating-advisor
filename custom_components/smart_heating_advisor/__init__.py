@@ -9,7 +9,7 @@ import yaml
 
 from homeassistant.components.persistent_notification import async_create as pn_async_create
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, SupportsResponse
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_time_change
@@ -193,6 +193,8 @@ def _do_create_room_automation(
     Returns True if the automation was created, False if it already existed or
     automations.yaml was not found / not writable.
     """
+    import re as _re
+
     alias = f"SHA — {room_name}"
     automations_file = Path(config_dir) / "automations.yaml"
 
@@ -219,20 +221,22 @@ def _do_create_room_automation(
             _LOGGER.debug("Automation '%s' already exists — skipping creation", alias)
             return False
 
+    room_id = room_name.lower()
+    room_id = room_id.replace("'", "")
+    room_id = _re.sub(r"[\s\-]+", "_", room_id)
+    room_id = _re.sub(r"[^a-z0-9_]", "", room_id)
+
     new_automation = {
         "id": str(uuid.uuid4()),
         "alias": alias,
         "description": (
             f"Smart Heating Advisor automation for {room_name}. "
-            "Add your Schedule helpers (e.g. 'Morning Shower 26C') then enable."
+            "Configure TRVs, schedules, and sensors in the SHA integration, then enable."
         ),
         "use_blueprint": {
             "path": "smart_heating_advisor/smart_heating_advisor.yaml",
             "input": {
-                "room_name": room_name,
-                "temperature_sensor": temp_sensor if temp_sensor else "",
-                "radiator_thermostats": trvs if trvs else [],
-                "schedules": [],
+                "room_id": room_id,
             },
         },
         "mode": "queued",
@@ -806,11 +810,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         _LOGGER.info("sha.unregister_room: room '%s' removed successfully", room_name)
 
+    async def handle_get_room_config(call):
+        """sha.get_room_config — returns room config for blueprint use."""
+        room_id = str(call.data.get("room_id", "")).strip()
+        if not room_id:
+            _LOGGER.warning("sha.get_room_config called without room_id")
+            return {}
+        return await coordinator.async_get_room_config(room_id)
+
     hass.services.async_register(DOMAIN, "run_daily_analysis", handle_daily_analysis)
     hass.services.async_register(DOMAIN, "run_weekly_analysis", handle_weekly_analysis)
     hass.services.async_register(DOMAIN, "start_override", handle_start_override)
     hass.services.async_register(DOMAIN, "register_room", handle_register_room)
     hass.services.async_register(DOMAIN, "unregister_room", handle_unregister_room)
+    hass.services.async_register(
+        DOMAIN, "get_room_config", handle_get_room_config,
+        supports_response=SupportsResponse.ONLY,
+    )
 
     # ── Scheduled analysis ───────────────────────────────────────────
 
@@ -959,4 +975,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, "start_override")
         hass.services.async_remove(DOMAIN, "register_room")
         hass.services.async_remove(DOMAIN, "unregister_room")
+        hass.services.async_remove(DOMAIN, "get_room_config")
     return unload_ok

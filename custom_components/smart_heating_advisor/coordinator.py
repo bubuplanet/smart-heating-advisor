@@ -26,7 +26,10 @@ from .const import (
     CONF_WEATHER_ENTITY,
     CONF_VACATION_ENABLED,
     CONF_VACATION_CALENDAR,
+    CONF_VACATION_MODE,
     DEFAULT_HEATING_RATE,
+    DEFAULT_VACATION_MODE,
+    DEFAULT_DEFAULT_TEMP,
     MIN_HEATING_RATE,
     MAX_HEATING_RATE,
     DEFAULT_TRV_SETPOINT,
@@ -444,6 +447,65 @@ class SmartHeatingCoordinator:
                 "[SHA] Vacation state changed: active=%s source=%s",
                 vacation_active, source,
             )
+
+    async def async_get_room_config(self, room_id: str) -> dict:
+        """Return full room configuration for blueprint service call.
+
+        Data sources (in priority order):
+        - SubEntry data   → TRVs, sensors, window/humidity config
+        - Room registry   → schedules, temp_sensor (written by sha.register_room)
+        - Entry options   → vacation mode/active
+        - Vacation entity → live vacation active state
+        """
+        subentry_data: dict = {}
+        for s in self.entry.subentries.values():
+            if _room_name_to_id(s.data.get("room_name", "")) == room_id:
+                subentry_data = dict(s.data)
+                break
+
+        room_data = self._room_registry.get(room_id, {})
+        room_name = (subentry_data.get("room_name") or room_data.get("room_name", "")).strip()
+        temp_sensor = str(
+            subentry_data.get("temp_sensor") or room_data.get("temp_sensor", "")
+        ).strip()
+        schedules = room_data.get("schedules", [])
+        if isinstance(schedules, str):
+            schedules = [schedules] if schedules.strip() else []
+        elif not isinstance(schedules, list):
+            schedules = []
+
+        trvs = list(subentry_data.get("trvs", []))
+        fixed_trvs = list(subentry_data.get("fixed_trvs", []))
+        fixed_trv_temp = float(subentry_data.get("fixed_trv_temp", DEFAULT_DEFAULT_TEMP))
+        default_temp_enabled = bool(subentry_data.get("default_temp_enabled", True))
+        default_temp = float(subentry_data.get("default_temp", DEFAULT_DEFAULT_TEMP))
+
+        vacation_mode = self.entry.options.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE)
+        vacation_active = (
+            self._vacation_entity.is_on if self._vacation_entity is not None else False
+        )
+        vacation_temp_map = {"frost": 7.0, "eco": 15.0, "off": 18.0}
+        vacation_temp = vacation_temp_map.get(vacation_mode, 7.0)
+
+        _LOGGER.debug(
+            "[%s] get_room_config: trvs=%s schedules=%s vacation_active=%s vacation_mode=%s",
+            room_id, trvs, schedules, vacation_active, vacation_mode,
+        )
+
+        return {
+            "room_id": room_id,
+            "room_name": room_name,
+            "temp_sensor": temp_sensor,
+            "schedules": schedules,
+            "trvs": trvs,
+            "fixed_trvs": fixed_trvs,
+            "fixed_trv_temp": fixed_trv_temp,
+            "default_hvac_mode": "heat" if default_temp_enabled else "off",
+            "default_temp": default_temp,
+            "vacation_active": vacation_active,
+            "vacation_mode": vacation_mode,
+            "vacation_temp": vacation_temp,
+        }
 
     # ──────────────────────────────────────────────────────────────────
     # Room registry / discovery

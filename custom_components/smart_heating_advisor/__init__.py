@@ -215,11 +215,20 @@ def _do_create_room_automation(
         _LOGGER.error("Failed to read automations.yaml: %s", exc)
         return False
 
-    # Idempotency check
+    # Idempotency check — skip if up-to-date, recreate if outdated format
     for existing in automations:
-        if isinstance(existing, dict) and existing.get("alias") == alias:
-            _LOGGER.debug("Automation '%s' already exists — skipping creation", alias)
+        if not (isinstance(existing, dict) and existing.get("alias") == alias):
+            continue
+        bp_input = existing.get("use_blueprint", {}).get("input", {})
+        if list(bp_input.keys()) == ["room_id"]:
+            _LOGGER.debug("Automation '%s' already in Phase 5 format — skipping", alias)
             return False
+        _LOGGER.info(
+            "Automation '%s' has outdated inputs %s — removing and recreating",
+            alias, list(bp_input.keys()),
+        )
+        automations.remove(existing)
+        break
 
     room_id = room_name.lower()
     room_id = room_id.replace("'", "")

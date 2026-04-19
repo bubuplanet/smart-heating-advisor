@@ -302,6 +302,20 @@ async def _async_ensure_room_automations(
             newly_created.append(room_config)
 
     if newly_created:
+        # Remove stale entity registry entries before reload so recreated
+        # automations get a clean entity_id instead of a suffixed one.
+        entity_registry = er.async_get(hass)
+        for room_config in newly_created:
+            room_id = _room_name_to_id(room_config.get("room_name", ""))
+            stale_entity_id = f"automation.sha_{room_id}"
+            stale_entry = entity_registry.async_get(stale_entity_id)
+            if stale_entry:
+                entity_registry.async_remove(stale_entity_id)
+                _LOGGER.info(
+                    "SHA: removed stale automation entity %s from registry",
+                    stale_entity_id,
+                )
+
         try:
             await hass.services.async_call("automation", "reload", blocking=True)
             _LOGGER.info(

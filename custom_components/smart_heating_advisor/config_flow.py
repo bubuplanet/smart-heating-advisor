@@ -457,6 +457,65 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Subentry flow — Vacation Settings (single-step, singleton)
+# ──────────────────────────────────────────────────────────────────────
+
+class SHAVacationSubentryFlowHandler(ConfigSubentryFlow):
+    """Single-step vacation wizard.
+
+    Only one vacation subentry is allowed per config entry.
+    Delete the existing subentry and recreate to change settings.
+    """
+
+    async def async_step_user(
+        self, user_input: dict | None = None
+    ) -> SubentryFlowResult:
+        """Step 1/1 — Vacation configuration."""
+        entry = self._get_entry()
+
+        # Guard: only one vacation subentry allowed
+        for s in entry.subentries.values():
+            if s.subentry_type == "vacation":
+                return self.async_abort(reason="already_configured")
+
+        # Seed defaults from legacy options so migration is seamless
+        current_enabled = entry.options.get(CONF_VACATION_ENABLED, False)
+        current_mode = entry.options.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE)
+
+        if user_input is not None:
+            vacation_calendar = user_input.get(CONF_VACATION_CALENDAR) or ""
+            return self.async_create_entry(
+                title="Vacation",
+                data={
+                    CONF_VACATION_ENABLED: bool(user_input.get(CONF_VACATION_ENABLED, False)),
+                    CONF_VACATION_MODE: user_input.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
+                    CONF_VACATION_CALENDAR: vacation_calendar,
+                },
+            )
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_VACATION_ENABLED, default=current_enabled): BooleanSelector(),
+                    vol.Required(
+                        CONF_VACATION_MODE, default=current_mode
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=["frost", "eco", "off"],
+                            mode=SelectSelectorMode.LIST,
+                            translation_key="vacation_mode",
+                        )
+                    ),
+                    vol.Optional(CONF_VACATION_CALENDAR): EntitySelector(
+                        EntitySelectorConfig(domain="calendar")
+                    ),
+                }
+            ),
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Main config flow
 # ──────────────────────────────────────────────────────────────────────
 
@@ -488,7 +547,10 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         cls, config_entry: config_entries.ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
         """Return subentry flow handlers supported by this integration."""
-        return {"room": SHARoomSubentryFlowHandler}
+        return {
+            "room": SHARoomSubentryFlowHandler,
+            "vacation": SHAVacationSubentryFlowHandler,
+        }
 
     def __init__(self) -> None:
         self._ollama_data: dict = {}
@@ -562,24 +624,46 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 # ──────────────────────────────────────────────────────────────────────
 
 class SHAOptionsFlow(config_entries.OptionsFlow):
-    """Handle SHA options — connection settings, weather entity, debug, and vacation.
+    """Handle SHA options — connection settings, weather entity, and debug toggle.
 
-    Step 1 (init):     Connection settings + weather entity + debug toggle
-    Step 2 (vacation): Vacation mode configuration
+    Single step: connection settings + weather entity + debug toggle.
+    Vacation is configured via the dedicated Vacation subentry on the integration card.
     """
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
-        self._init_data: dict = {}
 
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
-        """Step 1 — Connection settings and global entities."""
+        """Connection settings and global options."""
         cd = self._config_entry.data
         current_debug = self._config_entry.options.get(CONF_DEBUG_LOGGING, False)
 
         if user_input is not None:
-            self._init_data = user_input
-            return await self.async_step_vacation()
+            debug = user_input.get(CONF_DEBUG_LOGGING, False)
+
+            data_keys = [
+                CONF_OLLAMA_URL, CONF_OLLAMA_MODEL,
+                CONF_INFLUXDB_URL, CONF_INFLUXDB_TOKEN,
+                CONF_INFLUXDB_ORG, CONF_INFLUXDB_BUCKET,
+                CONF_WEATHER_ENTITY,
+            ]
+            data_changed = any(
+                user_input.get(k) != cd.get(k)
+                for k in data_keys
+                if k in user_input
+            )
+
+            if data_changed:
+                new_data = {**cd, **{k: user_input[k] for k in data_keys if k in user_input}}
+                self.hass.config_entries.async_update_entry(
+                    self._config_entry, data=new_data
+                )
+                _LOGGER.info("SHA options: connection settings changed — scheduling reload")
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self._config_entry.entry_id)
+                )
+
+            return self.async_create_entry(title="", data={CONF_DEBUG_LOGGING: debug})
 
         return self.async_show_form(
             step_id="init",
@@ -614,78 +698,6 @@ class SHAOptionsFlow(config_entries.OptionsFlow):
                         default=cd.get(CONF_WEATHER_ENTITY, "weather.forecast_home"),
                     ): str,
                     vol.Required(CONF_DEBUG_LOGGING, default=current_debug): bool,
-                }
-            ),
-        )
-
-    async def async_step_vacation(self, user_input=None) -> ConfigFlowResult:
-        """Step 2 — Vacation mode settings."""
-        current_opts = self._config_entry.options
-
-        if user_input is not None:
-            init = self._init_data
-            debug = init.get(CONF_DEBUG_LOGGING, False)
-
-            data_keys = [
-                CONF_OLLAMA_URL, CONF_OLLAMA_MODEL,
-                CONF_INFLUXDB_URL, CONF_INFLUXDB_TOKEN,
-                CONF_INFLUXDB_ORG, CONF_INFLUXDB_BUCKET,
-                CONF_WEATHER_ENTITY,
-            ]
-            cd = self._config_entry.data
-            data_changed = any(
-                init.get(k) != cd.get(k)
-                for k in data_keys
-                if k in init
-            )
-
-            if data_changed:
-                new_data = dict(cd)
-                for k in data_keys:
-                    if k in init:
-                        new_data[k] = init[k]
-                self.hass.config_entries.async_update_entry(
-                    self._config_entry, data=new_data
-                )
-                _LOGGER.info("SHA options: connection settings changed — scheduling reload")
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(self._config_entry.entry_id)
-                )
-
-            return self.async_create_entry(
-                title="",
-                data={
-                    CONF_DEBUG_LOGGING: debug,
-                    CONF_VACATION_ENABLED: bool(user_input.get(CONF_VACATION_ENABLED, False)),
-                    CONF_VACATION_MODE: user_input.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
-                    CONF_VACATION_CALENDAR: user_input.get(CONF_VACATION_CALENDAR, ""),
-                },
-            )
-
-        return self.async_show_form(
-            step_id="vacation",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_VACATION_ENABLED,
-                        default=current_opts.get(CONF_VACATION_ENABLED, False),
-                    ): BooleanSelector(),
-                    vol.Required(
-                        CONF_VACATION_MODE,
-                        default=current_opts.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
-                    ): SelectSelector(
-                        SelectSelectorConfig(
-                            options=["frost", "eco", "off"],
-                            mode=SelectSelectorMode.LIST,
-                            translation_key="vacation_mode",
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_VACATION_CALENDAR,
-                        default=current_opts.get(CONF_VACATION_CALENDAR, ""),
-                    ): EntitySelector(
-                        EntitySelectorConfig(domain="calendar")
-                    ),
                 }
             ),
         )

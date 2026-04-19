@@ -100,13 +100,37 @@
       "abort": {
         "no_areas_available": "No HA Areas are available to add. Either all areas are already configured in SHA, or no areas exist yet. Use the manual option to add a room without an area, or create areas first in Settings → Areas."
       }
+    },
+    "vacation": {
+      "entry_type": "Vacation",
+      "initiate_flow": {
+        "user": "Vacation Settings"
+      },
+      "step": {
+        "user": {
+          "title": "Vacation Settings",
+          "description": "Configure vacation mode. SHA will use a reduced heating profile while you are away.\n\nDelete this subentry and recreate to change settings.",
+          "data": {
+            "vacation_enabled": "Enable vacation mode",
+            "vacation_mode": "Vacation heating mode",
+            "vacation_calendar": "Vacation calendar (optional)"
+          },
+          "data_description": {
+            "vacation_calendar": "When set, SHA activates vacation mode during calendar events automatically. Leave blank to control vacation mode manually via the toggle above.",
+            "vacation_mode": "Heating strategy applied while vacation mode is active."
+          }
+        }
+      },
+      "abort": {
+        "already_configured": "Vacation is already configured. Delete the existing Vacation subentry and recreate it to change settings."
+      }
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Smart Heating Advisor — Settings (1/2)",
-        "description": "Update connection settings. Use **➕ Add Room** to add rooms, or **⋮** next to a room to remove it.",
+        "title": "Smart Heating Advisor — Settings",
+        "description": "Update connection settings. Vacation mode is configured via the **Vacation Settings** button on the integration card.",
         "data": {
           "ollama_url": "Ollama URL",
           "ollama_model": "Ollama Model Name",
@@ -121,19 +145,6 @@
           "debug_logging": "Writes detailed logs for entity creation, room discovery, InfluxDB queries, Ollama prompts and responses, and heating rate updates. Disable when not actively debugging.",
           "influxdb_token": "Changes to connection settings (Ollama, InfluxDB, weather entity) will trigger an integration reload.",
           "ollama_url": "Changes to connection settings (Ollama, InfluxDB, weather entity) will trigger an integration reload."
-        }
-      },
-      "vacation": {
-        "title": "Smart Heating Advisor — Vacation Settings (2/2)",
-        "description": "Configure vacation mode. When enabled, SHA uses a reduced heating profile while you are away.",
-        "data": {
-          "vacation_enabled": "Enable vacation mode",
-          "vacation_mode": "Vacation heating mode",
-          "vacation_calendar": "Vacation calendar (optional)"
-        },
-        "data_description": {
-          "vacation_calendar": "When set, SHA will automatically activate vacation mode during calendar events. Leave blank to control vacation mode manually.",
-          "vacation_mode": "Heating strategy to apply when vacation mode is active."
         }
       }
     }

@@ -402,7 +402,7 @@ class SmartHeatingCoordinator:
         # ── Vacation state (global) ───────────────────────────────────
         await self._async_update_vacation_state(source="init")
 
-        vacation_calendar = self.entry.options.get(CONF_VACATION_CALENDAR, "")
+        vacation_calendar = self._get_vacation_config().get(CONF_VACATION_CALENDAR, "")
         if vacation_calendar:
             async def _handle_vacation_calendar(event: Event) -> None:
                 new_st = event.data.get("new_state")
@@ -424,10 +424,26 @@ class SmartHeatingCoordinator:
         self._unsub_callbacks.clear()
         _LOGGER.debug("[SHA] All state change listeners cancelled")
 
+    def _get_vacation_config(self) -> dict:
+        """Return vacation config from the vacation subentry, falling back to options.
+
+        Subentry (created in Phase 6) takes priority.  Options fallback keeps
+        backwards compatibility for installations that stored vacation in options.
+        """
+        for s in self.entry.subentries.values():
+            if s.subentry_type == "vacation":
+                return dict(s.data)
+        return {
+            CONF_VACATION_ENABLED: self.entry.options.get(CONF_VACATION_ENABLED, False),
+            CONF_VACATION_MODE: self.entry.options.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
+            CONF_VACATION_CALENDAR: self.entry.options.get(CONF_VACATION_CALENDAR, ""),
+        }
+
     async def _async_update_vacation_state(self, source: str = "init") -> None:
         """Compute vacation active flag and push to every room vacation sensor."""
-        vacation_enabled = self.entry.options.get(CONF_VACATION_ENABLED, False)
-        vacation_calendar = self.entry.options.get(CONF_VACATION_CALENDAR, "")
+        vac = self._get_vacation_config()
+        vacation_enabled = vac.get(CONF_VACATION_ENABLED, False)
+        vacation_calendar = vac.get(CONF_VACATION_CALENDAR, "")
 
         if vacation_calendar:
             cal_state = self.hass.states.get(vacation_calendar)
@@ -480,7 +496,8 @@ class SmartHeatingCoordinator:
         default_temp_enabled = bool(subentry_data.get("default_temp_enabled", True))
         default_temp = float(subentry_data.get("default_temp", DEFAULT_DEFAULT_TEMP))
 
-        vacation_mode = self.entry.options.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE)
+        vac_cfg = self._get_vacation_config()
+        vacation_mode = vac_cfg.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE)
         vacation_active = (
             self._vacation_entity.is_on if self._vacation_entity is not None else False
         )

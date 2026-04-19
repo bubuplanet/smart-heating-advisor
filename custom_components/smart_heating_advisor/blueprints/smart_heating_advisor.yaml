@@ -2,7 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    **version: 0.0.17**
+    **version: 0.0.18**
 
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
@@ -70,20 +70,6 @@ triggers:
   - trigger: time_pattern
     minutes: "/5"
     id: control_loop
-
-  - trigger: state
-    entity_id: "binary_sensor.sha_{{ _room_id }}_window_open"
-    to: "on"
-    for:
-      hours: 0
-      minutes: 5
-      seconds: 0
-    id: window_airing_start
-
-  - trigger: state
-    entity_id: "binary_sensor.sha_{{ _room_id }}_window_open"
-    to: "off"
-    id: window_airing_end
 
   - trigger: event
     event_type: sha_override_ended
@@ -223,130 +209,8 @@ action:
 
       - conditions:
           - condition: template
-            value_template: "{{ trigger.id == 'window_airing_start' }}"
-        sequence:
-          - action: system_log.write
-            data:
-              message: |
-                SHA [{{ room_name }}] WINDOW OPEN — HEATING SUSPENDED
-                Detected by: binary_sensor.sha_{{ room_id }}_window_open
-                Room: {{ room_temp | round(1) }}°C
-                TRVs commanded off.
-                Heating will resume automatically when all windows close.
-              level: info
-              logger: custom_components.smart_heating_advisor
-          - action: switch.turn_on
-            target:
-              entity_id: "switch.sha_{{ room_id }}_airing_mode"
-          - action: climate.set_hvac_mode
-            target:
-              entity_id: "{{ trvs }}"
-            data:
-              hvac_mode: "off"
-          - if:
-              - condition: template
-                value_template: "{{ fixed_trvs | list | count > 0 }}"
-            then:
-              - action: climate.set_hvac_mode
-                target:
-                  entity_id: "{{ fixed_trvs }}"
-                data:
-                  hvac_mode: "off"
-
-      - conditions:
-          - condition: template
-            value_template: "{{ trigger.id == 'window_airing_end' }}"
-        sequence:
-          - action: switch.turn_off
-            target:
-              entity_id: "switch.sha_{{ room_id }}_airing_mode"
-          - action: system_log.write
-            data:
-              message: |
-                SHA [{{ room_name }}] WINDOW CLOSED — HEATING RESUMED
-                Room: {{ room_temp | round(1) }}°C
-                Resume mode: {{ 'PRE-HEAT' if in_preheat_bool else ('SCHEDULE' if in_comfort_bool else 'STANDBY') }}
-                Resume target: {{ target_temperature | round(1) }}°C
-                {{ 'In comfort phase: ' ~ active_schedule_name if in_comfort_bool else ('In pre-heat for: ' ~ preheat_schedule_name if in_preheat_bool else 'Returning to standby.') }}
-              level: info
-              logger: custom_components.smart_heating_advisor
-          - if:
-              - condition: template
-                value_template: "{{ not override_active_bool }}"
-            then:
-              - variables:
-                  resume_target_mode: >
-                    {% if vacation_active_bool and vacation_mode == 'off' %}
-                      off
-                    {% elif in_comfort_bool or in_preheat_bool or (vacation_active_bool and vacation_mode in ['frost', 'eco']) %}
-                      heat
-                    {% elif default_hvac_mode == 'heat' %}
-                      heat
-                    {% else %}
-                      off
-                    {% endif %}
-              - choose:
-                  - conditions:
-                      - condition: template
-                        value_template: "{{ resume_target_mode == 'off' }}"
-                    sequence:
-                      - action: climate.set_hvac_mode
-                        target:
-                          entity_id: "{{ trvs }}"
-                        data:
-                          hvac_mode: "off"
-                  - conditions:
-                      - condition: template
-                        value_template: "{{ resume_target_mode == 'heat' }}"
-                    sequence:
-                      - action: climate.set_hvac_mode
-                        target:
-                          entity_id: "{{ trvs }}"
-                        data:
-                          hvac_mode: heat
-                      - action: climate.set_temperature
-                        target:
-                          entity_id: "{{ trvs }}"
-                        data:
-                          temperature: "{{ main_trv_setpoint | float }}"
-                      - if:
-                          - condition: template
-                            value_template: >
-                              {{ fixed_trvs | list | count > 0 }}
-                        then:
-                          - action: system_log.write
-                            data:
-                              message: |
-                                SHA [{{ room_name }}] Fixed TRV — commanding heat on window close resume
-                                Target: {{ fixed_trv_temp | float(30) }}°C
-                                Entities: {{ fixed_trvs }}
-                              level: info
-                              logger: custom_components.smart_heating_advisor
-                          - action: climate.set_hvac_mode
-                            target:
-                              entity_id: "{{ fixed_trvs }}"
-                            data:
-                              hvac_mode: heat
-                          - action: climate.set_temperature
-                            target:
-                              entity_id: "{{ fixed_trvs }}"
-                            data:
-                              temperature: "{{ fixed_trv_temp | float(30) }}"
-              - if:
-                  - condition: template
-                    value_template: "{{ fixed_trvs | list | count > 0 and resume_target_mode == 'off' }}"
-                then:
-                  - action: climate.set_hvac_mode
-                    target:
-                      entity_id: "{{ fixed_trvs }}"
-                    data:
-                      hvac_mode: "off"
-
-      - conditions:
-          - condition: template
             value_template: >
-              {{ override_active_bool and
-                 trigger.id not in ['override_ended', 'window_airing_start', 'window_airing_end'] }}
+              {{ override_active_bool and trigger.id != 'override_ended' }}
         sequence:
           - action: system_log.write
             data:

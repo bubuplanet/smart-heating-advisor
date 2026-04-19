@@ -11,6 +11,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from homeassistant.helpers.device_registry import DeviceInfo
+
 from .const import DOMAIN
 from .coordinator import _room_name_to_id
 
@@ -121,12 +123,20 @@ class SHAWindowOpenBinarySensor(BinarySensorEntity):
         self._attr_unique_id = f"sha_{room_id}_window_open"
 
     @property
-    def device_info(self) -> dict:
-        return {
-            "identifiers": {(DOMAIN, f"{self._entry_id}_{self._room_id}")},
-            "name": f"SHA — {self._room_name}",
-            "manufacturer": "Smart Heating Advisor",
-        }
+    def device_info(self) -> DeviceInfo:
+        if self._subentry_id:
+            return DeviceInfo(
+                identifiers={(DOMAIN, self._subentry_id)},
+                name=f"SHA — {self._room_name}",
+                manufacturer="Smart Heating Advisor",
+                model="Room",
+                via_device=(DOMAIN, self._entry_id),
+            )
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry_id}_{self._room_id}")},
+            name=f"SHA — {self._room_name}",
+            manufacturer="Smart Heating Advisor",
+        )
 
     @property
     def is_on(self) -> bool:

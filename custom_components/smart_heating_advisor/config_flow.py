@@ -319,7 +319,7 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                             multiple=True,
                         )
                     ),
-                    vol.Required("airing_mode_enabled", default=True): BooleanSelector(),
+                    vol.Required("airing_mode_enabled", default=False): BooleanSelector(),
                     vol.Required(
                         "airing_duration_minutes", default=DEFAULT_AIRING_DURATION
                     ): NumberSelector(

@@ -11,6 +11,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
+from homeassistant.helpers.device_registry import DeviceInfo
+
 from .const import (
     DOMAIN,
     DEFAULT_HEATING_RATE, MIN_HEATING_RATE, MAX_HEATING_RATE,
@@ -114,12 +116,20 @@ class SHAHeatingRateNumber(NumberEntity, RestoreEntity):
         self._attr_unique_id = f"sha_{room_id}_heating_rate"
 
     @property
-    def device_info(self) -> dict:
-        return {
-            "identifiers": {(DOMAIN, f"{self._entry_id}_{self._room_id}")},
-            "name": f"SHA — {self._room_name}",
-            "manufacturer": "Smart Heating Advisor",
-        }
+    def device_info(self) -> DeviceInfo:
+        if self._subentry_id:
+            return DeviceInfo(
+                identifiers={(DOMAIN, self._subentry_id)},
+                name=f"SHA — {self._room_name}",
+                manufacturer="Smart Heating Advisor",
+                model="Room",
+                via_device=(DOMAIN, self._entry_id),
+            )
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry_id}_{self._room_id}")},
+            name=f"SHA — {self._room_name}",
+            manufacturer="Smart Heating Advisor",
+        )
 
     @property
     def native_value(self) -> float:
@@ -191,12 +201,20 @@ class SHATRVSetpointNumber(NumberEntity, RestoreEntity):
         self._attr_unique_id = f"sha_{room_id}_trv_setpoint"
 
     @property
-    def device_info(self) -> dict:
-        return {
-            "identifiers": {(DOMAIN, f"{self._entry_id}_{self._room_id}")},
-            "name": f"SHA — {self._room_name}",
-            "manufacturer": "Smart Heating Advisor",
-        }
+    def device_info(self) -> DeviceInfo:
+        if self._subentry_id:
+            return DeviceInfo(
+                identifiers={(DOMAIN, self._subentry_id)},
+                name=f"SHA — {self._room_name}",
+                manufacturer="Smart Heating Advisor",
+                model="Room",
+                via_device=(DOMAIN, self._entry_id),
+            )
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry_id}_{self._room_id}")},
+            name=f"SHA — {self._room_name}",
+            manufacturer="Smart Heating Advisor",
+        )
 
     @property
     def native_value(self) -> float:
@@ -267,12 +285,20 @@ class SHADefaultTempNumber(NumberEntity, RestoreEntity):
         self._attr_unique_id = f"sha_{room_id}_default_temp"
 
     @property
-    def device_info(self) -> dict:
-        return {
-            "identifiers": {(DOMAIN, f"{self._entry_id}_{self._room_id}")},
-            "name": f"SHA — {self._room_name}",
-            "manufacturer": "Smart Heating Advisor",
-        }
+    def device_info(self) -> DeviceInfo:
+        if self._subentry_id:
+            return DeviceInfo(
+                identifiers={(DOMAIN, self._subentry_id)},
+                name=f"SHA — {self._room_name}",
+                manufacturer="Smart Heating Advisor",
+                model="Room",
+                via_device=(DOMAIN, self._entry_id),
+            )
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry_id}_{self._room_id}")},
+            name=f"SHA — {self._room_name}",
+            manufacturer="Smart Heating Advisor",
+        )
 
     @property
     def native_value(self) -> float:

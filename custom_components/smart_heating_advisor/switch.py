@@ -12,6 +12,8 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.restore_state import RestoreEntity
 
+from homeassistant.helpers.device_registry import DeviceInfo
+
 from .const import DOMAIN
 from .coordinator import _room_name_to_id
 
@@ -105,12 +107,20 @@ class SHABooleanSwitch(SwitchEntity, RestoreEntity):
         self._attr_icon = icon
 
     @property
-    def device_info(self) -> dict:
-        return {
-            "identifiers": {(DOMAIN, f"{self._entry_id}_{self._room_id}")},
-            "name": f"SHA — {self._room_name}",
-            "manufacturer": "Smart Heating Advisor",
-        }
+    def device_info(self) -> DeviceInfo:
+        if self._subentry_id:
+            return DeviceInfo(
+                identifiers={(DOMAIN, self._subentry_id)},
+                name=f"SHA — {self._room_name}",
+                manufacturer="Smart Heating Advisor",
+                model="Room",
+                via_device=(DOMAIN, self._entry_id),
+            )
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry_id}_{self._room_id}")},
+            name=f"SHA — {self._room_name}",
+            manufacturer="Smart Heating Advisor",
+        )
 
     @property
     def is_on(self) -> bool:
@@ -178,12 +188,20 @@ class SHAOverrideSwitch(SwitchEntity, RestoreEntity):
         self._attr_icon = "mdi:hand-back-right"
 
     @property
-    def device_info(self) -> dict:
-        return {
-            "identifiers": {(DOMAIN, f"{self._entry_id}_{self._room_id}")},
-            "name": f"SHA — {self._room_name}",
-            "manufacturer": "Smart Heating Advisor",
-        }
+    def device_info(self) -> DeviceInfo:
+        if self._subentry_id:
+            return DeviceInfo(
+                identifiers={(DOMAIN, self._subentry_id)},
+                name=f"SHA — {self._room_name}",
+                manufacturer="Smart Heating Advisor",
+                model="Room",
+                via_device=(DOMAIN, self._entry_id),
+            )
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry_id}_{self._room_id}")},
+            name=f"SHA — {self._room_name}",
+            manufacturer="Smart Heating Advisor",
+        )
 
     @property
     def is_on(self) -> bool:

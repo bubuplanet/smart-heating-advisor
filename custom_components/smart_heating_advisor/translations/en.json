@@ -122,7 +122,7 @@
         }
       },
       "abort": {
-        "already_configured": "Vacation is already configured. Delete the existing Vacation subentry and recreate it to change settings."
+        "already_configured": "Vacation settings are already configured. Click the existing Vacation entry to edit it."
       }
     }
   },

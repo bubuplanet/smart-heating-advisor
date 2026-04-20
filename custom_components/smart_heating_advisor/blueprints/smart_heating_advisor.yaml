@@ -113,7 +113,9 @@ action:
       room_temp:            "{{ states(temp_sensor) | float(18) }}"
       heating_rate:         "{{ states('number.sha_' ~ room_id ~ '_heating_rate') | float(0.15) }}"
       override_active_bool: "{{ is_state('switch.sha_' ~ room_id ~ '_override', 'on') }}"
-      windows_open_bool:    "{{ is_state('binary_sensor.sha_' ~ room_id ~ '_window_open', 'on') }}"
+      windows_open_bool: >
+        {% set _we = 'binary_sensor.sha_' ~ room_id ~ '_window_open' %}
+        {{ states(_we) not in ('unavailable', 'unknown', 'none', none) and is_state(_we, 'on') }}
       vacation_active_bool: "{{ is_state('binary_sensor.sha_vacation', 'on') }}"
       default_temp:         "{{ states('number.sha_' ~ room_id ~ '_default_temp') | float(18.0) }}"
 

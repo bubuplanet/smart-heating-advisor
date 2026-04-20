@@ -57,22 +57,22 @@ async def async_setup_entry(
             subentry_id = room_id_to_subentry.get(room.room_id)
             window_sensors = room_id_to_window_sensors.get(room.room_id, [])
 
-            initial_window_open = any(
-                (s := hass.states.get(sid)) is not None and s.state in ("on", "open")
-                for sid in window_sensors
-            ) if window_sensors else False
-
-            window_entity = SHAWindowOpenBinarySensor(
-                room.room_name, room.room_id, entry.entry_id,
-                subentry_id=subentry_id,
-                initial_state=initial_window_open,
-            )
-            entities.append(window_entity)
-            coordinator.register_window_open_entity(room.room_id, window_entity)
-            _LOGGER.debug(
-                "binary_sensor platform: prepared entity unique_id=%s expected_entity_id=binary_sensor.sha_%s_window_open room='%s'",
-                window_entity.unique_id, room.room_id, room.room_name,
-            )
+            if window_sensors:
+                initial_window_open = any(
+                    (s := hass.states.get(sid)) is not None and s.state in ("on", "open")
+                    for sid in window_sensors
+                )
+                window_entity = SHAWindowOpenBinarySensor(
+                    room.room_name, room.room_id, entry.entry_id,
+                    subentry_id=subentry_id,
+                    initial_state=initial_window_open,
+                )
+                entities.append(window_entity)
+                coordinator.register_window_open_entity(room.room_id, window_entity)
+                _LOGGER.debug(
+                    "binary_sensor platform: prepared entity unique_id=%s expected_entity_id=binary_sensor.sha_%s_window_open room='%s'",
+                    window_entity.unique_id, room.room_id, room.room_name,
+                )
 
         # ── Global vacation entity — one for all rooms ───────────────
         vacation_entity = SHAVacationBinarySensor(entry.entry_id)

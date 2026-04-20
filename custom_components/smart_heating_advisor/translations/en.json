@@ -32,12 +32,13 @@
     "room": {
       "entry_type": "Room",
       "initiate_flow": {
-        "user": "Add Room"
+        "user": "Add Room",
+        "reconfigure": "Edit Room"
       },
       "step": {
         "user": {
-          "title": "Add Room — Step 1/5: Room Setup",
-          "description": "Configure room name, temperature sensor, radiator thermostats and override settings.",
+          "title": "Add Room — Step 1/4: Room Setup",
+          "description": "Configure room name, temperature sensor, radiator thermostats, override settings and humidity monitoring.",
           "data": {
             "room_name": "Room name",
             "thermostat_sensor": "Room temperature sensor",
@@ -45,27 +46,30 @@
             "fixed_trvs": "Fixed temperature TRVs",
             "fixed_trv_temp": "Fixed TRV temperature (°C)",
             "override_enabled": "Enable manual override",
-            "override_duration_minutes": "Override duration (minutes)"
+            "override_duration_minutes": "Override duration (minutes)",
+            "humidity_enabled": "Enable humidity monitoring",
+            "humidity_sensor": "Humidity sensor"
           },
           "data_description": {
             "fixed_trvs": "TRVs that run at a fixed temperature e.g. heated towel rail.",
-            "override_duration_minutes": "How long the manual override pauses automation. Only applies when manual override is enabled."
+            "override_duration_minutes": "How long the manual override pauses automation. Only applies when manual override is enabled.",
+            "humidity_sensor": "SHA monitors humidity to detect shower or cooking activity. SHA determines the alert threshold automatically from historical baseline."
           }
         },
         "windows": {
-          "title": "Add Room — Step 2/5: Windows & Airing ({room_name})",
+          "title": "Add Room — Step 2/4: Windows & Airing ({room_name})",
           "description": "Configure window sensors and airing mode for **{room_name}**. SHA will pause heating when a window is detected open.",
           "data": {
             "window_sensors": "Window and door sensors (optional)",
             "airing_mode_enabled": "Enable airing mode",
-            "airing_duration": "Airing duration (HH:MM:SS)"
+            "airing_duration": "Airing duration"
           },
           "data_description": {
             "airing_duration": "Minimum 00:00:10. How long heating pauses after airing mode is activated."
           }
         },
         "temperature": {
-          "title": "Add Room — Step 3/5: Temperature Profile ({room_name})",
+          "title": "Add Room — Step 3/4: Temperature Profile ({room_name})",
           "description": "Configure temperature profile and comfort schedules for **{room_name}**.",
           "data": {
             "default_temp_enabled": "Enable default temperature",
@@ -77,23 +81,18 @@
             "schedules": "Select your schedule helpers above. To create a new schedule helper, [click here]({schedule_helper_url}). Name it to include the target temperature e.g. 'Morning Shower 26C' or 'Day Heating 20C'."
           }
         },
-        "humidity": {
-          "title": "Add Room — Step 4/5: Humidity ({room_name})",
-          "description": "SHA monitors humidity to detect shower or cooking activity. When humidity rises significantly above the room baseline SHA maintains heating to bring humidity to a comfortable level. SHA determines the threshold automatically from your room's historical baseline. No manual threshold configuration is needed.",
-          "data": {
-            "humidity_enabled": "Enable humidity monitoring",
-            "humidity_sensor": "Humidity sensor"
-          }
-        },
         "confirm": {
-          "title": "Add Room — Step 5/5: Confirm ({room_name})",
-          "description": "Review the configuration for **{room_name}** and click **Submit** to create the room.\n\n- **Room:** {room_name}\n- **Sensor:** {thermostat_sensor}\n- **TRVs:** {trvs}\n- **Fixed TRVs:** {fixed_trvs}\n- **Override:** {override_enabled}\n- **Windows:** {window_sensors}\n- **Airing:** {airing_enabled}\n- **Default temp:** {default_temp}\n- **Schedules:** {schedules_count}\n- **Humidity:** {humidity_enabled}"
+          "title": "Add Room — Step 4/4: Confirm ({room_name})",
+          "description": "Review the configuration for **{room_name}** and click **Submit** to save.\n\n- **Room:** {room_name}\n- **Sensor:** {thermostat_sensor}\n- **TRVs:** {trvs}\n- **Fixed TRVs:** {fixed_trvs}\n- **Override:** {override_enabled}\n- **Windows:** {window_sensors}\n- **Airing:** {airing_enabled}\n- **Default temp:** {default_temp}\n- **Schedules:** {schedules_count}\n- **Humidity:** {humidity_enabled}"
         }
       },
       "error": {
         "required": "This field is required.",
         "room_already_exists": "A room with this name is already configured in SHA. Use a different name.",
         "invalid_airing_duration": "Please enter a valid duration in HH:MM:SS format (minimum 00:00:10)"
+      },
+      "abort": {
+        "reconfigure_successful": "Room settings updated successfully."
       }
     },
     "vacation": {

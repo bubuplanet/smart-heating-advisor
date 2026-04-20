@@ -51,10 +51,8 @@ CONF_VACATION_CALENDAR = "vacation_calendar"
 DEFAULT_VACATION_MODE = "frost"
 
 # ── Room wizard defaults ───────────────────────────────────────────────
-DEFAULT_AIRING_DURATION = 2         # minutes
-DEFAULT_HUMIDITY_THRESHOLD = 70.0   # %
-MIN_HUMIDITY_THRESHOLD = 30.0
-MAX_HUMIDITY_THRESHOLD = 90.0
+DEFAULT_AIRING_DURATION = 2         # minutes — used in Phase 3b migration conversion
+DEFAULT_HUMIDITY_THRESHOLD = 70.0   # % — used in Phase 3 migration defaults only
 
 # ── Blueprint tag ─────────────────────────────────────────────────────
 # Automations created from the SHA blueprint embed this tag in their

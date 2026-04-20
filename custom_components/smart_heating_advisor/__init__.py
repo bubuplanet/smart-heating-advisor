@@ -187,7 +187,7 @@ def _do_create_room_automation(
     temp_sensor: str,
     trvs: list[str],
 ) -> bool:
-    """Write a disabled SHA blueprint automation to automations.yaml.
+    """Write an enabled SHA blueprint automation to automations.yaml.
 
     Runs in executor (blocking I/O).
     Returns True if the automation was created, False if it already existed or
@@ -239,8 +239,7 @@ def _do_create_room_automation(
         "id": str(uuid.uuid4()),
         "alias": alias,
         "description": (
-            f"Smart Heating Advisor automation for {room_name}. "
-            "Configure TRVs, schedules, and sensors in the SHA integration, then enable."
+            f"Smart Heating Advisor automation for {room_name}. Managed by SHA integration."
         ),
         "use_blueprint": {
             "path": "smart_heating_advisor/smart_heating_advisor.yaml",
@@ -263,7 +262,7 @@ def _do_create_room_automation(
             ),
             encoding="utf-8",
         )
-        _LOGGER.info("Created disabled SHA automation for room '%s'", room_name)
+        _LOGGER.info("SHA: created and enabled automation for room '%s'", room_name)
         return True
     except Exception as exc:
         _LOGGER.error("Failed to write automations.yaml for room '%s': %s", room_name, exc)
@@ -324,39 +323,6 @@ async def _async_ensure_room_automations(
             )
         except Exception as exc:
             _LOGGER.warning("SHA: automation.reload failed: %s", exc)
-            return newly_created
-
-        # Disable each newly created automation — `enabled: False` is not
-        # allowed in blueprint automation dicts (HA rejects it at load time),
-        # so we disable via service call after the reload has registered them.
-        for room_config in newly_created:
-            alias = f"SHA — {room_config.get('room_name', '')}"
-            entity_id = None
-            for state in hass.states.async_all("automation"):
-                if state.attributes.get("friendly_name") == alias:
-                    entity_id = state.entity_id
-                    break
-            if entity_id:
-                try:
-                    await hass.services.async_call(
-                        "automation", "turn_off",
-                        {"entity_id": entity_id},
-                        blocking=True,
-                    )
-                    _LOGGER.info(
-                        "SHA: disabled automation '%s' (%s) — enable it after adding schedules",
-                        alias, entity_id,
-                    )
-                except Exception as exc:
-                    _LOGGER.warning(
-                        "SHA: could not disable automation '%s': %s", alias, exc
-                    )
-            else:
-                _LOGGER.warning(
-                    "SHA: could not find automation entity for alias '%s' — "
-                    "disable it manually in Settings → Automations",
-                    alias,
-                )
 
     return newly_created
 
@@ -655,6 +621,77 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         _LOGGER.info("SHA: Phase 3 subentry migration complete")
 
+    # ── Phase 3b: Field rename + new fields migration ─────────────────
+    # Introduced with the Phase 3b config flow redesign:
+    #   - temp_sensor renamed to thermostat_sensor
+    #   - humidity_threshold removed (SHA calculates automatically)
+    #   - airing_duration_minutes converted to airing_duration (HH:MM:SS)
+    #     and airing_duration_seconds (int)
+    #   - override_enabled, override_duration_minutes added
+    #   - schedules added
+    if not entry.data.get("sha_phase3b_migration_complete"):
+        _LOGGER.info("SHA: starting Phase 3b subentry migration")
+        for subentry in list(entry.subentries.values()):
+            sub_room = subentry.data.get("room_name", "")
+            if not sub_room:
+                continue
+            existing = dict(subentry.data)
+            needs_update = False
+
+            # Rename temp_sensor → thermostat_sensor (old value takes precedence)
+            if "temp_sensor" in existing:
+                existing["thermostat_sensor"] = existing.pop("temp_sensor")
+                needs_update = True
+
+            # Remove humidity_threshold (SHA calculates it automatically from data)
+            if "humidity_threshold" in existing:
+                existing.pop("humidity_threshold")
+                needs_update = True
+
+            # Add override fields
+            if "override_enabled" not in existing:
+                existing["override_enabled"] = False
+                needs_update = True
+            if "override_duration_minutes" not in existing:
+                existing["override_duration_minutes"] = 60
+                needs_update = True
+
+            # Convert airing_duration_minutes → airing_duration + airing_duration_seconds
+            if "airing_duration_minutes" in existing and "airing_duration" not in existing:
+                minutes = int(existing.pop("airing_duration_minutes", DEFAULT_AIRING_DURATION))
+                seconds = minutes * 60
+                h = seconds // 3600
+                m = (seconds % 3600) // 60
+                s = seconds % 60
+                existing["airing_duration"] = f"{h:02d}:{m:02d}:{s:02d}"
+                existing["airing_duration_seconds"] = seconds
+                needs_update = True
+            elif "airing_duration" in existing and "airing_duration_seconds" not in existing:
+                try:
+                    parts = existing["airing_duration"].split(":")
+                    existing["airing_duration_seconds"] = (
+                        int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                    )
+                except Exception:
+                    existing["airing_duration_seconds"] = 120
+                needs_update = True
+
+            # Add schedules list if missing
+            if "schedules" not in existing:
+                existing["schedules"] = []
+                needs_update = True
+
+            if needs_update:
+                hass.config_entries.async_update_subentry(entry, subentry, data=existing)
+                _LOGGER.info(
+                    "SHA: Phase 3b migration — updated subentry for room '%s'", sub_room
+                )
+
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, "sha_phase3b_migration_complete": True}
+        )
+        _LOGGER.info("SHA: Phase 3b subentry migration complete")
+
     # ── Phase 2: Sync coordinator with SubEntries (authoritative source) ──
     # SubEntries are the single source of truth after migration.
     # • New subentry (room added via "+ Add Room") → register in coordinator.
@@ -677,8 +714,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             sub_data = subentry_data_by_name[room_name]
             await coordinator.async_register_room(
                 room_name=room_name,
-                temp_sensor=sub_data.get("temp_sensor", ""),
-                schedules=[],
+                temp_sensor=(
+                    sub_data.get("thermostat_sensor") or sub_data.get("temp_sensor", "")
+                ),
+                schedules=sub_data.get("schedules", []),
                 daily_report_enabled=True,
                 weekly_report_enabled=True,
             )
@@ -935,12 +974,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         pn_async_create(
             hass,
             (
-                f"SHA has created {len(newly_created_rooms)} room automation(s).\n\n"
-                "**Next steps for each room:**\n"
-                "1. Open the room's automation (links below)\n"
-                "2. Add your Schedule helpers (e.g. 'Morning Shower 26C')\n"
-                "3. Configure window sensors, vacation mode etc.\n"
-                "4. Enable the automation\n\n"
+                f"SHA has created {len(newly_created_rooms)} room automation(s). "
+                "Each automation is enabled and will start controlling heating immediately.\n\n"
+                "**Optional next steps:**\n"
+                "1. Add Schedule helpers to each room via the integration card\n"
+                "   (e.g. 'Morning Shower 26C', 'Day Heating 20C')\n"
+                "2. Configure window sensors and vacation mode if needed\n\n"
                 f"**Room automations created:**\n{rooms_list}\n\n"
                 "SHA will start AI analysis after the first schedule runs."
             ),

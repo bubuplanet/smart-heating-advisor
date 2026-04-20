@@ -482,7 +482,7 @@ class SmartHeatingCoordinator:
         room_data = self._room_registry.get(room_id, {})
         room_name = (subentry_data.get("room_name") or room_data.get("room_name", "")).strip()
         temp_sensor = str(
-            subentry_data.get("temp_sensor") or room_data.get("temp_sensor", "")
+            subentry_data.get("thermostat_sensor") or room_data.get("temp_sensor", "")
         ).strip()
         schedules = room_data.get("schedules", [])
         if isinstance(schedules, str):

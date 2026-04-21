@@ -9,6 +9,7 @@ from homeassistant.config_entries import (
     ConfigSubentryFlow,
     SubentryFlowResult,
 )
+from homeassistant.data_entry_flow import section
 from homeassistant.core import callback
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers.selector import (
@@ -67,27 +68,48 @@ STEP_1_SCHEMA_BASE = vol.Schema(
         vol.Required("trvs"): EntitySelector(
             EntitySelectorConfig(domain="climate", multiple=True)
         ),
-        vol.Optional("fixed_trvs", default=[]): EntitySelector(
-            EntitySelectorConfig(domain="climate", multiple=True)
+        vol.Optional("fixed_trvs_section"): section(
+            vol.Schema(
+                {
+                    vol.Optional("fixed_trvs", default=[]): EntitySelector(
+                        EntitySelectorConfig(domain="climate", multiple=True)
+                    ),
+                    vol.Optional("fixed_trv_temp", default=20.0): NumberSelector(
+                        NumberSelectorConfig(
+                            min=4.0, max=35.0, step=0.5,
+                            mode=NumberSelectorMode.BOX,
+                            unit_of_measurement="°C",
+                        )
+                    ),
+                }
+            ),
+            {"collapsed": True},
         ),
-        vol.Optional("fixed_trv_temp", default=20.0): NumberSelector(
-            NumberSelectorConfig(
-                min=4.0, max=35.0, step=0.5,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement="°C",
-            )
+        vol.Optional("override_section"): section(
+            vol.Schema(
+                {
+                    vol.Optional("override_enabled", default=False): BooleanSelector(),
+                    vol.Optional("override_duration_minutes", default=60): NumberSelector(
+                        NumberSelectorConfig(
+                            min=5, max=480, step=5,
+                            mode=NumberSelectorMode.BOX,
+                            unit_of_measurement="min",
+                        )
+                    ),
+                }
+            ),
+            {"collapsed": True},
         ),
-        vol.Required("override_enabled", default=False): BooleanSelector(),
-        vol.Optional("override_duration_minutes", default=60): NumberSelector(
-            NumberSelectorConfig(
-                min=5, max=480, step=5,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement="min",
-            )
-        ),
-        vol.Required("humidity_enabled", default=False): BooleanSelector(),
-        vol.Optional("humidity_sensor"): EntitySelector(
-            EntitySelectorConfig(domain="sensor", device_class="humidity")
+        vol.Optional("humidity_section"): section(
+            vol.Schema(
+                {
+                    vol.Optional("humidity_enabled", default=False): BooleanSelector(),
+                    vol.Optional("humidity_sensor"): EntitySelector(
+                        EntitySelectorConfig(domain="sensor", device_class="humidity")
+                    ),
+                }
+            ),
+            {"collapsed": True},
         ),
     }
 )
@@ -266,7 +288,10 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                 errors["trvs"] = "required"
 
             if not errors:
-                fixed_raw = user_input.get("fixed_trvs", [])
+                fixed_sec = user_input.get("fixed_trvs_section") or {}
+                override_sec = user_input.get("override_section") or {}
+                humidity_sec = user_input.get("humidity_section") or {}
+                fixed_raw = fixed_sec.get("fixed_trvs", [])
                 d.update({
                     "room_name": room_name,
                     "thermostat_sensor": thermostat_sensor,
@@ -275,15 +300,33 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                         list(fixed_raw) if isinstance(fixed_raw, list)
                         else ([fixed_raw] if fixed_raw else [])
                     ),
-                    "fixed_trv_temp": float(user_input.get("fixed_trv_temp", 20.0)),
-                    "override_enabled": bool(user_input.get("override_enabled", False)),
+                    "fixed_trv_temp": float(fixed_sec.get("fixed_trv_temp", 20.0)),
+                    "override_enabled": bool(override_sec.get("override_enabled", False)),
                     "override_duration_minutes": int(
-                        user_input.get("override_duration_minutes", 60)
+                        override_sec.get("override_duration_minutes", 60)
                     ),
-                    "humidity_enabled": bool(user_input.get("humidity_enabled", False)),
-                    "humidity_sensor": user_input.get("humidity_sensor", "") or "",
+                    "humidity_enabled": bool(humidity_sec.get("humidity_enabled", False)),
+                    "humidity_sensor": humidity_sec.get("humidity_sensor", "") or "",
                 })
                 return await self.async_step_windows()
+
+        # Build nested suggested values so sections pre-fill correctly
+        suggested = {
+            "thermostat_sensor": d.get("thermostat_sensor"),
+            "trvs": d.get("trvs", []),
+            "fixed_trvs_section": {
+                "fixed_trvs": d.get("fixed_trvs", []),
+                "fixed_trv_temp": d.get("fixed_trv_temp", 20.0),
+            },
+            "override_section": {
+                "override_enabled": d.get("override_enabled", False),
+                "override_duration_minutes": d.get("override_duration_minutes", 60),
+            },
+            "humidity_section": {
+                "humidity_enabled": d.get("humidity_enabled", False),
+                "humidity_sensor": d.get("humidity_sensor"),
+            },
+        }
 
         # Build schema: area dropdown prepended in add mode, omitted in edit mode
         if not self._is_edit:
@@ -305,10 +348,10 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                         **STEP_1_SCHEMA_BASE.schema,
                     }
                 ),
-                d,
+                suggested,
             )
         else:
-            data_schema = self.add_suggested_values_to_schema(STEP_1_SCHEMA_BASE, d)
+            data_schema = self.add_suggested_values_to_schema(STEP_1_SCHEMA_BASE, suggested)
 
         placeholders = {}
         if self._is_edit:

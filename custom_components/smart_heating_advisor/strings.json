@@ -43,10 +43,13 @@
             "room_name": "Room name",
             "thermostat_sensor": "Room temperature sensor",
             "trvs": "Radiator thermostats",
+            "fixed_trvs_section": "Fixed TRVs",
             "fixed_trvs": "Fixed temperature TRVs",
             "fixed_trv_temp": "Fixed TRV temperature (°C)",
+            "override_section": "Manual Override",
             "override_enabled": "Enable manual override",
             "override_duration_minutes": "Override duration (minutes)",
+            "humidity_section": "Humidity Monitoring",
             "humidity_enabled": "Enable humidity monitoring",
             "humidity_sensor": "Humidity sensor"
           },

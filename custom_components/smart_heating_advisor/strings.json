@@ -50,7 +50,7 @@
           "title": "Add Room — Step 1/4: Room Setup",
           "description": "Configure room name, temperature sensor, radiator thermostats, override settings and humidity monitoring.",
           "data": {
-            "room_name": "Room name",
+            "room_name": "Room name *",
             "thermostat_sensor": "Room temperature sensor",
             "trvs": "Radiator thermostats",
             "fixed_trvs": "Fixed temperature TRVs",
@@ -61,7 +61,7 @@
             "humidity_sensor": "Humidity sensor"
           },
           "data_description": {
-            "room_name": "Select an existing area or type a new room name.",
+            "room_name": "Select an existing area from the list or type a new name and press Enter to create a custom room name.",
             "thermostat_sensor": "The temperature sensor in this room used to measure comfort zone temperature.",
             "trvs": "The radiator thermostats SHA will control to heat this room.",
             "fixed_trvs": "TRVs that run at a fixed temperature e.g. a heated towel rail. SHA will not adjust their setpoint.",

@@ -55,31 +55,34 @@
             "trvs": "Radiator thermostats",
             "fixed_trvs": "Fixed temperature TRVs",
             "fixed_trv_temp": "Fixed TRV temperature (°C)",
-            "override_enabled": "Enable manual override",
-            "override_duration_minutes": "Override duration (minutes)",
-            "humidity_enabled": "Enable humidity monitoring",
+            "override_enabled": "Enable",
+            "override_duration_minutes": "Duration (minutes)",
+            "humidity_enabled": "Enable",
             "humidity_sensor": "Humidity sensor"
           },
           "data_description": {
             "room_name": "Select an existing area from the list or type a new name and press Enter to create a custom room name.",
             "thermostat_sensor": "The temperature sensor in this room used to measure comfort zone temperature.",
             "trvs": "The radiator thermostats SHA will control to heat this room.",
-            "fixed_trvs": "TRVs that run at a fixed temperature e.g. a heated towel rail. SHA will not adjust their setpoint.",
-            "fixed_trv_temp": "The fixed temperature SHA will maintain on these TRVs.",
-            "override_enabled": "When enabled allows temporarily pausing SHA heating control for this room for a set duration.",
-            "override_duration_minutes": "How long the override lasts before SHA resumes automatic heating control.",
-            "humidity_enabled": "SHA monitors humidity to detect shower or cooking activity. When humidity rises significantly above the room baseline SHA maintains heating to bring humidity to a comfortable level. SHA determines the threshold automatically.",
-            "humidity_sensor": "The humidity sensor in this room. Used to detect moisture events and adjust heating accordingly."
+            "fixed_trvs": "Select TRVs that should run at a fixed temperature. These will not be adjusted by SHA learning.",
+            "fixed_trv_temp": "The temperature these TRVs will always be set to when heating is active.",
+            "override_enabled": "When turned on SHA will pause automatic heating control for the duration set below.",
+            "override_duration_minutes": "How many minutes SHA pauses before resuming automatic heating control.",
+            "humidity_enabled": "When turned on SHA monitors the humidity sensor and adjusts heating to reduce moisture.",
+            "humidity_sensor": "The humidity sensor in this room used to detect moisture events such as a shower or cooking."
           },
           "sections": {
             "fixed_trvs_section": {
-              "name": "Fixed TRVs"
+              "name": "Fixed TRVs",
+              "description": "For radiators or towel rails that should run at a fixed temperature — for example a heated towel rail set to 30°C. SHA will command these TRVs to the fixed temperature when heating is active but will not adjust their setpoint based on learning. Add these separately from your main radiator thermostats."
             },
             "override_section": {
-              "name": "Manual Override"
+              "name": "Manual Override",
+              "description": "Manual override lets you temporarily take control of this room's heating. When you activate override this will pause all automatic heating decisions for this room for the duration you set here. After the duration expires automation resumes. Useful when you want to heat the room immediately outside room schedules or comfort zone."
             },
             "humidity_section": {
-              "name": "Humidity Monitoring"
+              "name": "Humidity Monitoring",
+              "description": "SHA can use a humidity sensor to detect when the room is in use — for example a shower or cooking. When humidity rises significantly above the room's normal baseline SHA automatically maintains heating to help bring humidity back to a comfortable level. SHA learns your room's normal humidity baseline from historical data — you do not need to set a threshold manually. This works best in bathrooms and kitchens."
             }
           }
         },

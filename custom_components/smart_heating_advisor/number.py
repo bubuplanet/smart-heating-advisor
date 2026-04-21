@@ -124,6 +124,7 @@ class SHAHeatingRateNumber(NumberEntity, RestoreEntity):
                 manufacturer="Smart Heating Advisor",
                 model="Room",
                 via_device=(DOMAIN, self._entry_id),
+                suggested_area=self._room_name,
             )
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry_id}_{self._room_id}")},
@@ -209,6 +210,7 @@ class SHATRVSetpointNumber(NumberEntity, RestoreEntity):
                 manufacturer="Smart Heating Advisor",
                 model="Room",
                 via_device=(DOMAIN, self._entry_id),
+                suggested_area=self._room_name,
             )
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry_id}_{self._room_id}")},
@@ -293,6 +295,7 @@ class SHADefaultTempNumber(NumberEntity, RestoreEntity):
                 manufacturer="Smart Heating Advisor",
                 model="Room",
                 via_device=(DOMAIN, self._entry_id),
+                suggested_area=self._room_name,
             )
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry_id}_{self._room_id}")},

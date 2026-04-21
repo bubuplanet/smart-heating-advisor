@@ -37,6 +37,7 @@ CONF_INFLUXDB_TOKEN = "influxdb_token"
 CONF_INFLUXDB_ORG = "influxdb_org"
 CONF_INFLUXDB_BUCKET = "influxdb_bucket"
 CONF_WEATHER_ENTITY = "weather_entity"
+CONF_OUTSIDE_TEMP_SENSOR = "outside_temp_sensor"
 
 # ── Room config key (stored in entry.data) ────────────────────────────
 CONF_ROOM_CONFIGS = "room_configs"

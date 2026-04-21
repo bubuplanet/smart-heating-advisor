@@ -133,12 +133,14 @@
           "influxdb_org": "InfluxDB Organisation",
           "influxdb_bucket": "InfluxDB Bucket",
           "weather_entity": "Weather entity",
+          "outside_temp_sensor": "Outside temperature sensor",
           "debug_logging": "Enable debug logging"
         },
         "data_description": {
           "debug_logging": "Writes detailed logs for entity creation, room discovery, InfluxDB queries, Ollama prompts and responses, and heating rate updates. Disable when not actively debugging.",
           "influxdb_token": "Changes to connection settings (Ollama, InfluxDB, weather entity) will trigger an integration reload.",
-          "ollama_url": "Changes to connection settings (Ollama, InfluxDB, weather entity) will trigger an integration reload."
+          "ollama_url": "Changes to connection settings (Ollama, InfluxDB, weather entity) will trigger an integration reload.",
+          "outside_temp_sensor": "Select a temperature sensor for outside temperature. Used by SHA for heating analysis. Recommended: use a dedicated outdoor temperature sensor entity. When set, takes priority over the weather entity temperature attribute."
         }
       }
     }

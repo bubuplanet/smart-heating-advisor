@@ -24,6 +24,7 @@ from .const import (
     CONF_INFLUXDB_ORG,
     CONF_INFLUXDB_BUCKET,
     CONF_WEATHER_ENTITY,
+    CONF_OUTSIDE_TEMP_SENSOR,
     CONF_VACATION_ENABLED,
     CONF_VACATION_CALENDAR,
     CONF_VACATION_MODE,
@@ -1230,23 +1231,49 @@ class SmartHeatingCoordinator:
     # ──────────────────────────────────────────────────────────────────
 
     def _get_weather_data(self) -> dict:
-        """Get current and forecast weather from HA weather entity."""
-        weather_entity = self.config.get(CONF_WEATHER_ENTITY, "weather.forecast_home")
-        state = self.hass.states.get(weather_entity)
+        """Get current and forecast weather data.
 
-        if not state:
-            _LOGGER.warning("Weather entity %s not found", weather_entity)
-            return {"outside_temp": 10.0, "tomorrow_min": 5.0, "tomorrow_max": 15.0}
+        Outside temperature: tries outside_temp_sensor (sensor.*) first, then
+        falls back to weather entity temperature attribute.
+        Forecast data (tomorrow min/max) always comes from the weather entity.
+        """
+        outside_temp = 10.0
+        source_used = "default"
 
-        outside_temp = state.attributes.get("temperature", 10.0)
-        forecast = state.attributes.get("forecast", [])
+        # Try dedicated outside temperature sensor first
+        sensor_entity = self.config.get(CONF_OUTSIDE_TEMP_SENSOR)
+        if sensor_entity:
+            sensor_state = self.hass.states.get(sensor_entity)
+            if sensor_state and sensor_state.state not in ("unavailable", "unknown", "none"):
+                try:
+                    outside_temp = float(sensor_state.state)
+                    source_used = sensor_entity
+                except (ValueError, TypeError):
+                    _LOGGER.warning("Outside temp sensor %s has non-numeric state: %s", sensor_entity, sensor_state.state)
+
+        # Fall back to weather entity temperature attribute
+        if source_used == "default":
+            weather_entity = self.config.get(CONF_WEATHER_ENTITY, "weather.forecast_home")
+            state = self.hass.states.get(weather_entity)
+            if state:
+                outside_temp = float(state.attributes.get("temperature", 10.0))
+                source_used = weather_entity
+            else:
+                _LOGGER.warning("Weather entity %s not found", weather_entity)
+
+        _LOGGER.debug("[SHA] Outside temp: %.1f°C (source: %s)", outside_temp, source_used)
+
+        # Forecast (tomorrow min/max) always from weather entity
         tomorrow_min = 5.0
         tomorrow_max = 15.0
-
-        if len(forecast) > 1:
-            tomorrow = forecast[1]
-            tomorrow_min = tomorrow.get("templow", tomorrow.get("temperature", 5.0))
-            tomorrow_max = tomorrow.get("temperature", 15.0)
+        weather_entity = self.config.get(CONF_WEATHER_ENTITY, "weather.forecast_home")
+        weather_state = self.hass.states.get(weather_entity)
+        if weather_state:
+            forecast = weather_state.attributes.get("forecast", [])
+            if len(forecast) > 1:
+                tomorrow = forecast[1]
+                tomorrow_min = tomorrow.get("templow", tomorrow.get("temperature", 5.0))
+                tomorrow_max = tomorrow.get("temperature", 15.0)
 
         return {
             "outside_temp": float(outside_temp),

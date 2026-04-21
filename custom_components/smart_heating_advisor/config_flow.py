@@ -34,6 +34,7 @@ from .const import (
     CONF_INFLUXDB_ORG,
     CONF_INFLUXDB_BUCKET,
     CONF_WEATHER_ENTITY,
+    CONF_OUTSIDE_TEMP_SENSOR,
     CONF_DEBUG_LOGGING,
     CONF_ROOM_CONFIGS,
     CONF_VACATION_ENABLED,
@@ -658,6 +659,7 @@ class SHAOptionsFlow(config_entries.OptionsFlow):
                 CONF_INFLUXDB_URL, CONF_INFLUXDB_TOKEN,
                 CONF_INFLUXDB_ORG, CONF_INFLUXDB_BUCKET,
                 CONF_WEATHER_ENTITY,
+                CONF_OUTSIDE_TEMP_SENSOR,
             ]
             data_changed = any(
                 user_input.get(k) != cd.get(k)
@@ -709,6 +711,12 @@ class SHAOptionsFlow(config_entries.OptionsFlow):
                         CONF_WEATHER_ENTITY,
                         default=cd.get(CONF_WEATHER_ENTITY, "weather.forecast_home"),
                     ): str,
+                    vol.Optional(
+                        CONF_OUTSIDE_TEMP_SENSOR,
+                        **({} if not cd.get(CONF_OUTSIDE_TEMP_SENSOR) else {"default": cd[CONF_OUTSIDE_TEMP_SENSOR]}),
+                    ): EntitySelector(
+                        EntitySelectorConfig(domain="sensor", device_class="temperature")
+                    ),
                     vol.Required(CONF_DEBUG_LOGGING, default=current_debug): bool,
                 }
             ),

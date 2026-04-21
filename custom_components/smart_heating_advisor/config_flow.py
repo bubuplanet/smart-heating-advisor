@@ -21,7 +21,8 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
-    TimeSelector,
+    DurationSelector,
+    DurationSelectorConfig,
 )
 
 from .const import (
@@ -51,6 +52,79 @@ from .const import (
 from .coordinator import _room_name_to_id
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Module-level static schemas (base fields without dynamic/conditional data)
+# ──────────────────────────────────────────────────────────────────────
+
+STEP_1_SCHEMA_BASE = vol.Schema(
+    {
+        vol.Required("thermostat_sensor"): EntitySelector(
+            EntitySelectorConfig(domain="sensor", device_class="temperature")
+        ),
+        vol.Required("trvs"): EntitySelector(
+            EntitySelectorConfig(domain="climate", multiple=True)
+        ),
+        vol.Optional("fixed_trvs", default=[]): EntitySelector(
+            EntitySelectorConfig(domain="climate", multiple=True)
+        ),
+        vol.Optional("fixed_trv_temp", default=20.0): NumberSelector(
+            NumberSelectorConfig(
+                min=4.0, max=35.0, step=0.5,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="°C",
+            )
+        ),
+        vol.Required("override_enabled", default=False): BooleanSelector(),
+        vol.Optional("override_duration_minutes", default=60): NumberSelector(
+            NumberSelectorConfig(
+                min=5, max=480, step=5,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="min",
+            )
+        ),
+        vol.Required("humidity_enabled", default=False): BooleanSelector(),
+        vol.Optional("humidity_sensor"): EntitySelector(
+            EntitySelectorConfig(domain="sensor", device_class="humidity")
+        ),
+    }
+)
+
+STEP_2_SCHEMA = vol.Schema(
+    {
+        vol.Optional("window_sensors", default=[]): EntitySelector(
+            EntitySelectorConfig(
+                domain="binary_sensor",
+                device_class=["window", "door", "opening"],
+                multiple=True,
+            )
+        ),
+        vol.Required("airing_mode_enabled", default=False): BooleanSelector(),
+        vol.Optional(
+            "airing_duration",
+            default={"hours": 0, "minutes": 2, "seconds": 0},
+        ): DurationSelector(DurationSelectorConfig(enable_day=False)),
+    }
+)
+
+STEP_3_SCHEMA = vol.Schema(
+    {
+        vol.Required("default_temp_enabled", default=False): BooleanSelector(),
+        vol.Optional("default_temp", default=DEFAULT_DEFAULT_TEMP): NumberSelector(
+            NumberSelectorConfig(
+                min=MIN_DEFAULT_TEMP,
+                max=MAX_DEFAULT_TEMP,
+                step=0.5,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="°C",
+            )
+        ),
+        vol.Optional("schedules", default=[]): EntitySelector(
+            EntitySelectorConfig(domain="schedule", multiple=True)
+        ),
+    }
+)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -119,7 +193,7 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
     def _existing_room_ids(self) -> set[str]:
         """Return room_ids already configured, excluding the subentry being edited."""
         entry = self._get_entry()
-        exclude = self.context.get("subentry_id") if self._is_edit else None
+        exclude = self._get_reconfigure_subentry().subentry_id if self._is_edit else None
         return {
             _room_name_to_id(s.data.get("room_name", ""))
             for s in entry.subentries.values()
@@ -129,22 +203,24 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
         }
 
     @staticmethod
-    def _parse_hms(value: str) -> tuple[int, str]:
-        """Parse HH:MM:SS string to (total_seconds, normalised_str).
-
-        Raises ValueError if format is invalid or duration is below 10 seconds.
-        """
-        import re as _re
-        m = _re.match(r"^(\d{1,2}):(\d{2}):(\d{2})$", value.strip())
-        if not m:
-            raise ValueError(f"invalid format: {value!r}")
-        h, mn, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        if mn >= 60 or s >= 60:
-            raise ValueError(f"invalid time components: {value!r}")
-        total = h * 3600 + mn * 60 + s
+    def _seconds_from_duration(val) -> tuple[int, str]:
+        """Parse DurationSelector dict or legacy HH:MM:SS string to (total_seconds, normalised_str)."""
+        if isinstance(val, dict):
+            h = int(val.get("hours", 0))
+            m = int(val.get("minutes", 0))
+            s = int(val.get("seconds", 0))
+        else:
+            import re
+            match = re.match(r"^(\d{1,2}):(\d{2}):(\d{2})$", str(val).strip())
+            if not match:
+                raise ValueError(f"invalid: {val!r}")
+            h = int(match.group(1))
+            m = int(match.group(2))
+            s = int(match.group(3))
+        total = h * 3600 + m * 60 + s
         if total < 10:
-            raise ValueError(f"duration below 10 s: {value!r}")
-        return total, f"{h:02d}:{mn:02d}:{s:02d}"
+            raise ValueError("too short")
+        return total, f"{h:02d}:{m:02d}:{s:02d}"
 
     # ── Edit mode entry point ────────────────────────────────────────
 
@@ -152,9 +228,7 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
         self, user_input: dict | None = None
     ) -> SubentryFlowResult:
         """Pre-fill from existing subentry and route to Step 1."""
-        subentry_id = self.context.get("subentry_id")
-        entry = self._get_entry()
-        subentry = entry.subentries.get(subentry_id)
+        subentry = self._get_reconfigure_subentry()
         if subentry:
             self._data = dict(subentry.data)
         return await self.async_step_user()
@@ -210,68 +284,30 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                 })
                 return await self.async_step_windows()
 
-        # Build room-name field: area dropdown in add mode, omitted in edit mode
-        schema_dict: dict = {}
+        # Build schema: area dropdown prepended in add mode, omitted in edit mode
         if not self._is_edit:
             areas = ar.async_get(self.hass).async_list_areas()
             area_options = [
                 {"value": a.name, "label": a.name}
                 for a in sorted(areas, key=lambda a: a.name)
             ]
-            schema_dict[vol.Required("room_name", default=d.get("room_name", ""))] = (
-                SelectSelector(
-                    SelectSelectorConfig(
-                        options=area_options,
-                        custom_value=True,
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                )
+            data_schema = self.add_suggested_values_to_schema(
+                vol.Schema(
+                    {
+                        vol.Required("room_name"): SelectSelector(
+                            SelectSelectorConfig(
+                                options=area_options,
+                                custom_value=True,
+                                mode=SelectSelectorMode.DROPDOWN,
+                            )
+                        ),
+                        **STEP_1_SCHEMA_BASE.schema,
+                    }
+                ),
+                d,
             )
-
-        schema_dict.update(
-            {
-                vol.Required(
-                    "thermostat_sensor",
-                    **({} if not d.get("thermostat_sensor") else {"default": d["thermostat_sensor"]}),
-                ): EntitySelector(
-                    EntitySelectorConfig(domain="sensor", device_class="temperature")
-                ),
-                vol.Required(
-                    "trvs",
-                    **({} if not d.get("trvs") else {"default": d["trvs"]}),
-                ): EntitySelector(
-                    EntitySelectorConfig(domain="climate", multiple=True)
-                ),
-                vol.Optional("fixed_trvs", default=d.get("fixed_trvs", [])): EntitySelector(
-                    EntitySelectorConfig(domain="climate", multiple=True)
-                ),
-                vol.Optional("fixed_trv_temp", default=d.get("fixed_trv_temp", 20.0)): NumberSelector(
-                    NumberSelectorConfig(
-                        min=4.0, max=35.0, step=0.5,
-                        mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="°C",
-                    )
-                ),
-                vol.Required("override_enabled", default=d.get("override_enabled", False)): BooleanSelector(),
-                vol.Optional(
-                    "override_duration_minutes",
-                    default=d.get("override_duration_minutes", 60),
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=5, max=480, step=5,
-                        mode=NumberSelectorMode.BOX,
-                        unit_of_measurement="min",
-                    )
-                ),
-                vol.Required("humidity_enabled", default=d.get("humidity_enabled", False)): BooleanSelector(),
-                vol.Optional(
-                    "humidity_sensor",
-                    **({} if not d.get("humidity_sensor") else {"default": d["humidity_sensor"]}),
-                ): EntitySelector(
-                    EntitySelectorConfig(domain="sensor", device_class="humidity")
-                ),
-            }
-        )
+        else:
+            data_schema = self.add_suggested_values_to_schema(STEP_1_SCHEMA_BASE, d)
 
         placeholders = {}
         if self._is_edit:
@@ -279,13 +315,13 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema(schema_dict),
+            data_schema=data_schema,
             errors=errors,
             description_placeholders=placeholders or None,
             last_step=False,
         )
 
-    # ── Step 2: Windows + airing (TimeSelector) ──────────────────────
+    # ── Step 2: Windows + airing (DurationSelector) ──────────────────
 
     async def async_step_windows(
         self, user_input: dict | None = None
@@ -297,9 +333,9 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
         if user_input is not None:
             sensors = user_input.get("window_sensors", [])
             airing_enabled = bool(user_input.get("airing_mode_enabled", False))
-            raw = str(user_input.get("airing_duration") or "00:02:00").strip()
+            raw_duration = user_input.get("airing_duration") or {"hours": 0, "minutes": 2, "seconds": 0}
             try:
-                total_secs, norm_str = self._parse_hms(raw)
+                total_secs, norm_str = self._seconds_from_duration(raw_duration)
             except ValueError:
                 if airing_enabled:
                     errors["airing_duration"] = "invalid_airing_duration"
@@ -317,27 +353,20 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                 })
                 return await self.async_step_temperature()
 
+        # Convert stored HH:MM:SS string to dict for DurationSelector pre-fill
+        suggested = dict(d)
+        stored_ad = suggested.get("airing_duration")
+        if isinstance(stored_ad, str):
+            parts = stored_ad.split(":")
+            suggested["airing_duration"] = {
+                "hours": int(parts[0]),
+                "minutes": int(parts[1]),
+                "seconds": int(parts[2]),
+            }
+
         return self.async_show_form(
             step_id="windows",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional("window_sensors", default=d.get("window_sensors", [])): EntitySelector(
-                        EntitySelectorConfig(
-                            domain="binary_sensor",
-                            device_class=["window", "door", "opening"],
-                            multiple=True,
-                        )
-                    ),
-                    vol.Required(
-                        "airing_mode_enabled",
-                        default=d.get("airing_mode_enabled", False),
-                    ): BooleanSelector(),
-                    vol.Optional(
-                        "airing_duration",
-                        default=d.get("airing_duration", "00:02:00"),
-                    ): TimeSelector(),
-                }
-            ),
+            data_schema=self.add_suggested_values_to_schema(STEP_2_SCHEMA, suggested),
             description_placeholders={"room_name": d.get("room_name", "")},
             errors=errors,
             last_step=False,
@@ -365,32 +394,7 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
 
         return self.async_show_form(
             step_id="temperature",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        "default_temp_enabled",
-                        default=d.get("default_temp_enabled", False),
-                    ): BooleanSelector(),
-                    vol.Optional(
-                        "default_temp",
-                        default=d.get("default_temp", DEFAULT_DEFAULT_TEMP),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=MIN_DEFAULT_TEMP,
-                            max=MAX_DEFAULT_TEMP,
-                            step=0.5,
-                            mode=NumberSelectorMode.BOX,
-                            unit_of_measurement="°C",
-                        )
-                    ),
-                    vol.Optional(
-                        "schedules",
-                        default=d.get("schedules", []),
-                    ): EntitySelector(
-                        EntitySelectorConfig(domain="schedule", multiple=True)
-                    ),
-                }
-            ),
+            data_schema=self.add_suggested_values_to_schema(STEP_3_SCHEMA, d),
             description_placeholders={
                 "room_name": d.get("room_name", ""),
                 "schedule_helper_url": "/config/helpers/add?domain=schedule",

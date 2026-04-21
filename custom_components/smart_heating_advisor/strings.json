@@ -65,7 +65,7 @@
             "airing_duration": "Airing duration"
           },
           "data_description": {
-            "airing_duration": "Minimum 00:00:10. How long heating pauses after airing mode is activated."
+            "airing_duration": "Minimum 10 seconds. How long heating pauses after airing mode is activated."
           }
         },
         "temperature": {

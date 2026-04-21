@@ -31,7 +31,7 @@ from .const import (
     CONF_VACATION_END_DATE,
     DEFAULT_HEATING_RATE,
     DEFAULT_VACATION_MODE,
-    DEFAULT_DEFAULT_TEMP,
+    DEFAULT_COMFORT_TEMP,
     MIN_HEATING_RATE,
     MAX_HEATING_RATE,
     DEFAULT_TRV_SETPOINT,
@@ -500,17 +500,39 @@ class SmartHeatingCoordinator:
         temp_sensor = str(
             subentry_data.get("thermostat_sensor") or room_data.get("temp_sensor", "")
         ).strip()
-        schedules = room_data.get("schedules", [])
-        if isinstance(schedules, str):
-            schedules = [schedules] if schedules.strip() else []
-        elif not isinstance(schedules, list):
-            schedules = []
-
         trvs = list(subentry_data.get("trvs", []))
         fixed_trvs = list(subentry_data.get("fixed_trvs", []))
-        fixed_trv_temp = float(subentry_data.get("fixed_trv_temp", DEFAULT_DEFAULT_TEMP))
-        default_temp_enabled = bool(subentry_data.get("default_temp_enabled", True))
-        default_temp = float(subentry_data.get("default_temp", DEFAULT_DEFAULT_TEMP))
+        fixed_trv_temp = float(subentry_data.get("fixed_trv_temp", DEFAULT_COMFORT_TEMP))
+        comfort_temp_enabled = bool(subentry_data.get("comfort_temp_enabled", True))
+        comfort_temp = float(subentry_data.get("comfort_temp", DEFAULT_COMFORT_TEMP))
+
+        # Build schedule list as dicts with entity_id + target_temp.
+        # Source priority: subentry data (new dict format) → subentry strings
+        # (legacy, temp from name) → room registry strings (oldest legacy).
+        raw_schedules = subentry_data.get("schedules") or room_data.get("schedules", [])
+        if isinstance(raw_schedules, str):
+            raw_schedules = [raw_schedules] if raw_schedules.strip() else []
+        elif not isinstance(raw_schedules, list):
+            raw_schedules = []
+
+        schedules: list[dict] = []
+        for s in raw_schedules:
+            if isinstance(s, dict):
+                eid = s.get("entity_id", "")
+                if eid:
+                    schedules.append({"entity_id": eid, "target_temp": float(s.get("target_temp", 21.0))})
+            elif isinstance(s, str) and s:
+                state = self.hass.states.get(s)
+                fname = state.attributes.get("friendly_name", s) if state else s
+                schedules.append({"entity_id": s, "target_temp": extract_temp_from_schedule_name(fname, 21.0)})
+
+        # Use live entity value for comfort_temp if entity already exists
+        comfort_entity = self.hass.states.get(f"number.sha_{room_id}_comfort_temp")
+        if comfort_entity and comfort_entity.state not in ("unavailable", "unknown", "none"):
+            try:
+                comfort_temp = float(comfort_entity.state)
+            except (ValueError, TypeError):
+                pass
 
         vac_cfg = self._get_vacation_config()
         vacation_mode = vac_cfg.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE)
@@ -533,8 +555,8 @@ class SmartHeatingCoordinator:
             "trvs": trvs,
             "fixed_trvs": fixed_trvs,
             "fixed_trv_temp": fixed_trv_temp,
-            "default_hvac_mode": "heat" if default_temp_enabled else "off",
-            "default_temp": default_temp,
+            "default_hvac_mode": "heat" if comfort_temp_enabled else "off",
+            "comfort_temp": comfort_temp,
             "vacation_active": vacation_active,
             "vacation_mode": vacation_mode,
             "vacation_temp": vacation_temp,
@@ -1107,12 +1129,36 @@ class SmartHeatingCoordinator:
                 latest = first_ts
         return latest
 
-    def _enrich_schedules_info(self, schedules: list[dict]) -> list[dict]:
-        """Add ``target_temp`` and ``schedule_time`` to each schedule info dict."""
+    def _get_subentry_schedule_configs(self, room_id: str) -> dict[str, float]:
+        """Return {entity_id: target_temp} from subentry schedule config for a room."""
+        for s in self.entry.subentries.values():
+            if _room_name_to_id(s.data.get("room_name", "")) == room_id:
+                result: dict[str, float] = {}
+                for sched in s.data.get("schedules", []):
+                    if isinstance(sched, dict):
+                        eid = sched.get("entity_id", "")
+                        if eid:
+                            result[eid] = float(sched.get("target_temp", 21.0))
+                return result
+        return {}
+
+    def _enrich_schedules_info(
+        self,
+        schedules: list[dict],
+        config_target_temps: dict[str, float] | None = None,
+    ) -> list[dict]:
+        """Add ``target_temp`` and ``schedule_time`` to each schedule info dict.
+
+        Prefers target_temp from config_target_temps (subentry config) over name parsing.
+        """
         result = []
         for s in schedules:
+            entity_id = s.get("entity_id", "")
             name = s.get("name", "")
-            target_temp = extract_temp_from_schedule_name(name, 21.0)
+            if config_target_temps and entity_id in config_target_temps:
+                target_temp = config_target_temps[entity_id]
+            else:
+                target_temp = extract_temp_from_schedule_name(name, 21.0)
             schedule_time = "n/a"
             next_event = s.get("next_event")
             if next_event:
@@ -1213,22 +1259,28 @@ class SmartHeatingCoordinator:
 
         return result
 
-    def _primary_schedule_info(self, schedules: list[dict]) -> dict:
+    def _primary_schedule_info(
+        self,
+        schedules: list[dict],
+        config_target_temps: dict[str, float] | None = None,
+    ) -> dict:
         """Return name, target_temp, and schedule_time for the primary schedule.
 
-        The primary schedule is the one with the highest target temperature,
-        which is extracted from the schedule entity's friendly name using the
-        same regex as the blueprint (e.g. "Morning Shower 26C" → 26°C).
+        The primary schedule is the one with the highest target temperature.
+        Uses config_target_temps when available, falls back to name parsing.
         """
         if not schedules:
             return {"name": "Default", "target_temp": 21.0, "schedule_time": "n/a"}
 
-        best = max(
-            schedules,
-            key=lambda s: extract_temp_from_schedule_name(s.get("name", ""), 21.0),
-        )
+        def _temp_for(s: dict) -> float:
+            eid = s.get("entity_id", "")
+            if config_target_temps and eid in config_target_temps:
+                return config_target_temps[eid]
+            return extract_temp_from_schedule_name(s.get("name", ""), 21.0)
+
+        best = max(schedules, key=_temp_for)
         name = best.get("name", "Default")
-        target_temp = extract_temp_from_schedule_name(name, 21.0)
+        target_temp = _temp_for(best)
 
         schedule_time = "n/a"
         next_event = best.get("next_event")
@@ -1624,8 +1676,9 @@ class SmartHeatingCoordinator:
 
         # ── 4. Schedules ─────────────────────────────────────────────
         schedules = await self._async_get_schedule_info_with_fallback(room)
-        schedules_info = self._enrich_schedules_info(schedules)
-        primary = self._primary_schedule_info(schedules)
+        config_temps = self._get_subentry_schedule_configs(room.room_id)
+        schedules_info = self._enrich_schedules_info(schedules, config_temps)
+        primary = self._primary_schedule_info(schedules, config_temps)
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "[%s] Schedules: %d — %s | primary: %s target=%.1f°C time=%s",
@@ -2120,8 +2173,9 @@ class SmartHeatingCoordinator:
 
         # ── 4. Schedules ─────────────────────────────────────────────
         schedules = await self._async_get_schedule_info_with_fallback(room)
-        schedules_info = self._enrich_schedules_info(schedules)
-        primary = self._primary_schedule_info(schedules)
+        config_temps = self._get_subentry_schedule_configs(room.room_id)
+        schedules_info = self._enrich_schedules_info(schedules, config_temps)
+        primary = self._primary_schedule_info(schedules, config_temps)
 
         # ── 5. Schedule ON periods ───────────────────────────────────
         schedule_entity_ids = [s["entity_id"] for s in schedules_info]

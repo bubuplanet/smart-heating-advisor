@@ -49,9 +49,9 @@ from .const import (
     DEFAULT_INFLUXDB_ORG,
     DEFAULT_INFLUXDB_BUCKET,
     DEFAULT_VACATION_MODE,
-    DEFAULT_DEFAULT_TEMP,
-    MIN_DEFAULT_TEMP,
-    MAX_DEFAULT_TEMP,
+    DEFAULT_COMFORT_TEMP,
+    MIN_COMFORT_TEMP,
+    MAX_COMFORT_TEMP,
 )
 from .coordinator import _room_name_to_id
 
@@ -59,7 +59,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Module-level static schemas (base fields without dynamic/conditional data)
+# Module-level static schemas
 # ──────────────────────────────────────────────────────────────────────
 
 STEP_1_SCHEMA_BASE = vol.Schema(
@@ -116,6 +116,34 @@ STEP_1_SCHEMA_BASE = vol.Schema(
     }
 )
 
+# Step 2: multi-schedule wizard (loops until add_another_schedule is False)
+STEP_3_SCHEMA = vol.Schema(
+    {
+        vol.Optional("schedule_entity"): EntitySelector(
+            EntitySelectorConfig(domain="schedule")
+        ),
+        vol.Optional("schedule_target_temp", default=21.0): NumberSelector(
+            NumberSelectorConfig(
+                min=4.0, max=35.0, step=0.5,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="°C",
+            )
+        ),
+        vol.Optional("add_another_schedule", default=False): BooleanSelector(),
+        vol.Optional("comfort_temp_enabled", default=False): BooleanSelector(),
+        vol.Optional("comfort_temp", default=DEFAULT_COMFORT_TEMP): NumberSelector(
+            NumberSelectorConfig(
+                min=MIN_COMFORT_TEMP,
+                max=MAX_COMFORT_TEMP,
+                step=0.5,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="°C",
+            )
+        ),
+    }
+)
+
+# Step 3: windows & airing
 STEP_2_SCHEMA = vol.Schema(
     {
         vol.Optional("window_sensors", default=[]): EntitySelector(
@@ -130,24 +158,6 @@ STEP_2_SCHEMA = vol.Schema(
             "airing_duration",
             default={"hours": 0, "minutes": 2, "seconds": 0},
         ): DurationSelector(DurationSelectorConfig(enable_day=False)),
-    }
-)
-
-STEP_3_SCHEMA = vol.Schema(
-    {
-        vol.Optional("schedules", default=[]): EntitySelector(
-            EntitySelectorConfig(domain="schedule", multiple=True)
-        ),
-        vol.Required("default_temp_enabled", default=False): BooleanSelector(),
-        vol.Optional("default_temp", default=DEFAULT_DEFAULT_TEMP): NumberSelector(
-            NumberSelectorConfig(
-                min=MIN_DEFAULT_TEMP,
-                max=MAX_DEFAULT_TEMP,
-                step=0.5,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement="°C",
-            )
-        ),
     }
 )
 
@@ -203,8 +213,8 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
     """4-step room wizard for adding or reconfiguring a room.
 
     Step 1 (user):        Room name + sensors + TRVs + override + humidity
-    Step 2 (windows):     Window sensors + airing mode (DurationSelector)
-    Step 3 (temperature): Temperature profile + schedule helpers
+    Step 2 (temperature): Schedules (multi-pass loop) + comfort temperature
+    Step 3 (windows):     Window sensors + airing mode
     Step 4 (confirm):     Review and create/update
     """
 
@@ -310,7 +320,7 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                     "humidity_enabled": bool(humidity_sec.get("humidity_enabled", False)),
                     "humidity_sensor": humidity_sec.get("humidity_sensor", "") or "",
                 })
-                return await self.async_step_windows()
+                return await self.async_step_temperature()
 
         # Build nested suggested values so sections pre-fill correctly
         suggested = {
@@ -330,7 +340,6 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
             },
         }
 
-        # Build schema: area dropdown prepended in add mode, omitted in edit mode
         if not self._is_edit:
             areas = ar.async_get(self.hass).async_list_areas()
             area_options = [
@@ -367,12 +376,84 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
             last_step=False,
         )
 
-    # ── Step 2: Windows + airing (DurationSelector) ──────────────────
+    # ── Step 2: Temperature profile — multi-pass schedule builder ────
+
+    async def async_step_temperature(
+        self, user_input: dict | None = None
+    ) -> SubentryFlowResult:
+        """Step 2/4 — Add schedules one at a time, then set comfort temperature."""
+        errors: dict[str, str] = {}
+        d = self._data
+
+        # Ensure schedules list exists (persists across loop iterations)
+        if "schedules" not in d:
+            d["schedules"] = []
+
+        if user_input is not None:
+            schedule_entity = (user_input.get("schedule_entity") or "").strip()
+            schedule_target_temp = float(user_input.get("schedule_target_temp", 21.0))
+            add_another = bool(user_input.get("add_another_schedule", False))
+            comfort_temp_enabled = bool(user_input.get("comfort_temp_enabled", False))
+            comfort_temp = float(user_input.get("comfort_temp", DEFAULT_COMFORT_TEMP))
+
+            # Always persist comfort settings
+            d["comfort_temp_enabled"] = comfort_temp_enabled
+            d["comfort_temp"] = comfort_temp
+
+            # Append schedule if entity was selected
+            if schedule_entity:
+                d["schedules"].append({
+                    "entity_id": schedule_entity,
+                    "target_temp": schedule_target_temp,
+                })
+
+            if add_another:
+                # Loop: show form again, clear schedule fields, show accumulated list
+                return await self.async_step_temperature()
+
+            # Final submit: validate at least one schedule or comfort temp enabled
+            if not d["schedules"] and not comfort_temp_enabled:
+                errors["schedule_entity"] = "temperature_profile_required"
+            else:
+                return await self.async_step_windows()
+
+        # Build description showing accumulated schedules
+        added = d.get("schedules", [])
+        if added:
+            schedule_list = "\n".join(
+                f"• {s['entity_id'].replace('schedule.', '').replace('_', ' ').title()} → {s['target_temp']}°C"
+                for s in added
+            )
+        else:
+            schedule_list = "None yet"
+
+        # Pre-fill comfort settings from accumulated data; leave schedule fields empty
+        suggested = {
+            "schedule_entity": None,
+            "schedule_target_temp": 21.0,
+            "add_another_schedule": False,
+            "comfort_temp_enabled": d.get("comfort_temp_enabled", False),
+            "comfort_temp": d.get("comfort_temp", DEFAULT_COMFORT_TEMP),
+        }
+
+        return self.async_show_form(
+            step_id="temperature",
+            data_schema=self.add_suggested_values_to_schema(STEP_3_SCHEMA, suggested),
+            description_placeholders={
+                "room_name": d.get("room_name", ""),
+                "added_schedules": schedule_list,
+                "schedule_url": "/config/helpers/add?domain=schedule",
+            },
+            errors=errors,
+            last_step=False,
+        )
+
+    # ── Step 3: Windows + airing ──────────────────────────────────────
 
     async def async_step_windows(
         self, user_input: dict | None = None
     ) -> SubentryFlowResult:
-        """Step 2/4 — Window sensors and airing mode duration."""
+        """Step 3/4 — Window sensors and airing mode duration."""
         errors: dict[str, str] = {}
         d = self._data
 
@@ -397,7 +478,7 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                     "airing_duration": norm_str,
                     "airing_duration_seconds": total_secs,
                 })
-                return await self.async_step_temperature()
+                return await self.async_step_confirm()
 
         # Convert stored HH:MM:SS string to dict for DurationSelector pre-fill
         suggested = dict(d)
@@ -415,35 +496,6 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
             data_schema=self.add_suggested_values_to_schema(STEP_2_SCHEMA, suggested),
             description_placeholders={"room_name": d.get("room_name", "")},
             errors=errors,
-            last_step=False,
-        )
-
-    # ── Step 3: Temperature profile + schedule helpers ────────────────
-
-    async def async_step_temperature(
-        self, user_input: dict | None = None
-    ) -> SubentryFlowResult:
-        """Step 3/4 — Standby temperature and comfort schedule helpers."""
-        d = self._data
-
-        if user_input is not None:
-            schedules_raw = user_input.get("schedules", [])
-            d.update({
-                "default_temp_enabled": bool(user_input.get("default_temp_enabled", False)),
-                "default_temp": float(user_input.get("default_temp", DEFAULT_DEFAULT_TEMP)),
-                "schedules": (
-                    list(schedules_raw) if isinstance(schedules_raw, list)
-                    else ([schedules_raw] if schedules_raw else [])
-                ),
-            })
-            return await self.async_step_confirm()
-
-        return self.async_show_form(
-            step_id="temperature",
-            data_schema=self.add_suggested_values_to_schema(STEP_3_SCHEMA, d),
-            description_placeholders={
-                "room_name": d.get("room_name", ""),
-            },
             last_step=False,
         )
 
@@ -469,9 +521,9 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                 "airing_mode_enabled": d.get("airing_mode_enabled", False),
                 "airing_duration": d.get("airing_duration", "00:02:00"),
                 "airing_duration_seconds": d.get("airing_duration_seconds", 120),
-                "default_temp_enabled": d.get("default_temp_enabled", False),
-                "default_temp": d.get("default_temp", DEFAULT_DEFAULT_TEMP),
                 "schedules": d.get("schedules", []),
+                "comfort_temp_enabled": d.get("comfort_temp_enabled", False),
+                "comfort_temp": d.get("comfort_temp", DEFAULT_COMFORT_TEMP),
                 "humidity_enabled": d.get("humidity_enabled", False),
                 "humidity_sensor": d.get("humidity_sensor", ""),
             }
@@ -494,9 +546,9 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
             f"enabled ({d.get('airing_duration', '00:02:00')})"
             if d.get("airing_mode_enabled") else "disabled"
         )
-        default_temp_s = (
-            f"{d.get('default_temp', DEFAULT_DEFAULT_TEMP)}°C"
-            if d.get("default_temp_enabled") else "disabled"
+        comfort_temp_s = (
+            f"{d.get('comfort_temp', DEFAULT_COMFORT_TEMP)}°C"
+            if d.get("comfort_temp_enabled") else "disabled"
         )
         schedules_s = f"{len(schedules)} schedule(s)" if schedules else "none"
 
@@ -511,7 +563,7 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                 "override_enabled": "enabled" if d.get("override_enabled") else "disabled",
                 "window_sensors": windows_s,
                 "airing_enabled": airing_s,
-                "default_temp": default_temp_s,
+                "comfort_temp": comfort_temp_s,
                 "schedules_count": schedules_s,
                 "humidity_enabled": "enabled" if d.get("humidity_enabled") else "disabled",
             },
@@ -597,17 +649,7 @@ class SHAVacationSubentryFlowHandler(ConfigSubentryFlow):
 # ──────────────────────────────────────────────────────────────────────
 
 class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle config flow for Smart Heating Advisor.
-
-    2 steps:
-      1. Ollama — URL + model, connection tested
-      2. InfluxDB — URL, token, org, bucket, connection tested → create entry
-
-    Room management after initial setup:
-      Add Room: "➕ Add Room" button on integration card → SHARoomSubentryFlowHandler
-      Remove Room: ⋮ → Delete on a room subentry card
-    Global settings: gear icon → options flow (connection settings + vacation)
-    """
+    """Handle config flow for Smart Heating Advisor."""
 
     VERSION = 1
 
@@ -623,7 +665,6 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_supported_subentry_types(
         cls, config_entry: config_entries.ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
-        """Return subentry flow handlers supported by this integration."""
         return {
             "room": SHARoomSubentryFlowHandler,
             "vacation": SHAVacationSubentryFlowHandler,
@@ -631,8 +672,6 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._ollama_data: dict = {}
-
-    # ── Step 1: Ollama ────────────────────────────────────────────────
 
     async def async_step_user(self, user_input=None) -> ConfigFlowResult:
         """Step 1 — Ollama configuration."""
@@ -658,10 +697,8 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    # ── Step 2: InfluxDB → create entry ──────────────────────────────
-
     async def async_step_influxdb(self, user_input=None) -> ConfigFlowResult:
-        """Step 2 — InfluxDB configuration. Creates the config entry on success."""
+        """Step 2 — InfluxDB configuration."""
         errors = {}
 
         if user_input is not None:
@@ -697,15 +734,11 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Options flow — global settings (2 steps)
+# Options flow
 # ──────────────────────────────────────────────────────────────────────
 
 class SHAOptionsFlow(config_entries.OptionsFlow):
-    """Handle SHA options — connection settings, weather entity, and debug toggle.
-
-    Single step: connection settings + weather entity + debug toggle.
-    Vacation is configured via the dedicated Vacation subentry on the integration card.
-    """
+    """Handle SHA options — connection settings, weather entity, and debug toggle."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry

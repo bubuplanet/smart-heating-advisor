@@ -2,7 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    **version: 0.0.18**
+    **version: 0.0.19**
 
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
@@ -14,21 +14,16 @@ blueprint:
     ✨ Features
     - ⏱️ Smart pre-heat: timing calculated from room temp + heating rate
     - 📅 Unlimited schedules — configured once in the SHA integration
-    - 🌡️ Per-schedule target temperature — encoded in the schedule name (e.g. "Morning Shower 26C")
+    - 🌡️ Per-schedule target temperature — set in the SHA room wizard
     - 🔥 Optional fixed-temperature radiator thermostat (towel rails, floor heating, etc.)
     - 🏖️ Vacation mode — configured once in SHA integration settings
     - 🪟 Window & door detection — configured once per room in SHA integration
     - ✋ Manual override switch — toggle switch.sha_ROOM_override
     - 🤖 AI heating rate calibration — auto-adjusted daily by SHA
 
-    📝 Schedule naming convention
-    Name each Schedule helper with the target temperature at the end:
-      ✅ "Morning Shower 26C"
-      ✅ "Evening Bath 28C"
-      ✅ "Night Standby 16C"
-      ✅ "Weekend 20C"
-    The blueprint reads the temperature automatically from the name.
-    If no temperature is found in the name, 21°C is used as fallback.
+    📝 Schedule setup
+    Add schedules via Settings → Integrations → Smart Heating Advisor → Add Room.
+    Each schedule gets its own target temperature configured in the wizard.
 
     🛠️ Setup
     Install SHA via HACS, then complete the setup wizard:
@@ -41,6 +36,7 @@ blueprint:
     Required entities (auto-created by SHA):
     - number.sha_ROOM_heating_rate
     - number.sha_ROOM_trv_setpoint
+    - number.sha_ROOM_comfort_temp
     - switch.sha_ROOM_airing_mode
     - switch.sha_ROOM_override
     - binary_sensor.sha_ROOM_window_open
@@ -107,6 +103,7 @@ action:
       default_hvac_mode: "{{ room_cfg.default_hvac_mode }}"
       vacation_mode:     "{{ room_cfg.vacation_mode }}"
       vacation_temp:     "{{ room_cfg.vacation_temp | float(7) }}"
+      comfort_temp_cfg:  "{{ room_cfg.comfort_temp | float(18.0) }}"
 
   # ── Live state from SHA entities ───────────────────────────────────────
   - variables:
@@ -117,25 +114,30 @@ action:
         {% set _we = 'binary_sensor.sha_' ~ room_id ~ '_window_open' %}
         {{ states(_we) not in ('unavailable', 'unknown', 'none', none) and is_state(_we, 'on') }}
       vacation_active_bool: "{{ is_state('binary_sensor.sha_vacation', 'on') }}"
-      default_temp:         "{{ states('number.sha_' ~ room_id ~ '_default_temp') | float(18.0) }}"
 
   # ── Active schedule ────────────────────────────────────────────────────
+  # schedules is a list of dicts: [{"entity_id": "schedule.xxx", "target_temp": 26.0}, ...]
   - variables:
-      active_schedule: >
-        {% set ns = namespace(found=false, temp=0.0, name='') %}
+      active_schedule_entity: >
+        {% set ns = namespace(found=false, eid='') %}
         {% for s in schedules %}
-          {% if not ns.found and is_state(s, 'on') %}
-            {% set fname = state_attr(s, 'friendly_name') | default('') %}
-            {% set temps = fname | regex_findall('(\d+(?:\.\d+)?)C$', ignorecase=True) %}
+          {% if not ns.found and is_state(s.entity_id, 'on') %}
             {% set ns.found = true %}
-            {% set ns.temp = temps | first | float(21) if temps else 21.0 %}
-            {% set ns.name = fname %}
+            {% set ns.eid = s.entity_id %}
           {% endif %}
         {% endfor %}
-        {{ {'active': ns.found, 'temp': ns.temp, 'name': ns.name} | tojson }}
-      in_comfort_bool:       "{{ (active_schedule | from_json).active | bool(false) }}"
-      comfort_temp:          "{{ (active_schedule | from_json).temp | float(0) }}"
-      active_schedule_name:  "{{ (active_schedule | from_json).name | default('') }}"
+        {{ ns.eid }}
+      active_schedule_name: >
+        {{ state_attr(active_schedule_entity, 'friendly_name') | default('')
+           if active_schedule_entity else '' }}
+      in_comfort_bool: "{{ active_schedule_entity != '' }}"
+      comfort_temp: >
+        {% if active_schedule_entity %}
+          {% set active = schedules | selectattr('entity_id', 'eq', active_schedule_entity) | first | default(none) %}
+          {{ active.target_temp | float(21) if active else comfort_temp_cfg | float(18.0) }}
+        {% else %}
+          {{ comfort_temp_cfg | float(18.0) }}
+        {% endif %}
       sha_trv_setpoint: >
         {{ states('number.sha_' ~ room_id ~ '_trv_setpoint')
            | float(comfort_temp) }}
@@ -146,19 +148,17 @@ action:
         {% set ns = namespace(found=false, temp=0.0, name='', mins_needed=0) %}
         {% if not in_comfort_bool %}
           {% for s in schedules %}
-            {% if not ns.found and is_state(s, 'off') %}
-              {% set fname = state_attr(s, 'friendly_name') | default('') %}
-              {% set nev = state_attr(s, 'next_event') %}
+            {% if not ns.found and is_state(s.entity_id, 'off') %}
+              {% set nev = state_attr(s.entity_id, 'next_event') %}
               {% if nev %}
-                {% set temps = fname | regex_findall('(\d+(?:\.\d+)?)C$', ignorecase=True) %}
-                {% set target_temp = temps | first | float(21) if temps else 21.0 %}
+                {% set target_temp = s.target_temp | float(21) %}
                 {% set temp_delta = target_temp - room_temp %}
                 {% set mins_needed = [(temp_delta / heating_rate) | int(10), 5] | max %}
                 {% set mins_to_start = ((as_datetime(nev) - now()).total_seconds() / 60) | int(0) %}
                 {% if temp_delta > 0.5 and 0 <= mins_to_start <= mins_needed %}
                   {% set ns.found = true %}
                   {% set ns.temp = target_temp %}
-                  {% set ns.name = fname %}
+                  {% set ns.name = state_attr(s.entity_id, 'friendly_name') | default(s.entity_id) %}
                   {% set ns.mins_needed = mins_needed %}
                 {% endif %}
               {% endif %}
@@ -181,7 +181,7 @@ action:
         {% elif in_preheat_bool %}
           {{ [preheat_temp | float, 4.0] | max }}
         {% else %}
-          {{ [default_temp | float, 4.0] | max }}
+          {{ [comfort_temp | float, 4.0] | max }}
         {% endif %}
 
       target_mode: >
@@ -203,7 +203,7 @@ action:
         {% elif in_comfort_bool or in_preheat_bool %}
           {{ [sha_trv_setpoint | float, 4.0] | max }}
         {% else %}
-          {{ [default_temp | float, 4.0] | max }}
+          {{ [comfort_temp | float, 4.0] | max }}
         {% endif %}
 
   # ── Dispatch ───────────────────────────────────────────────────────────
@@ -228,17 +228,17 @@ action:
       - action: system_log.write
         data:
           message: |
-            {%- set _scheds = schedules | select('match', '.+') | list -%}
+            {%- set _eids = schedules | map(attribute='entity_id') | list -%}
             {%- set _ns = namespace(slines=[]) -%}
-            {%- for s in _scheds -%}
-              {%- set _nev = state_attr(s, 'next_event') -%}
+            {%- for eid in _eids -%}
+              {%- set _nev = state_attr(eid, 'next_event') -%}
               {%- set _nev_str = (_nev | string)[:16] if _nev else '—' -%}
-              {%- set _ns.slines = _ns.slines + ['  ' ~ s ~ ': ' ~ states(s) | upper ~ ' (next: ' ~ _nev_str ~ ')'] -%}
+              {%- set _ns.slines = _ns.slines + ['  ' ~ eid ~ ': ' ~ states(eid) | upper ~ ' (next: ' ~ _nev_str ~ ')'] -%}
             {%- endfor -%}
             SHA [{{ room_name }}] ─── Control loop ──────────────────────────────────────
             Room: {{ room_temp | round(1) }}°C
             Mode: {{ target_mode | upper }}  Target: {{ target_temperature | round(1) }}°C
-            Schedules ({{ _scheds | count }}):
+            Schedules ({{ _eids | count }}):
             {{ _ns.slines | join('\n') }}
             Active now: {{ active_schedule_name if in_comfort_bool else ('Pre-heating for ' ~ preheat_schedule_name if in_preheat_bool else 'none') }}
             Pre-heat: {{ 'yes — ' ~ preheat_schedule_mins ~ ' min needed' if in_preheat_bool else 'no' }}
@@ -257,8 +257,8 @@ action:
                 {{ false }}
               {% else %}
                 {% set ns = namespace(found=false) %}
-                {% for s in schedules if s != '' and is_state(s, 'off') %}
-                  {% set nev = state_attr(s, 'next_event') %}
+                {% for s in schedules if is_state(s.entity_id, 'off') %}
+                  {% set nev = state_attr(s.entity_id, 'next_event') %}
                   {% if nev and not ns.found %}
                     {% set m = ((as_datetime(nev) - now()).total_seconds() / 60) | int(0) %}
                     {% if 0 <= m <= 60 %}
@@ -273,16 +273,15 @@ action:
             data:
               message: |
                 {%- set ns = namespace(mins=9999, name='', temp=0.0) -%}
-                {%- for s in schedules if s != '' and is_state(s, 'off') -%}
-                  {%- set nev = state_attr(s, 'next_event') -%}
+                {%- for s in schedules if is_state(s.entity_id, 'off') -%}
+                  {%- set nev = state_attr(s.entity_id, 'next_event') -%}
                   {%- if nev -%}
                     {%- set m = ((as_datetime(nev) - now()).total_seconds() / 60) | int(0) -%}
                     {%- if 0 <= m <= 60 and m < ns.mins -%}
-                      {%- set fname = state_attr(s, 'friendly_name') | default('') -%}
-                      {%- set temps = fname | regex_findall('(\d+(?:\.\d+)?)C$', ignorecase=True) -%}
+                      {%- set fname = state_attr(s.entity_id, 'friendly_name') | default(s.entity_id) -%}
                       {%- set ns.mins = m -%}
                       {%- set ns.name = fname -%}
-                      {%- set ns.temp = temps | first | float(21) if temps else 21.0 -%}
+                      {%- set ns.temp = s.target_temp | float(21) -%}
                     {%- endif -%}
                   {%- endif -%}
                 {%- endfor -%}

@@ -18,6 +18,7 @@ from .const import (
     DOMAIN,
     BLUEPRINT_FILENAME,
     BLUEPRINT_RELATIVE_PATH,
+    SHA_AUTOMATION_VERSION,
     CONF_DEBUG_LOGGING,
     CONF_ROOM_CONFIGS,
     DAILY_ANALYSIS_HOUR,
@@ -26,6 +27,7 @@ from .const import (
     WEEKLY_ANALYSIS_HOUR,
     WEEKLY_ANALYSIS_MINUTE,
     DEFAULT_DEFAULT_TEMP,
+    DEFAULT_COMFORT_TEMP,
     DEFAULT_AIRING_DURATION,
     DEFAULT_HUMIDITY_THRESHOLD,
 )
@@ -127,16 +129,26 @@ def _do_create_room_automation(
         _LOGGER.error("Failed to read automations.yaml: %s", exc)
         return False
 
-    # Idempotency: skip inline automations; recreate legacy use_blueprint ones
+    # Idempotency: skip up-to-date inline automations; recreate outdated or legacy ones
+    version_tag = f"SHA_AUTOMATION_VERSION:{SHA_AUTOMATION_VERSION}"
     for existing in automations:
         if not (isinstance(existing, dict) and existing.get("alias") == alias):
             continue
-        if "use_blueprint" not in existing:
-            _LOGGER.debug("Automation '%s' already inline — skipping", alias)
+        if "use_blueprint" in existing:
+            _LOGGER.info(
+                "Automation '%s' uses legacy use_blueprint format — removing and recreating inline",
+                alias,
+            )
+            automations.remove(existing)
+            break
+        # Inline automation: check version tag in description
+        desc = existing.get("description", "")
+        if version_tag in desc:
+            _LOGGER.debug("Automation '%s' already at version %s — skipping", alias, SHA_AUTOMATION_VERSION)
             return False
         _LOGGER.info(
-            "Automation '%s' uses legacy use_blueprint format — removing and recreating inline",
-            alias,
+            "Automation '%s' is outdated (missing %s) — removing and recreating",
+            alias, version_tag,
         )
         automations.remove(existing)
         break
@@ -163,7 +175,8 @@ def _do_create_room_automation(
         "id": str(uuid.uuid4()),
         "alias": alias,
         "description": (
-            f"Smart Heating Advisor automation for {room_name}. Managed by SHA — do not edit manually."
+            f"Smart Heating Advisor automation for {room_name}. "
+            f"SHA_AUTOMATION_VERSION:{SHA_AUTOMATION_VERSION} — do not edit manually."
         ),
         **blueprint_parsed,
         "max": 10,
@@ -607,6 +620,64 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         _LOGGER.info("SHA: Phase 3b subentry migration complete")
 
+    # ── Phase 4: comfort_temp rename + schedules dict migration ──────────
+    # Renames default_temp → comfort_temp, default_temp_enabled →
+    # comfort_temp_enabled, and converts schedules from a list of entity_id
+    # strings to a list of {"entity_id": ..., "target_temp": ...} dicts.
+    if not entry.data.get("sha_phase4_migration_complete"):
+        import re as _re
+        _LOGGER.info("SHA: starting Phase 4 migration (comfort_temp rename + schedules dict)")
+        for subentry in list(entry.subentries.values()):
+            sub_room = subentry.data.get("room_name", "")
+            if not sub_room:
+                continue
+            existing = dict(subentry.data)
+            needs_update = False
+
+            # Rename default_temp_enabled → comfort_temp_enabled
+            if "default_temp_enabled" in existing and "comfort_temp_enabled" not in existing:
+                existing["comfort_temp_enabled"] = existing.pop("default_temp_enabled")
+                needs_update = True
+
+            # Rename default_temp → comfort_temp
+            if "default_temp" in existing and "comfort_temp" not in existing:
+                existing["comfort_temp"] = existing.pop("default_temp")
+                needs_update = True
+
+            # Ensure comfort_temp exists with a sensible default
+            if "comfort_temp" not in existing:
+                existing["comfort_temp"] = DEFAULT_COMFORT_TEMP
+                needs_update = True
+            if "comfort_temp_enabled" not in existing:
+                existing["comfort_temp_enabled"] = False
+                needs_update = True
+
+            # Convert schedules from string list to dict list
+            raw_scheds = existing.get("schedules", [])
+            if raw_scheds and isinstance(raw_scheds[0], str):
+                new_scheds = []
+                for eid in raw_scheds:
+                    if not isinstance(eid, str) or not eid:
+                        continue
+                    # Derive target_temp from entity name (strip domain, replace _, title-case)
+                    bare = eid.replace("schedule.", "").replace("_", " ")
+                    m = _re.search(r"(\d+(?:\.\d+)?)", bare)
+                    target = float(m.group(1)) if m else 21.0
+                    new_scheds.append({"entity_id": eid, "target_temp": target})
+                existing["schedules"] = new_scheds
+                needs_update = True
+
+            if needs_update:
+                hass.config_entries.async_update_subentry(entry, subentry, data=existing)
+                _LOGGER.info(
+                    "SHA: Phase 4 migration — updated subentry for room '%s'", sub_room
+                )
+
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, "sha_phase4_migration_complete": True}
+        )
+        _LOGGER.info("SHA: Phase 4 migration complete")
+
     # ── Phase 2: Sync coordinator with SubEntries (authoritative source) ──
     # SubEntries are the single source of truth after migration.
     # • New subentry (room added via "+ Add Room") → register in coordinator.
@@ -627,12 +698,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         room_id = _room_name_to_id(room_name)
         if room_id not in coordinator._room_registry:
             sub_data = subentry_data_by_name[room_name]
+            # Extract entity_ids from new dict format or pass strings as-is
+            raw_scheds = sub_data.get("schedules", [])
+            schedule_eids = [
+                s["entity_id"] if isinstance(s, dict) else s
+                for s in (raw_scheds if isinstance(raw_scheds, list) else [])
+                if (isinstance(s, dict) and s.get("entity_id")) or (isinstance(s, str) and s)
+            ]
             await coordinator.async_register_room(
                 room_name=room_name,
                 temp_sensor=(
                     sub_data.get("thermostat_sensor") or sub_data.get("temp_sensor", "")
                 ),
-                schedules=sub_data.get("schedules", []),
+                schedules=schedule_eids,
                 daily_report_enabled=True,
                 weekly_report_enabled=True,
             )

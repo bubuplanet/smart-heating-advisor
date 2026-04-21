@@ -24,10 +24,16 @@ DEFAULT_TRV_SETPOINT = 26.0   # °C — same as typical comfort target
 MIN_TRV_SETPOINT = 5.0        # °C — frost protection floor
 MAX_TRV_SETPOINT = 35.0       # °C — safe cap when HA max_temp unavailable
 
-# ── Default temperature defaults ───────────────────────────────────────
-DEFAULT_DEFAULT_TEMP = 18.0
-MIN_DEFAULT_TEMP = 4.0
-MAX_DEFAULT_TEMP = 35.0
+# ── Comfort temperature defaults ──────────────────────────────────────
+CONF_COMFORT_TEMP = "comfort_temp"
+DEFAULT_COMFORT_TEMP = 18.0
+MIN_COMFORT_TEMP = 4.0
+MAX_COMFORT_TEMP = 35.0
+
+# Backward-compat aliases — used by Phase 3 / Phase 3b migration code
+DEFAULT_DEFAULT_TEMP = DEFAULT_COMFORT_TEMP
+MIN_DEFAULT_TEMP = MIN_COMFORT_TEMP
+MAX_DEFAULT_TEMP = MAX_COMFORT_TEMP
 
 # ── Config keys ───────────────────────────────────────────────────────
 CONF_OLLAMA_URL = "ollama_url"
@@ -56,15 +62,17 @@ DEFAULT_VACATION_MODE = "frost"
 DEFAULT_AIRING_DURATION = 2         # minutes — used in Phase 3b migration conversion
 DEFAULT_HUMIDITY_THRESHOLD = 70.0   # % — used in Phase 3 migration defaults only
 
-# ── Blueprint tag ─────────────────────────────────────────────────────
-# Automations created from the SHA blueprint embed this tag in their
-# description field so SHA can discover rooms automatically.
-# Format: sha:<room_name>|<temp_sensor>|<schedule1>,<schedule2>,...
-BLUEPRINT_TAG_PREFIX = "sha:"
+# ── Blueprint / automation versioning ────────────────────────────────
+# Bump this whenever the inline automation content changes so SHA
+# automatically recreates outdated automations on next startup.
+SHA_AUTOMATION_VERSION = "0.0.19"
 
 # ── Blueprint file ────────────────────────────────────────────────────
 BLUEPRINT_FILENAME = "smart_heating_advisor.yaml"
 BLUEPRINT_RELATIVE_PATH = "blueprints"
+
+# ── Blueprint tag ─────────────────────────────────────────────────────
+BLUEPRINT_TAG_PREFIX = "sha:"
 
 # ── Analysis schedule ─────────────────────────────────────────────────
 DAILY_ANALYSIS_HOUR = 0

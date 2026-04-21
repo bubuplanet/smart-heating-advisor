@@ -201,7 +201,7 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
     """4-step room wizard for adding or reconfiguring a room.
 
     Step 1 (user):        Room name + sensors + TRVs + override + humidity
-    Step 2 (windows):     Window sensors + airing mode (TimeSelector duration)
+    Step 2 (windows):     Window sensors + airing mode (DurationSelector)
     Step 3 (temperature): Temperature profile + schedule helpers
     Step 4 (confirm):     Review and create/update
     """

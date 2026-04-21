@@ -32,7 +32,6 @@ from .const import (
 from .coordinator import SmartHeatingCoordinator, _room_name_to_id
 from .text_store import (
     async_load_messages,
-    render_blueprint_status,
     render_setup_notification,
 )
 
@@ -52,97 +51,6 @@ BLUEPRINT_SOURCE = Path(__file__).parent / BLUEPRINT_RELATIVE_PATH / BLUEPRINT_F
 PROMPTS_SOURCE_DIR = Path(__file__).parent / "prompts"
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Blueprint versioning
-# ──────────────────────────────────────────────────────────────────────
-
-def _get_blueprint_version(content: str) -> tuple[int, int, int]:
-    """Extract version tuple from blueprint description.
-    Looks for: **version: 1.0.0**
-    """
-    match = re.search(r"\*\*version:\s*(\d+)\.(\d+)\.(\d+)\*\*", content)
-    if match:
-        return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
-    return (0, 0, 0)
-
-
-def _version_str(v: tuple[int, int, int]) -> str:
-    return ".".join(str(x) for x in v)
-
-
-def _do_blueprint_install(
-    source: Path, dest: Path, dest_dir: Path
-) -> dict:
-    """Synchronous blueprint install — runs in executor."""
-    result = {
-        "action": "error",
-        "source_version": "0.0.0",
-        "dest_version": "0.0.0",
-        "message": "",
-        "backup_path": None,
-    }
-
-    if not source.exists():
-        result["message"] = f"Blueprint source not found: {source}"
-        return result
-
-    source_content = source.read_text(encoding="utf-8")
-    source_version = _get_blueprint_version(source_content)
-    result["source_version"] = _version_str(source_version)
-
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
-    if dest.exists():
-        dest_content = dest.read_text(encoding="utf-8")
-        dest_version = _get_blueprint_version(dest_content)
-        result["dest_version"] = _version_str(dest_version)
-
-        if source_version == dest_version and source_content == dest_content:
-            result["action"] = "skipped"
-            result["message"] = (
-                f"Blueprint v{result['source_version']} already up to date"
-            )
-            return result
-
-        if dest_version > source_version:
-            result["action"] = "skipped"
-            result["message"] = (
-                f"Installed blueprint v{result['dest_version']} is newer "
-                f"than bundled v{result['source_version']} — skipping"
-            )
-            return result
-
-        backup_path = dest.with_suffix(f".v{result['dest_version']}.yaml.bak")
-        shutil.copy2(dest, backup_path)
-        result["backup_path"] = str(backup_path)
-        _LOGGER.info("Backed up blueprint v%s to %s", result["dest_version"], backup_path)
-
-        shutil.copy2(source, dest)
-        result["action"] = "updated"
-        result["message"] = (
-            f"Blueprint updated from v{result['dest_version']} "
-            f"to v{result['source_version']}"
-        )
-        return result
-
-    shutil.copy2(source, dest)
-    result["action"] = "installed"
-    result["dest_version"] = result["source_version"]
-    result["message"] = f"Blueprint v{result['source_version']} installed"
-    return result
-
-
-async def async_install_blueprint(hass: HomeAssistant) -> dict:
-    """Install or upgrade the SHA blueprint."""
-    blueprint_dest_dir = (
-        Path(hass.config.config_dir) / "blueprints" / "automation" / "smart_heating_advisor"
-    )
-    blueprint_dest = blueprint_dest_dir / BLUEPRINT_FILENAME
-    result = await hass.async_add_executor_job(
-        _do_blueprint_install, BLUEPRINT_SOURCE, blueprint_dest, blueprint_dest_dir
-    )
-    _LOGGER.info("SHA Blueprint: %s", result["message"])
-    return result
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -187,7 +95,12 @@ def _do_create_room_automation(
     temp_sensor: str,
     trvs: list[str],
 ) -> bool:
-    """Write an enabled SHA blueprint automation to automations.yaml.
+    """Write an expanded inline SHA automation to automations.yaml.
+
+    Reads the bundled blueprint YAML, substitutes the room_id input, strips
+    the blueprint metadata, and writes a fully self-contained automation.
+    The blueprint file stays in custom_components and is never copied to
+    /config/blueprints — users do not see it in the Blueprints UI.
 
     Runs in executor (blocking I/O).
     Returns True if the automation was created, False if it already existed or
@@ -200,8 +113,7 @@ def _do_create_room_automation(
 
     if not automations_file.exists():
         _LOGGER.warning(
-            "automations.yaml not found at %s — cannot create automation for '%s'. "
-            "Create the automation manually from Settings → Automations → Blueprints.",
+            "automations.yaml not found at %s — cannot create automation for '%s'.",
             automations_file,
             room_name,
         )
@@ -215,17 +127,16 @@ def _do_create_room_automation(
         _LOGGER.error("Failed to read automations.yaml: %s", exc)
         return False
 
-    # Idempotency check — skip if up-to-date, recreate if outdated format
+    # Idempotency: skip inline automations; recreate legacy use_blueprint ones
     for existing in automations:
         if not (isinstance(existing, dict) and existing.get("alias") == alias):
             continue
-        bp_input = existing.get("use_blueprint", {}).get("input", {})
-        if list(bp_input.keys()) == ["room_id"]:
-            _LOGGER.debug("Automation '%s' already in Phase 5 format — skipping", alias)
+        if "use_blueprint" not in existing:
+            _LOGGER.debug("Automation '%s' already inline — skipping", alias)
             return False
         _LOGGER.info(
-            "Automation '%s' has outdated inputs %s — removing and recreating",
-            alias, list(bp_input.keys()),
+            "Automation '%s' uses legacy use_blueprint format — removing and recreating inline",
+            alias,
         )
         automations.remove(existing)
         break
@@ -235,19 +146,26 @@ def _do_create_room_automation(
     room_id = _re.sub(r"[\s\-]+", "_", room_id)
     room_id = _re.sub(r"[^a-z0-9_]", "", room_id)
 
+    # Read blueprint, substitute !input room_id, strip blueprint metadata
+    if not BLUEPRINT_SOURCE.exists():
+        _LOGGER.error("Blueprint source not found at %s — cannot create automation", BLUEPRINT_SOURCE)
+        return False
+    blueprint_text = BLUEPRINT_SOURCE.read_text(encoding="utf-8")
+    expanded_text = blueprint_text.replace("!input room_id", room_id)
+    try:
+        blueprint_parsed = yaml.safe_load(expanded_text)
+    except Exception as exc:
+        _LOGGER.error("Failed to parse blueprint YAML: %s", exc)
+        return False
+
+    blueprint_parsed.pop("blueprint", None)
     new_automation = {
         "id": str(uuid.uuid4()),
         "alias": alias,
         "description": (
-            f"Smart Heating Advisor automation for {room_name}. Managed by SHA integration."
+            f"Smart Heating Advisor automation for {room_name}. Managed by SHA — do not edit manually."
         ),
-        "use_blueprint": {
-            "path": "smart_heating_advisor/smart_heating_advisor.yaml",
-            "input": {
-                "room_id": room_id,
-            },
-        },
-        "mode": "queued",
+        **blueprint_parsed,
         "max": 10,
     }
     automations.append(new_automation)
@@ -262,7 +180,7 @@ def _do_create_room_automation(
             ),
             encoding="utf-8",
         )
-        _LOGGER.info("SHA: created and enabled automation for room '%s'", room_name)
+        _LOGGER.info("SHA: created inline automation for room '%s' (room_id=%s)", room_name, room_id)
         return True
     except Exception as exc:
         _LOGGER.error("Failed to write automations.yaml for room '%s': %s", room_name, exc)
@@ -468,9 +386,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Apply debug logging preference immediately
     _apply_debug_logging(entry.options.get(CONF_DEBUG_LOGGING, False))
-
-    # Install / upgrade blueprint
-    blueprint_result = await async_install_blueprint(hass)
 
     # Copy bundled prompt files to /config/smart_heating_advisor/prompts/
     # (only if not already present — preserves user edits)
@@ -944,15 +859,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     newly_created_rooms = await _async_ensure_room_automations(hass, rooms_for_automation)
 
     # ── Setup / room notification ────────────────────────────────────
-    action = blueprint_result["action"]
-
     if not entry.data.get("setup_notification_sent"):
         texts = await async_load_messages(hass)
-        source_ver = blueprint_result["source_version"]
-        dest_ver = blueprint_result["dest_version"]
-        backup = blueprint_result.get("backup_path")
-        backup_name = Path(backup).name if backup else "none"
-        bp_msg = render_blueprint_status(texts, action, source_ver, dest_ver, backup_name)
+        bp_msg = "✅ Automations are created and managed inline by SHA."
         notification_title, notification_message = render_setup_notification(texts, bp_msg)
 
         pn_async_create(

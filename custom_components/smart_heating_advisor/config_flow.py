@@ -474,6 +474,12 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                 "humidity_enabled": d.get("humidity_enabled", False),
                 "humidity_sensor": d.get("humidity_sensor", ""),
             }
+            if self._is_edit:
+                return self.async_update_and_abort(
+                    self._get_entry(),
+                    self._get_reconfigure_subentry(),
+                    data=new_data,
+                )
             return self.async_create_entry(title=room_name, data=new_data)
 
         trvs = d.get("trvs", [])

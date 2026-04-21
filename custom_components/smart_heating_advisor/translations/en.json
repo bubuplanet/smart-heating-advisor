@@ -42,41 +42,34 @@
           "data": {
             "room_name": "Room name",
             "thermostat_sensor": "Room temperature sensor",
-            "trvs": "Radiator thermostats"
+            "trvs": "Radiator thermostats",
+            "fixed_trvs": "Fixed temperature TRVs",
+            "fixed_trv_temp": "Fixed TRV temperature (°C)",
+            "override_enabled": "Enable manual override",
+            "override_duration_minutes": "Override duration (minutes)",
+            "humidity_enabled": "Enable humidity monitoring",
+            "humidity_sensor": "Humidity sensor"
+          },
+          "data_description": {
+            "room_name": "Select an existing area or type a new room name.",
+            "thermostat_sensor": "The temperature sensor in this room used to measure comfort zone temperature.",
+            "trvs": "The radiator thermostats SHA will control to heat this room.",
+            "fixed_trvs": "TRVs that run at a fixed temperature e.g. a heated towel rail. SHA will not adjust their setpoint.",
+            "fixed_trv_temp": "The fixed temperature SHA will maintain on these TRVs.",
+            "override_enabled": "When enabled allows temporarily pausing SHA heating control for this room for a set duration.",
+            "override_duration_minutes": "How long the override lasts before SHA resumes automatic heating control.",
+            "humidity_enabled": "SHA monitors humidity to detect shower or cooking activity. When humidity rises significantly above the room baseline SHA maintains heating to bring humidity to a comfortable level. SHA determines the threshold automatically.",
+            "humidity_sensor": "The humidity sensor in this room. Used to detect moisture events and adjust heating accordingly."
           },
           "sections": {
             "fixed_trvs_section": {
-              "name": "Fixed TRVs",
-              "description": "TRVs that run at a fixed temperature e.g. heated towel rail",
-              "data": {
-                "fixed_trvs": "Fixed temperature TRVs",
-                "fixed_trv_temp": "Fixed TRV temperature"
-              },
-              "data_description": {
-                "fixed_trvs": "TRVs that run at a fixed temperature e.g. heated towel rail."
-              }
+              "name": "Fixed TRVs"
             },
             "override_section": {
-              "name": "Manual Override",
-              "description": "Allow temporarily pausing SHA automation for this room",
-              "data": {
-                "override_enabled": "Enable manual override",
-                "override_duration_minutes": "Override duration (minutes)"
-              },
-              "data_description": {
-                "override_duration_minutes": "How long the manual override pauses automation. Only applies when manual override is enabled."
-              }
+              "name": "Manual Override"
             },
             "humidity_section": {
-              "name": "Humidity Monitoring",
-              "description": "SHA monitors humidity to detect shower or cooking activity",
-              "data": {
-                "humidity_enabled": "Enable humidity monitoring",
-                "humidity_sensor": "Humidity sensor"
-              },
-              "data_description": {
-                "humidity_sensor": "SHA monitors humidity to detect shower or cooking activity. SHA determines the alert threshold automatically from historical baseline."
-              }
+              "name": "Humidity Monitoring"
             }
           }
         },
@@ -89,20 +82,23 @@
             "airing_duration": "Airing duration"
           },
           "data_description": {
-            "airing_duration": "Minimum 10 seconds. How long heating pauses after airing mode is activated."
+            "window_sensors": "SHA pauses heating when any of these sensors report open. Leave empty if there are no window sensors in this room.",
+            "airing_mode_enabled": "When enabled, a dedicated switch lets you manually trigger an airing pause for this room.",
+            "airing_duration": "How long heating pauses when airing mode is activated. Minimum 10 seconds."
           }
         },
         "temperature": {
           "title": "Add Room — Step 3/4: Temperature Profile ({room_name})",
-          "description": "Configure temperature profile and comfort schedules for **{room_name}**.",
+          "description": "Configure temperature profile and schedules for **{room_name}**.",
           "data": {
+            "schedules": "Schedules (optional)",
             "default_temp_enabled": "Enable default temperature",
-            "default_temp": "Default temperature (°C)",
-            "schedules": "Comfort schedules (optional)"
+            "default_temp": "Default temperature (°C)"
           },
           "data_description": {
-            "default_temp_enabled": "SHA maintains this temperature when no schedule is active.",
-            "schedules": "Select your schedule helpers above. To create a new schedule helper, [click here]({schedule_helper_url}). Name it to include the target temperature e.g. 'Morning Shower 26C' or 'Day Heating 20C'."
+            "schedules": "Select schedule helpers that define when and at what temperature SHA heats this room. Name schedules to include the target temperature e.g. 'Morning Shower 26C' or 'Day Heating 20C'.",
+            "default_temp_enabled": "When enabled SHA maintains the default temperature below whenever no schedule is active.",
+            "default_temp": "The fallback temperature SHA targets when no schedule is running. Ignored when default temperature is disabled."
           }
         },
         "confirm": {

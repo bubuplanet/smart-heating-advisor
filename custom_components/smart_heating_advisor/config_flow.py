@@ -135,6 +135,9 @@ STEP_2_SCHEMA = vol.Schema(
 
 STEP_3_SCHEMA = vol.Schema(
     {
+        vol.Optional("schedules", default=[]): EntitySelector(
+            EntitySelectorConfig(domain="schedule", multiple=True)
+        ),
         vol.Required("default_temp_enabled", default=False): BooleanSelector(),
         vol.Optional("default_temp", default=DEFAULT_DEFAULT_TEMP): NumberSelector(
             NumberSelectorConfig(
@@ -144,9 +147,6 @@ STEP_3_SCHEMA = vol.Schema(
                 mode=NumberSelectorMode.BOX,
                 unit_of_measurement="°C",
             )
-        ),
-        vol.Optional("schedules", default=[]): EntitySelector(
-            EntitySelectorConfig(domain="schedule", multiple=True)
         ),
     }
 )
@@ -443,7 +443,6 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
             data_schema=self.add_suggested_values_to_schema(STEP_3_SCHEMA, d),
             description_placeholders={
                 "room_name": d.get("room_name", ""),
-                "schedule_helper_url": "/config/helpers/add?domain=schedule",
             },
             last_step=False,
         )

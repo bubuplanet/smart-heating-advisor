@@ -1307,8 +1307,8 @@ class SmartHeatingCoordinator:
         outside_temp = 10.0
         source_used = "default"
 
-        # Try dedicated outside temperature sensor first
-        sensor_entity = self.config.get(CONF_OUTSIDE_TEMP_SENSOR)
+        # Try dedicated outside temperature sensor first (stored in options)
+        sensor_entity = self.entry.options.get(CONF_OUTSIDE_TEMP_SENSOR)
         if sensor_entity:
             sensor_state = self.hass.states.get(sensor_entity)
             if sensor_state and sensor_state.state not in ("unavailable", "unknown", "none"):

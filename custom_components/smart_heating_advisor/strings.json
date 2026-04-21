@@ -131,13 +131,19 @@
           "data": {
             "vacation_enabled": "Enable vacation mode",
             "vacation_mode": "Vacation heating mode",
-            "vacation_calendar": "Vacation calendar (optional)"
+            "vacation_start_date": "Vacation start date (optional)",
+            "vacation_end_date": "Vacation end date (optional)"
           },
           "data_description": {
-            "vacation_calendar": "When set, SHA activates vacation mode during calendar events automatically. Leave blank to control vacation mode manually via the toggle above.",
-            "vacation_mode": "Heating strategy applied while vacation mode is active."
+            "vacation_mode": "Heating strategy applied while vacation mode is active.",
+            "vacation_start_date": "SHA activates vacation automatically from this date. Outside the date range the manual toggle controls vacation.",
+            "vacation_end_date": "SHA deactivates vacation automatically after this date."
           }
         }
+      },
+      "error": {
+        "end_date_required": "If you set a start date you must also set an end date.",
+        "end_before_start": "End date must be after start date."
       },
       "abort": {
         "already_configured": "Vacation settings are already configured. Click the existing Vacation entry to edit it."

@@ -48,7 +48,8 @@ CONF_DEBUG_LOGGING = "debug_logging"
 # ── Vacation config keys ───────────────────────────────────────────────
 CONF_VACATION_ENABLED = "vacation_enabled"
 CONF_VACATION_MODE = "vacation_mode"
-CONF_VACATION_CALENDAR = "vacation_calendar"
+CONF_VACATION_START_DATE = "vacation_start_date"
+CONF_VACATION_END_DATE = "vacation_end_date"
 DEFAULT_VACATION_MODE = "frost"
 
 # ── Room wizard defaults ───────────────────────────────────────────────

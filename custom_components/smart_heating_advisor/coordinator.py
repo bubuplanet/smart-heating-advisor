@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date as date_type, datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, Event
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.storage import Store
 
 from .const import (
@@ -26,8 +26,9 @@ from .const import (
     CONF_WEATHER_ENTITY,
     CONF_OUTSIDE_TEMP_SENSOR,
     CONF_VACATION_ENABLED,
-    CONF_VACATION_CALENDAR,
     CONF_VACATION_MODE,
+    CONF_VACATION_START_DATE,
+    CONF_VACATION_END_DATE,
     DEFAULT_HEATING_RATE,
     DEFAULT_VACATION_MODE,
     DEFAULT_DEFAULT_TEMP,
@@ -403,20 +404,13 @@ class SmartHeatingCoordinator:
         # ── Vacation state (global) ───────────────────────────────────
         await self._async_update_vacation_state(source="init")
 
-        vacation_calendar = self._get_vacation_config().get(CONF_VACATION_CALENDAR, "")
-        if vacation_calendar:
-            async def _handle_vacation_calendar(event: Event) -> None:
-                new_st = event.data.get("new_state")
-                new_st_str = new_st.state if new_st else "unavailable"
-                await self._async_update_vacation_state(
-                    source=f"calendar → {new_st_str}"
-                )
+        async def _async_vacation_tick(now=None) -> None:
+            await self._async_update_vacation_state(source="schedule")
 
-            unsub = async_track_state_change_event(
-                self.hass, [vacation_calendar], _handle_vacation_calendar
-            )
-            self._unsub_callbacks.append(unsub)
-            _LOGGER.debug("[SHA] Subscribed to vacation calendar: %s", vacation_calendar)
+        self._unsub_callbacks.append(
+            async_track_time_interval(self.hass, _async_vacation_tick, timedelta(hours=1))
+        )
+        _LOGGER.debug("[SHA] Vacation hourly re-evaluation scheduled")
 
     def async_stop_listeners(self) -> None:
         """Cancel all state change subscriptions. Safe to call from the event loop."""
@@ -426,44 +420,65 @@ class SmartHeatingCoordinator:
         _LOGGER.debug("[SHA] All state change listeners cancelled")
 
     def _get_vacation_config(self) -> dict:
-        """Return vacation config from the vacation subentry, falling back to options.
-
-        Subentry (created in Phase 6) takes priority.  Options fallback keeps
-        backwards compatibility for installations that stored vacation in options.
-        """
+        """Return vacation config from the vacation subentry, falling back to options."""
         for s in self.entry.subentries.values():
             if s.subentry_type == "vacation":
                 return dict(s.data)
         return {
             CONF_VACATION_ENABLED: self.entry.options.get(CONF_VACATION_ENABLED, False),
             CONF_VACATION_MODE: self.entry.options.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
-            CONF_VACATION_CALENDAR: self.entry.options.get(CONF_VACATION_CALENDAR, ""),
         }
 
     async def _async_update_vacation_state(self, source: str = "init") -> None:
-        """Compute vacation active flag and push to every room vacation sensor."""
-        vac = self._get_vacation_config()
-        vacation_enabled = vac.get(CONF_VACATION_ENABLED, False)
-        vacation_calendar = vac.get(CONF_VACATION_CALENDAR, "")
+        """Compute vacation active flag from date range or manual toggle."""
+        vacation_subentry = next(
+            (s for s in self.entry.subentries.values() if s.subentry_type == "vacation"),
+            None,
+        )
 
-        if vacation_calendar:
-            cal_state = self.hass.states.get(vacation_calendar)
-            vacation_active = cal_state is not None and cal_state.state == "on"
-        elif vacation_enabled:
-            vacation_active = True
+        if vacation_subentry:
+            vdata = vacation_subentry.data
+            enabled = vdata.get(CONF_VACATION_ENABLED, False)
+            start_str = vdata.get(CONF_VACATION_START_DATE)
+            end_str = vdata.get(CONF_VACATION_END_DATE)
+            vacation_mode = vdata.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE)
         else:
-            vacation_active = False
+            enabled = self.entry.options.get(CONF_VACATION_ENABLED, False)
+            start_str = None
+            end_str = None
+            vacation_mode = self.entry.options.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE)
+
+        vacation_active = False
+        vac_source = "none"
+
+        if start_str and end_str:
+            today = date_type.today()
+            try:
+                start = date_type.fromisoformat(start_str)
+                end = date_type.fromisoformat(end_str)
+                if start <= today <= end:
+                    vacation_active = True
+                    vac_source = "date_range"
+                else:
+                    vacation_active = enabled
+                    vac_source = "manual" if enabled else "none"
+            except ValueError:
+                _LOGGER.warning(
+                    "[SHA] Invalid vacation dates: %s to %s", start_str, end_str
+                )
+                vacation_active = enabled
+                vac_source = "manual" if enabled else "none"
+        else:
+            vacation_active = enabled
+            vac_source = "manual" if enabled else "none"
+
+        _LOGGER.debug(
+            "[SHA] Vacation: active=%s source=%s mode=%s",
+            vacation_active, vac_source, vacation_mode,
+        )
 
         if self._vacation_entity is not None:
             self._vacation_entity.set_vacation(vacation_active)
-
-        if source == "init":
-            _LOGGER.debug("[SHA] Initial vacation state: active=%s", vacation_active)
-        else:
-            _LOGGER.info(
-                "[SHA] Vacation state changed: active=%s source=%s",
-                vacation_active, source,
-            )
 
     async def async_get_room_config(self, room_id: str) -> dict:
         """Return full room configuration for blueprint service call.

@@ -14,6 +14,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    DateSelector,
     EntitySelector,
     EntitySelectorConfig,
     NumberSelector,
@@ -40,7 +41,8 @@ from .const import (
     CONF_ROOM_CONFIGS,
     CONF_VACATION_ENABLED,
     CONF_VACATION_MODE,
-    CONF_VACATION_CALENDAR,
+    CONF_VACATION_START_DATE,
+    CONF_VACATION_END_DATE,
     DEFAULT_OLLAMA_URL,
     DEFAULT_OLLAMA_MODEL,
     DEFAULT_INFLUXDB_URL,
@@ -522,6 +524,22 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
 # Subentry flow — Vacation Settings (single-step, singleton)
 # ──────────────────────────────────────────────────────────────────────
 
+_VACATION_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_VACATION_ENABLED, default=False): BooleanSelector(),
+        vol.Required(CONF_VACATION_MODE, default=DEFAULT_VACATION_MODE): SelectSelector(
+            SelectSelectorConfig(
+                options=["frost", "eco", "off"],
+                mode=SelectSelectorMode.LIST,
+                translation_key="vacation_mode",
+            )
+        ),
+        vol.Optional(CONF_VACATION_START_DATE): DateSelector(),
+        vol.Optional(CONF_VACATION_END_DATE): DateSelector(),
+    }
+)
+
+
 class SHAVacationSubentryFlowHandler(ConfigSubentryFlow):
     """Single-step vacation wizard.
 
@@ -541,39 +559,37 @@ class SHAVacationSubentryFlowHandler(ConfigSubentryFlow):
                 return self.async_abort(reason="already_configured")
 
         # Seed defaults from legacy options so migration is seamless
-        current_enabled = entry.options.get(CONF_VACATION_ENABLED, False)
-        current_mode = entry.options.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE)
+        suggested = {
+            CONF_VACATION_ENABLED: entry.options.get(CONF_VACATION_ENABLED, False),
+            CONF_VACATION_MODE: entry.options.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
+        }
+
+        errors: dict[str, str] = {}
 
         if user_input is not None:
-            vacation_calendar = user_input.get(CONF_VACATION_CALENDAR) or ""
-            return self.async_create_entry(
-                title="Vacation",
-                data={
-                    CONF_VACATION_ENABLED: bool(user_input.get(CONF_VACATION_ENABLED, False)),
-                    CONF_VACATION_MODE: user_input.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
-                    CONF_VACATION_CALENDAR: vacation_calendar,
-                },
-            )
+            start_date = user_input.get(CONF_VACATION_START_DATE) or None
+            end_date = user_input.get(CONF_VACATION_END_DATE) or None
+
+            if bool(start_date) != bool(end_date):
+                errors[CONF_VACATION_END_DATE] = "end_date_required"
+            elif start_date and end_date and end_date <= start_date:
+                errors[CONF_VACATION_END_DATE] = "end_before_start"
+
+            if not errors:
+                return self.async_create_entry(
+                    title="Vacation",
+                    data={
+                        CONF_VACATION_ENABLED: bool(user_input.get(CONF_VACATION_ENABLED, False)),
+                        CONF_VACATION_MODE: user_input.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
+                        CONF_VACATION_START_DATE: start_date,
+                        CONF_VACATION_END_DATE: end_date,
+                    },
+                )
 
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_VACATION_ENABLED, default=current_enabled): BooleanSelector(),
-                    vol.Required(
-                        CONF_VACATION_MODE, default=current_mode
-                    ): SelectSelector(
-                        SelectSelectorConfig(
-                            options=["frost", "eco", "off"],
-                            mode=SelectSelectorMode.LIST,
-                            translation_key="vacation_mode",
-                        )
-                    ),
-                    vol.Optional(CONF_VACATION_CALENDAR): EntitySelector(
-                        EntitySelectorConfig(domain="calendar")
-                    ),
-                }
-            ),
+            data_schema=self.add_suggested_values_to_schema(_VACATION_SCHEMA, suggested),
+            errors=errors,
         )
 
 

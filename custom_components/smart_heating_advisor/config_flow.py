@@ -446,10 +446,17 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
             d.pop("_schedule_entities", None)
             return await self.async_step_windows()
 
-        lines = [
-            f"• {eid.replace('schedule.', '').replace('_', ' ').title()}"
-            for eid in schedule_entities
-        ]
+        lines = []
+        for entity_id in schedule_entities:
+            state = self.hass.states.get(entity_id)
+            if state:
+                friendly = state.attributes.get(
+                    "friendly_name",
+                    entity_id.replace("schedule.", "").replace("_", " ").title(),
+                )
+            else:
+                friendly = entity_id.replace("schedule.", "").replace("_", " ").title()
+            lines.append(f"• {friendly}")
 
         return self.async_show_form(
             step_id="temperature_temps",

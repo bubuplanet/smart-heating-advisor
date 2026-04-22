@@ -122,7 +122,7 @@
         },
         "temperature_temps": {
           "title": "Add Room — Step 2/4: Target Temperatures ({room_name})",
-          "description": "Set the target temperature for each selected schedule in **{room_name}**:\n\n{schedule_names}\n\nSHA will pre-heat the room to reach each target temperature by the time the schedule starts."
+          "description": "Set the target temperature SHA will heat **{room_name}** to for each schedule:\n\n{schedule_names}\n\nEnter the temperature for each schedule below. The field labels show the schedule entity name — the schedule names are listed above."
         },
         "confirm": {
           "title": "Add Room — Step 4/4: Confirm ({room_name})",

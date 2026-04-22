@@ -953,27 +953,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry, data={**entry.data, "setup_notification_sent": True}
         )
 
-    if newly_created_rooms:
-        rooms_list = "\n".join(
-            f"- **{r['room_name']}**: Settings → Automations → SHA — {r['room_name']}"
-            for r in newly_created_rooms
-        )
-        pn_async_create(
-            hass,
-            (
-                f"SHA has created {len(newly_created_rooms)} room automation(s). "
-                "Each automation is enabled and will start controlling heating immediately.\n\n"
-                "**Optional next steps:**\n"
-                "1. Add Schedule helpers to each room via the integration card\n"
-                "   (e.g. 'Morning Shower 26C', 'Day Heating 20C')\n"
-                "2. Configure window sensors and vacation mode if needed\n\n"
-                f"**Room automations created:**\n{rooms_list}\n\n"
-                "SHA will start AI analysis after the first schedule runs."
-            ),
-            title="✅ Smart Heating Advisor — Room Automations Created",
-            notification_id="sha_rooms_created",
-        )
-
     # ── Update listener — reload on SubEntry changes ─────────────────
     # Registered LAST so that migration calls above (async_add_subentry,
     # async_update_entry) do not accidentally trigger this listener.

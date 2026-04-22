@@ -1940,7 +1940,7 @@ class SmartHeatingCoordinator:
                 "heating_rate": round(current_rate, 3),
                 "analysis_days": 30,
                 "schedule_count": len(schedules),
-                "schedule_lines": build_schedule_lines(schedules),
+                "schedule_lines": build_schedule_lines(schedules_info),
                 "schedules_analysis_text": schedules_analysis_text,
                 "humidity_analysis_text": humidity_analysis_text,
                 "outside_temp": weather["outside_temp"],
@@ -2426,7 +2426,7 @@ class SmartHeatingCoordinator:
                 "session_detail_table": session_detail_table,
                 # Extra context supplied to Ollama
                 "schedule_count": len(schedules),
-                "schedule_lines": build_schedule_lines(schedules),
+                "schedule_lines": build_schedule_lines(schedules_info),
                 "avg_heating_rate": str(avg_rate or "n/a"),
                 "avg_gradient": str(avg_gradient) if avg_gradient is not None else "n/a",
                 "success_rate_pct": round(success_rate_pct, 1),

@@ -46,7 +46,7 @@ def build_schedule_lines(
     """Build the schedule summary block for Ollama prompts."""
     lines = ""
     for s in schedules:
-        temp = extract_temp_from_schedule_name(s.get("name", ""), fallback_temp)
+        temp = s.get("target_temp") or extract_temp_from_schedule_name(s.get("name", ""), fallback_temp)
         lines += f"  - {s.get('name', 'Unknown')}: target {temp}°C\n"
     if not lines:
         lines = f"  - Default: target {fallback_temp}°C\n"

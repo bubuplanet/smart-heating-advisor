@@ -50,7 +50,7 @@
           "title": "Add Room — Step 1/4: Room Setup",
           "description": "Configure room name, temperature sensor, radiator thermostats, override settings and humidity monitoring.",
           "data": {
-            "room_name": "Room name *",
+            "room_name": "Room name",
             "thermostat_sensor": "Room temperature sensor",
             "trvs": "Radiator thermostats",
             "fixed_trvs": "Fixed temperature TRVs",
@@ -81,7 +81,7 @@
               "description": "Manual override lets you temporarily take control of this room's heating. When you activate override this will pause all automatic heating decisions for this room for the duration you set here. After the duration expires automation resumes. Useful when you want to heat the room immediately outside room schedules or comfort zone."
             },
             "humidity_section": {
-              "name": "Humidity Monitoring",
+              "name": "Humidity",
               "description": "SHA can use a humidity sensor to detect when the room is in use — for example a shower or cooking. When humidity rises significantly above the room's normal baseline SHA automatically maintains heating to help bring humidity back to a comfortable level. SHA learns your room's normal humidity baseline from historical data — you do not need to set a threshold manually. This works best in bathrooms and kitchens."
             }
           }
@@ -102,18 +102,18 @@
         },
         "temperature": {
           "title": "Add Room — Step 2/4: Temperature Profile ({room_name})",
-          "description": "Add schedules that define when and at what temperature SHA heats **{room_name}**. You can add multiple schedules one at a time.\n\n{added_schedules}\n\nBrowse available schedule helpers: {schedule_url}",
+          "description": "Add schedules that define when and at what temperature SHA heats **{room_name}**.\n\n**Schedules configured:**\n{schedule_list}\n\nTo create a new schedule helper [click here]({schedule_url}).",
           "data": {
-            "schedule_entity": "Schedule (optional)",
+            "remove_schedule": "Remove a schedule (optional)",
+            "schedule_entity": "Add a schedule (optional)",
             "schedule_target_temp": "Target temperature (°C)",
-            "add_another_schedule": "Add another schedule",
             "comfort_temp_enabled": "Enable comfort temperature",
             "comfort_temp": "Comfort temperature (°C)"
           },
           "data_description": {
+            "remove_schedule": "Select a schedule to remove from the list.",
             "schedule_entity": "Select a schedule helper that defines when this heating profile is active. Leave empty if you only want a comfort temperature fallback.",
             "schedule_target_temp": "The target temperature SHA will heat this room to when this schedule is active.",
-            "add_another_schedule": "Enable to add another schedule after saving this one. Disable when you have added all schedules.",
             "comfort_temp_enabled": "When enabled SHA maintains the comfort temperature below whenever no schedule is active.",
             "comfort_temp": "The fallback temperature SHA targets when no schedule is running. Ignored when comfort temperature is disabled."
           }
@@ -127,7 +127,8 @@
         "required": "This field is required.",
         "room_already_exists": "A room with this name is already configured in SHA. Use a different name.",
         "invalid_airing_duration": "Please enter a valid duration in HH:MM:SS format (minimum 00:00:10)",
-        "temperature_profile_required": "Please add at least one schedule or enable the comfort temperature. SHA needs a temperature target to control heating in this room."
+        "temperature_profile_required": "Please add at least one schedule or enable the comfort temperature. SHA needs a temperature target to control heating in this room.",
+        "schedule_already_added": "This schedule is already in the list."
       },
       "abort": {
         "reconfigure_successful": "Room settings updated successfully."

@@ -116,34 +116,6 @@ STEP_1_SCHEMA_BASE = vol.Schema(
     }
 )
 
-# Step 2: multi-schedule wizard (loops until add_another_schedule is False)
-STEP_3_SCHEMA = vol.Schema(
-    {
-        vol.Optional("schedule_entity"): EntitySelector(
-            EntitySelectorConfig(domain="schedule")
-        ),
-        vol.Optional("schedule_target_temp", default=21.0): NumberSelector(
-            NumberSelectorConfig(
-                min=4.0, max=35.0, step=0.5,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement="°C",
-            )
-        ),
-        vol.Optional("add_another_schedule", default=False): BooleanSelector(),
-        vol.Optional("comfort_temp_enabled", default=False): BooleanSelector(),
-        vol.Optional("comfort_temp", default=DEFAULT_COMFORT_TEMP): NumberSelector(
-            NumberSelectorConfig(
-                min=MIN_COMFORT_TEMP,
-                max=MAX_COMFORT_TEMP,
-                step=0.5,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement="°C",
-            )
-        ),
-    }
-)
-
-# Step 3: windows & airing
 STEP_2_SCHEMA = vol.Schema(
     {
         vol.Optional("window_sensors", default=[]): EntitySelector(
@@ -376,75 +348,104 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
             last_step=False,
         )
 
-    # ── Step 2: Temperature profile — multi-pass schedule builder ────
+    # ── Step 2: Temperature profile — schedule list management ──────────
 
     async def async_step_temperature(
         self, user_input: dict | None = None
     ) -> SubentryFlowResult:
-        """Step 2/4 — Add schedules one at a time, then set comfort temperature."""
+        """Step 2/4 — Manage schedule list and comfort temperature."""
         errors: dict[str, str] = {}
         d = self._data
 
-        # Ensure schedules list exists (persists across loop iterations)
         if "schedules" not in d:
             d["schedules"] = []
 
         if user_input is not None:
-            schedule_entity = (user_input.get("schedule_entity") or "").strip()
+            remove = (user_input.get("remove_schedule") or "").strip()
+            add_entity = (user_input.get("schedule_entity") or "").strip()
             schedule_target_temp = float(user_input.get("schedule_target_temp", 21.0))
-            add_another = bool(user_input.get("add_another_schedule", False))
-            comfort_temp_enabled = bool(user_input.get("comfort_temp_enabled", False))
-            comfort_temp = float(user_input.get("comfort_temp", DEFAULT_COMFORT_TEMP))
 
             # Always persist comfort settings
-            d["comfort_temp_enabled"] = comfort_temp_enabled
-            d["comfort_temp"] = comfort_temp
+            d["comfort_temp_enabled"] = bool(user_input.get("comfort_temp_enabled", False))
+            d["comfort_temp"] = float(user_input.get("comfort_temp", DEFAULT_COMFORT_TEMP))
 
-            # Append schedule if entity was selected
-            if schedule_entity:
-                d["schedules"].append({
-                    "entity_id": schedule_entity,
-                    "target_temp": schedule_target_temp,
+            # Process remove
+            if remove:
+                d["schedules"] = [s for s in d["schedules"] if s["entity_id"] != remove]
+
+            # Process add
+            if add_entity:
+                if any(s["entity_id"] == add_entity for s in d["schedules"]):
+                    errors["schedule_entity"] = "schedule_already_added"
+                else:
+                    d["schedules"].append({
+                        "entity_id": add_entity,
+                        "target_temp": schedule_target_temp,
+                    })
+
+            if not errors:
+                if remove or add_entity:
+                    pass  # loop back to show updated list
+                else:
+                    # Next clicked with no add/remove — validate and proceed
+                    if not d["schedules"] and not d.get("comfort_temp_enabled", False):
+                        errors["schedule_entity"] = "temperature_profile_required"
+                    else:
+                        return await self.async_step_windows()
+
+        # Build dynamic schema — remove dropdown only shown when list is non-empty
+        schedules = d.get("schedules", [])
+        schema_dict: dict = {}
+
+        if schedules:
+            remove_options = [{"value": "", "label": "— Keep all schedules —"}]
+            for s in schedules:
+                name = s["entity_id"].replace("schedule.", "").replace("_", " ").title()
+                remove_options.append({
+                    "value": s["entity_id"],
+                    "label": f"{name} → {s['target_temp']}°C",
                 })
+            schema_dict[vol.Optional("remove_schedule", default="")] = SelectSelector(
+                SelectSelectorConfig(options=remove_options, mode=SelectSelectorMode.DROPDOWN)
+            )
 
-            if add_another:
-                # Loop: show form again, clear schedule fields, show accumulated list
-                return await self.async_step_temperature()
+        schema_dict[vol.Optional("schedule_entity")] = EntitySelector(
+            EntitySelectorConfig(domain="schedule")
+        )
+        schema_dict[vol.Optional("schedule_target_temp", default=21.0)] = NumberSelector(
+            NumberSelectorConfig(
+                min=4.0, max=35.0, step=0.5,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="°C",
+            )
+        )
+        schema_dict[vol.Optional("comfort_temp_enabled", default=d.get("comfort_temp_enabled", False))] = BooleanSelector()
+        schema_dict[vol.Optional("comfort_temp", default=d.get("comfort_temp", DEFAULT_COMFORT_TEMP))] = NumberSelector(
+            NumberSelectorConfig(
+                min=MIN_COMFORT_TEMP, max=MAX_COMFORT_TEMP, step=0.5,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="°C",
+            )
+        )
 
-            # Final submit: validate at least one schedule or comfort temp enabled
-            if not d["schedules"] and not comfort_temp_enabled:
-                errors["schedule_entity"] = "temperature_profile_required"
-            else:
-                return await self.async_step_windows()
-
-        # Build description showing accumulated schedules
-        added = d.get("schedules", [])
-        if added:
+        # Build schedule list for description
+        if schedules:
             schedule_list = "\n".join(
                 f"• {s['entity_id'].replace('schedule.', '').replace('_', ' ').title()} → {s['target_temp']}°C"
-                for s in added
+                for s in schedules
             )
         else:
-            schedule_list = "None yet"
-
-        # Pre-fill comfort settings from accumulated data; leave schedule fields empty
-        suggested = {
-            "schedule_entity": None,
-            "schedule_target_temp": 21.0,
-            "add_another_schedule": False,
-            "comfort_temp_enabled": d.get("comfort_temp_enabled", False),
-            "comfort_temp": d.get("comfort_temp", DEFAULT_COMFORT_TEMP),
-        }
+            schedule_list = "No schedules configured yet."
 
         return self.async_show_form(
             step_id="temperature",
-            data_schema=self.add_suggested_values_to_schema(STEP_3_SCHEMA, suggested),
+            data_schema=vol.Schema(schema_dict),
+            errors=errors,
             description_placeholders={
                 "room_name": d.get("room_name", ""),
-                "added_schedules": schedule_list,
+                "schedule_list": schedule_list,
                 "schedule_url": "/config/helpers/add?domain=schedule",
             },
-            errors=errors,
             last_step=False,
         )
 

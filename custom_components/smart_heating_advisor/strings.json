@@ -100,23 +100,23 @@
             "airing_duration": "How long heating pauses when airing mode is activated. Minimum 10 seconds."
           }
         },
-        "temperature": {
-          "title": "Add Room — Step 2/4: Temperature Profile ({room_name})",
-          "description": "Add schedules that define when and at what temperature SHA heats **{room_name}**.\n\n**Schedules configured:**\n{schedule_list}\n\nTo create a new schedule helper [click here]({schedule_url}).",
+        "temperature_select": {
+          "title": "Add Room — Step 2/4: Schedules ({room_name})",
+          "description": "Select all schedule helpers that define when SHA heats **{room_name}**. You will set the target temperature for each schedule on the next page.",
           "data": {
-            "remove_schedule": "Remove a schedule (optional)",
-            "schedule_entity": "Add a schedule (optional)",
-            "schedule_target_temp": "Target temperature (°C)",
+            "schedules": "Schedules (optional)",
             "comfort_temp_enabled": "Enable comfort temperature",
             "comfort_temp": "Comfort temperature (°C)"
           },
           "data_description": {
-            "remove_schedule": "Select a schedule to remove from the list.",
-            "schedule_entity": "Select a schedule helper that defines when this heating profile is active. Leave empty if you only want a comfort temperature fallback.",
-            "schedule_target_temp": "The target temperature SHA will heat this room to when this schedule is active.",
-            "comfort_temp_enabled": "When enabled SHA maintains the comfort temperature below whenever no schedule is active.",
-            "comfort_temp": "The fallback temperature SHA targets when no schedule is running. Ignored when comfort temperature is disabled."
+            "schedules": "Select one or more schedule helpers. Leave empty if you only want a comfort temperature.",
+            "comfort_temp_enabled": "When no schedule is active SHA maintains this temperature continuously.",
+            "comfort_temp": "The temperature SHA maintains when no schedule is active."
           }
+        },
+        "temperature_temps": {
+          "title": "Add Room — Step 2/4: Target Temperatures ({room_name})",
+          "description": "Set the target temperature for each selected schedule in **{room_name}**:\n\n{schedule_names}\n\nSHA will pre-heat the room to reach each target temperature by the time the schedule starts."
         },
         "confirm": {
           "title": "Add Room — Step 4/4: Confirm ({room_name})",

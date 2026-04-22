@@ -292,7 +292,7 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                     "humidity_enabled": bool(humidity_sec.get("humidity_enabled", False)),
                     "humidity_sensor": humidity_sec.get("humidity_sensor", "") or "",
                 })
-                return await self.async_step_temperature()
+                return await self.async_step_temperature_select()
 
         # Build nested suggested values so sections pre-fill correctly
         suggested = {
@@ -348,12 +348,12 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
             last_step=False,
         )
 
-    # ── Step 2: Temperature profile — schedule list management ──────────
+    # ── Step 2a: Temperature profile — select schedules ─────────────────
 
-    async def async_step_temperature(
+    async def async_step_temperature_select(
         self, user_input: dict | None = None
     ) -> SubentryFlowResult:
-        """Step 2/4 — Manage schedule list and comfort temperature."""
+        """Step 2a — Select schedules and comfort temperature."""
         errors: dict[str, str] = {}
         d = self._data
 
@@ -361,90 +361,96 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
             d["schedules"] = []
 
         if user_input is not None:
-            remove = (user_input.get("remove_schedule") or "").strip()
-            add_entity = (user_input.get("schedule_entity") or "").strip()
-            schedule_target_temp = float(user_input.get("schedule_target_temp", 21.0))
+            schedule_entities = list(user_input.get("schedules") or [])
+            comfort_temp_enabled = bool(user_input.get("comfort_temp_enabled", False))
+            comfort_temp = float(user_input.get("comfort_temp", DEFAULT_COMFORT_TEMP))
 
-            # Always persist comfort settings
-            d["comfort_temp_enabled"] = bool(user_input.get("comfort_temp_enabled", False))
-            d["comfort_temp"] = float(user_input.get("comfort_temp", DEFAULT_COMFORT_TEMP))
+            d["comfort_temp_enabled"] = comfort_temp_enabled
+            d["comfort_temp"] = comfort_temp
 
-            # Process remove
-            if remove:
-                d["schedules"] = [s for s in d["schedules"] if s["entity_id"] != remove]
+            if not schedule_entities and not comfort_temp_enabled:
+                errors["schedules"] = "temperature_profile_required"
+            elif schedule_entities:
+                d["_schedule_entities"] = schedule_entities
+                return await self.async_step_temperature_temps()
+            else:
+                # Comfort only — no schedules
+                d["schedules"] = []
+                d.pop("_schedule_entities", None)
+                return await self.async_step_windows()
 
-            # Process add
-            if add_entity:
-                if any(s["entity_id"] == add_entity for s in d["schedules"]):
-                    errors["schedule_entity"] = "schedule_already_added"
-                else:
-                    d["schedules"].append({
-                        "entity_id": add_entity,
-                        "target_temp": schedule_target_temp,
-                    })
+        # Pre-fill entity_ids from existing schedules dict list
+        prefill_schedules = [s["entity_id"] for s in d.get("schedules", [])]
 
-            if not errors:
-                if remove or add_entity:
-                    pass  # loop back to show updated list
-                else:
-                    # Next clicked with no add/remove — validate and proceed
-                    if not d["schedules"] and not d.get("comfort_temp_enabled", False):
-                        errors["schedule_entity"] = "temperature_profile_required"
-                    else:
-                        return await self.async_step_windows()
-
-        # Build dynamic schema — remove dropdown only shown when list is non-empty
-        schedules = d.get("schedules", [])
-        schema_dict: dict = {}
-
-        if schedules:
-            remove_options = [{"value": "", "label": "— Keep all schedules —"}]
-            for s in schedules:
-                name = s["entity_id"].replace("schedule.", "").replace("_", " ").title()
-                remove_options.append({
-                    "value": s["entity_id"],
-                    "label": f"{name} → {s['target_temp']}°C",
-                })
-            schema_dict[vol.Optional("remove_schedule", default="")] = SelectSelector(
-                SelectSelectorConfig(options=remove_options, mode=SelectSelectorMode.DROPDOWN)
-            )
-
-        schema_dict[vol.Optional("schedule_entity")] = EntitySelector(
-            EntitySelectorConfig(domain="schedule")
-        )
-        schema_dict[vol.Optional("schedule_target_temp", default=21.0)] = NumberSelector(
-            NumberSelectorConfig(
-                min=4.0, max=35.0, step=0.5,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement="°C",
-            )
-        )
-        schema_dict[vol.Optional("comfort_temp_enabled", default=d.get("comfort_temp_enabled", False))] = BooleanSelector()
-        schema_dict[vol.Optional("comfort_temp", default=d.get("comfort_temp", DEFAULT_COMFORT_TEMP))] = NumberSelector(
-            NumberSelectorConfig(
-                min=MIN_COMFORT_TEMP, max=MAX_COMFORT_TEMP, step=0.5,
-                mode=NumberSelectorMode.BOX,
-                unit_of_measurement="°C",
-            )
-        )
-
-        # Build schedule list for description
-        if schedules:
-            schedule_list = "\n".join(
-                f"• {s['entity_id'].replace('schedule.', '').replace('_', ' ').title()} → {s['target_temp']}°C"
-                for s in schedules
-            )
-        else:
-            schedule_list = "No schedules configured yet."
+        schema = vol.Schema({
+            vol.Optional("schedules", default=prefill_schedules): EntitySelector(
+                EntitySelectorConfig(domain="schedule", multiple=True)
+            ),
+            vol.Optional("comfort_temp_enabled", default=d.get("comfort_temp_enabled", False)): BooleanSelector(),
+            vol.Optional("comfort_temp", default=d.get("comfort_temp", DEFAULT_COMFORT_TEMP)): NumberSelector(
+                NumberSelectorConfig(
+                    min=MIN_COMFORT_TEMP, max=MAX_COMFORT_TEMP, step=0.5,
+                    mode=NumberSelectorMode.BOX, unit_of_measurement="°C",
+                )
+            ),
+        })
 
         return self.async_show_form(
-            step_id="temperature",
-            data_schema=vol.Schema(schema_dict),
+            step_id="temperature_select",
+            data_schema=schema,
             errors=errors,
+            description_placeholders={"room_name": d.get("room_name", "")},
+            last_step=False,
+        )
+
+    # ── Step 2b: Temperature profile — set temp per schedule ─────────────
+
+    async def async_step_temperature_temps(
+        self, user_input: dict | None = None
+    ) -> SubentryFlowResult:
+        """Step 2b — Set target temperature for each selected schedule."""
+        d = self._data
+        schedule_entities = d.get("_schedule_entities", [])
+
+        # Build schema: one NumberSelector per schedule, keyed by sanitised entity slug
+        schema_dict: dict = {}
+        for entity_id in schedule_entities:
+            field_key = entity_id.replace("schedule.", "").replace(".", "_")
+            existing_temp = next(
+                (s["target_temp"] for s in d.get("schedules", []) if s["entity_id"] == entity_id),
+                21.0,
+            )
+            schema_dict[vol.Optional(field_key, default=existing_temp)] = NumberSelector(
+                NumberSelectorConfig(
+                    min=4.0, max=35.0, step=0.5,
+                    mode=NumberSelectorMode.BOX, unit_of_measurement="°C",
+                )
+            )
+
+        if user_input is not None:
+            schedules = []
+            for entity_id in schedule_entities:
+                field_key = entity_id.replace("schedule.", "").replace(".", "_")
+                schedules.append({
+                    "entity_id": entity_id,
+                    "target_temp": float(user_input.get(field_key, 21.0)),
+                })
+            d["schedules"] = schedules
+            d.pop("_schedule_entities", None)
+            return await self.async_step_windows()
+
+        lines = [
+            f"• {eid.replace('schedule.', '').replace('_', ' ').title()}"
+            for eid in schedule_entities
+        ]
+
+        return self.async_show_form(
+            step_id="temperature_temps",
+            data_schema=vol.Schema(schema_dict),
+            errors={},
             description_placeholders={
                 "room_name": d.get("room_name", ""),
-                "schedule_list": schedule_list,
-                "schedule_url": "/config/helpers/add?domain=schedule",
+                "schedule_names": "\n".join(lines),
             },
             last_step=False,
         )

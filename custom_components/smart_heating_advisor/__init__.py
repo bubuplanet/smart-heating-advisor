@@ -1005,3 +1005,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, "unregister_room")
         hass.services.async_remove(DOMAIN, "get_room_config")
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove all SHA room automations when the integration is uninstalled."""
+    for subentry in entry.subentries.values():
+        if subentry.subentry_type == "room":
+            room_name = subentry.data.get("room_name", "")
+            if room_name:
+                await _async_delete_room_automation(hass, room_name)
+
+    _LOGGER.info("SHA: all room automations removed on integration uninstall")

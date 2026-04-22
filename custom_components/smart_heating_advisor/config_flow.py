@@ -379,8 +379,11 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                 d.pop("_schedule_entities", None)
                 return await self.async_step_windows()
 
-        # Pre-fill entity_ids from existing schedules dict list
-        prefill_schedules = [s["entity_id"] for s in d.get("schedules", [])]
+        # Pre-fill entity_ids — handle both dict and legacy string format
+        prefill_schedules = [
+            s["entity_id"] if isinstance(s, dict) else s
+            for s in d.get("schedules", [])
+        ]
 
         schema = vol.Schema({
             vol.Optional("schedules", default=prefill_schedules): EntitySelector(
@@ -415,9 +418,13 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
         # Build schema: one NumberSelector per schedule, keyed by sanitised entity slug
         schema_dict: dict = {}
         for entity_id in schedule_entities:
-            field_key = entity_id.replace("schedule.", "").replace(".", "_")
+            field_key = entity_id.replace("schedule.", "").replace(".", "_").replace("-", "_")
             existing_temp = next(
-                (s["target_temp"] for s in d.get("schedules", []) if s["entity_id"] == entity_id),
+                (
+                    s["target_temp"] if isinstance(s, dict) else 21.0
+                    for s in d.get("schedules", [])
+                    if (s["entity_id"] if isinstance(s, dict) else s) == entity_id
+                ),
                 21.0,
             )
             schema_dict[vol.Optional(field_key, default=existing_temp)] = NumberSelector(
@@ -430,7 +437,7 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
         if user_input is not None:
             schedules = []
             for entity_id in schedule_entities:
-                field_key = entity_id.replace("schedule.", "").replace(".", "_")
+                field_key = entity_id.replace("schedule.", "").replace(".", "_").replace("-", "_")
                 schedules.append({
                     "entity_id": entity_id,
                     "target_temp": float(user_input.get(field_key, 21.0)),

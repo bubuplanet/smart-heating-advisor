@@ -109,8 +109,8 @@
             "comfort_temp": "Comfort temperature (°C)"
           },
           "data_description": {
-            "schedules": "Select one or more schedule helpers. Leave empty if you only want a comfort temperature.",
-            "comfort_temp_enabled": "When no schedule is active SHA maintains this temperature continuously.",
+            "schedules": "Select one or more schedule helpers. Leave empty if you only want a comfort temperature. To create a schedule go to Settings → Helpers → Add Helper → Schedule.",
+            "comfort_temp_enabled": "When no schedule is active SHA maintains this temperature continuously in this room.",
             "comfort_temp": "The temperature SHA maintains when no schedule is active."
           }
         },

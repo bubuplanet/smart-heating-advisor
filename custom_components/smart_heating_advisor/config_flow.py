@@ -707,6 +707,7 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_OLLAMA_URL, default=DEFAULT_OLLAMA_URL): str,
                     vol.Required(CONF_OLLAMA_MODEL, default=DEFAULT_OLLAMA_MODEL): str,
+                    vol.Optional(CONF_DEBUG_LOGGING, default=False): BooleanSelector(),
                 }
             ),
             errors=errors,
@@ -741,15 +742,20 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_weather(self, user_input=None) -> ConfigFlowResult:
-        """Step 3 — Weather entity selection."""
+        """Step 3 — Outside temperature sensor and weather entity."""
         if user_input is not None:
             return self.async_create_entry(
                 title="Smart Heating Advisor",
                 data={
-                    **self._ollama_data,
+                    CONF_OLLAMA_URL: self._ollama_data[CONF_OLLAMA_URL],
+                    CONF_OLLAMA_MODEL: self._ollama_data[CONF_OLLAMA_MODEL],
                     **self._influxdb_data,
                     CONF_WEATHER_ENTITY: user_input[CONF_WEATHER_ENTITY],
                     CONF_ROOM_CONFIGS: [],
+                },
+                options={
+                    CONF_DEBUG_LOGGING: bool(self._ollama_data.get(CONF_DEBUG_LOGGING, False)),
+                    CONF_OUTSIDE_TEMP_SENSOR: user_input.get(CONF_OUTSIDE_TEMP_SENSOR) or None,
                 },
             )
 
@@ -760,19 +766,24 @@ class SmartHeatingAdvisorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else ""
         )
 
-        schema_dict: dict = {}
-        if default_weather:
-            schema_dict[vol.Required(CONF_WEATHER_ENTITY, default=default_weather)] = EntitySelector(
-                EntitySelectorConfig(domain="weather")
-            )
-        else:
-            schema_dict[vol.Required(CONF_WEATHER_ENTITY)] = EntitySelector(
-                EntitySelectorConfig(domain="weather")
-            )
+        weather_key = (
+            vol.Required(CONF_WEATHER_ENTITY, default=default_weather)
+            if default_weather
+            else vol.Required(CONF_WEATHER_ENTITY)
+        )
 
         return self.async_show_form(
             step_id="weather",
-            data_schema=vol.Schema(schema_dict),
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(CONF_OUTSIDE_TEMP_SENSOR): EntitySelector(
+                        EntitySelectorConfig(domain="sensor", device_class="temperature")
+                    ),
+                    weather_key: EntitySelector(
+                        EntitySelectorConfig(domain="weather")
+                    ),
+                }
+            ),
         )
 
 

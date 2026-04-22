@@ -3,10 +3,14 @@
     "step": {
       "user": {
         "title": "Smart Heating Advisor — Ollama",
-        "description": "Step 1 of 2 — Configure your local Ollama AI instance",
+        "description": "Step 1 of 3 — Configure your local Ollama AI instance",
         "data": {
           "ollama_url": "Ollama URL",
-          "ollama_model": "Ollama Model Name"
+          "ollama_model": "Ollama Model Name",
+          "debug_logging": "Enable debug logging"
+        },
+        "data_description": {
+          "debug_logging": "Enable detailed logging for troubleshooting SHA. Can be changed at any time in the integration settings."
         }
       },
       "influxdb": {
@@ -23,10 +27,12 @@
         "title": "Smart Heating Advisor — Weather",
         "description": "Step 3 of 3 — SHA uses the weather entity to read outside temperature and forecast data for heating analysis. Once saved, add rooms using the **➕ Add Room** button on the integration card.",
         "data": {
+          "outside_temp_sensor": "Outside temperature sensor (optional)",
           "weather_entity": "Weather entity"
         },
         "data_description": {
-          "weather_entity": "The weather integration entity SHA reads for outside temperature and tomorrow's forecast. Usually weather.forecast_home."
+          "outside_temp_sensor": "Select a dedicated outdoor temperature sensor for more accurate outside temperature readings. If not selected SHA uses the weather entity temperature attribute automatically.",
+          "weather_entity": "Used for outside temperature and tomorrow's forecast data. SHA uses this as the default outside temperature source when no dedicated sensor is selected."
         }
       }
     },

@@ -16,8 +16,6 @@ DEFAULT_INFLUXDB_BUCKET = "home_assistant"
 DEFAULT_HEATING_RATE = 0.08
 MIN_HEATING_RATE = 0.01
 MAX_HEATING_RATE = 0.30
-DEFAULT_TARGET_TEMP = 22
-DEFAULT_TARGET_TIME = "06:00"
 
 # ── TRV setpoint defaults ──────────────────────────────────────────────
 DEFAULT_TRV_SETPOINT = 26.0   # °C — same as typical comfort target
@@ -71,20 +69,9 @@ SHA_AUTOMATION_VERSION = "0.0.20"
 BLUEPRINT_FILENAME = "smart_heating_advisor.yaml"
 BLUEPRINT_RELATIVE_PATH = "blueprints"
 
-# ── Blueprint tag ─────────────────────────────────────────────────────
-BLUEPRINT_TAG_PREFIX = "sha:"
-
 # ── Analysis schedule ─────────────────────────────────────────────────
 DAILY_ANALYSIS_HOUR = 0
 DAILY_ANALYSIS_MINUTE = 1
 WEEKLY_ANALYSIS_WEEKDAY = 5  # Saturday
 WEEKLY_ANALYSIS_HOUR = 1
 WEEKLY_ANALYSIS_MINUTE = 0
-
-# ── Seasons ───────────────────────────────────────────────────────────
-SEASONS = {
-    (12, 1, 2): "winter",
-    (3, 4, 5): "spring",
-    (6, 7, 8): "summer",
-    (9, 10, 11): "autumn",
-}

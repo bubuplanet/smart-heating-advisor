@@ -13,5 +13,5 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Sensor platform — all sensor entities removed in Phase 1 cleanup."""
+    """Sensor platform — reserved for future use. No sensor entities are created currently. The platform setup is kept as a placeholder for prediction sensors planned in a future release."""
     _LOGGER.debug("sensor platform: no sensor entities configured")

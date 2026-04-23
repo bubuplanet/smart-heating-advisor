@@ -380,22 +380,36 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                 d.pop("_schedule_entities", None)
                 return await self.async_step_windows()
 
-        # Pre-fill entity_ids — extract from dict or legacy string format
-        raw_eids = [
+        # Strip unknown entities from self._data so HA never loads them into
+        # the form (add_suggested_values_to_schema alone is not enough —
+        # HA reads subentry data directly before suggested_values apply).
+        raw = d.get("schedules", [])
+        known_scheds = [
+            s for s in raw
+            if self.hass.states.get(s["entity_id"] if isinstance(s, dict) else s)
+        ]
+        unknown_eids = [
+            (s["entity_id"] if isinstance(s, dict) else s)
+            for s in raw
+            if not self.hass.states.get(s["entity_id"] if isinstance(s, dict) else s)
+        ]
+        d["schedules"] = known_scheds
+        d["_unknown_schedules"] = unknown_eids
+
+        prefill_schedules = [
             s["entity_id"] if isinstance(s, dict) else s
-            for s in d.get("schedules", [])
+            for s in known_scheds
         ]
 
-        # Separate entities found in HA from those that no longer exist
-        prefill_schedules = [eid for eid in raw_eids if self.hass.states.get(eid)]
-        missing_entities = [eid for eid in raw_eids if not self.hass.states.get(eid)]
-
         missing_warning = ""
-        if missing_entities:
-            missing_str = ", ".join(f"`{e}`" for e in missing_entities)
+        if unknown_eids:
+            names = ", ".join(
+                e.replace("schedule.", "").replace("_", " ")
+                for e in unknown_eids
+            )
             missing_warning = (
-                f"\n\n⚠ Previously configured schedule(s) not found in HA: "
-                f"{missing_str}. Re-select or remove."
+                f"\n\n⚠ The following schedules were previously configured but "
+                f"no longer exist in HA and have been removed: {names}"
             )
 
         schema = vol.Schema({

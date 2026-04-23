@@ -65,7 +65,7 @@ DEFAULT_HUMIDITY_THRESHOLD = 70.0   # % — used in Phase 3 migration defaults o
 # ── Blueprint / automation versioning ────────────────────────────────
 # Bump this whenever the inline automation content changes so SHA
 # automatically recreates outdated automations on next startup.
-SHA_AUTOMATION_VERSION = "0.0.19"
+SHA_AUTOMATION_VERSION = "0.0.20"
 
 # ── Blueprint file ────────────────────────────────────────────────────
 BLUEPRINT_FILENAME = "smart_heating_advisor.yaml"

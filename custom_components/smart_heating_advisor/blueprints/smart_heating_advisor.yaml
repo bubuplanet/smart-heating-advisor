@@ -2,7 +2,7 @@ blueprint:
   name: "Smart Heating Advisor"
   author: bubuplanet
   description: |
-    **version: 0.0.19**
+    **version: 0.0.20**
 
     🌡️ Smart Heating Advisor — Unified Room Heating Blueprint
 
@@ -206,6 +206,21 @@ action:
           {{ [comfort_temp | float, 4.0] | max }}
         {% endif %}
 
+      preheat_already_running: >
+        {% if not in_preheat_bool %}
+          {{ false }}
+        {% else %}
+          {% set ns = namespace(match=false) %}
+          {% set target_sp = sha_trv_setpoint | float %}
+          {% for trv in trvs %}
+            {% if state_attr(trv, 'temperature') | float(-1) == target_sp
+               and state_attr(trv, 'hvac_action') | default('') == 'heating' %}
+              {% set ns.match = true %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.match }}
+        {% endif %}
+
   # ── Dispatch ───────────────────────────────────────────────────────────
   - choose:
 
@@ -356,7 +371,7 @@ action:
 
       - if:
           - condition: template
-            value_template: "{{ in_preheat_bool and not windows_open_bool }}"
+            value_template: "{{ in_preheat_bool and not windows_open_bool and not preheat_already_running }}"
         then:
           - action: system_log.write
             data:

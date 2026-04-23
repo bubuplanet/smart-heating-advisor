@@ -295,23 +295,36 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                 })
                 return await self.async_step_temperature_select()
 
-        # Build nested suggested values so sections pre-fill correctly
-        suggested = {
-            "thermostat_sensor": d.get("thermostat_sensor"),
-            "trvs": d.get("trvs", []),
-            "fixed_trvs_section": {
-                "fixed_trvs": d.get("fixed_trvs", []),
-                "fixed_trv_temp": d.get("fixed_trv_temp", 20.0),
-            },
+        # Build nested suggested values so sections pre-fill correctly.
+        # EntitySelector rejects None / "" / [] as suggested values even for
+        # optional fields, so only include entity keys when they are truthy.
+        _thermostat = d.get("thermostat_sensor")
+        _trvs = d.get("trvs") or []
+        _fixed_trvs = d.get("fixed_trvs") or []
+
+        fixed_sec_suggested: dict = {"fixed_trv_temp": d.get("fixed_trv_temp", 20.0)}
+        if _fixed_trvs:
+            fixed_sec_suggested["fixed_trvs"] = _fixed_trvs
+
+        humidity_sec_suggested: dict = {
+            "humidity_enabled": d.get("humidity_enabled", False),
+        }
+        _humidity_sensor = d.get("humidity_sensor")
+        if _humidity_sensor:
+            humidity_sec_suggested["humidity_sensor"] = _humidity_sensor
+
+        suggested: dict = {
             "override_section": {
                 "override_enabled": d.get("override_enabled", False),
                 "override_duration_minutes": d.get("override_duration_minutes", 60),
             },
-            "humidity_section": {
-                "humidity_enabled": d.get("humidity_enabled", False),
-                "humidity_sensor": d.get("humidity_sensor"),
-            },
+            "fixed_trvs_section": fixed_sec_suggested,
+            "humidity_section": humidity_sec_suggested,
         }
+        if _thermostat:
+            suggested["thermostat_sensor"] = _thermostat
+        if _trvs:
+            suggested["trvs"] = _trvs
 
         if not self._is_edit:
             areas = ar.async_get(self.hass).async_list_areas()

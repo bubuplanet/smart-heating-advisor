@@ -380,18 +380,30 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
                 d.pop("_schedule_entities", None)
                 return await self.async_step_windows()
 
-        # Pre-fill entity_ids — handle both dict and legacy string format
-        prefill_schedules = [
+        # Pre-fill entity_ids — extract from dict or legacy string format
+        raw_eids = [
             s["entity_id"] if isinstance(s, dict) else s
             for s in d.get("schedules", [])
         ]
 
+        # Separate entities found in HA from those that no longer exist
+        prefill_schedules = [eid for eid in raw_eids if self.hass.states.get(eid)]
+        missing_entities = [eid for eid in raw_eids if not self.hass.states.get(eid)]
+
+        missing_warning = ""
+        if missing_entities:
+            missing_str = ", ".join(f"`{e}`" for e in missing_entities)
+            missing_warning = (
+                f"\n\n⚠ Previously configured schedule(s) not found in HA: "
+                f"{missing_str}. Re-select or remove."
+            )
+
         schema = vol.Schema({
-            vol.Optional("schedules", default=prefill_schedules): EntitySelector(
+            vol.Optional("schedules"): EntitySelector(
                 EntitySelectorConfig(domain="schedule", multiple=True)
             ),
-            vol.Optional("comfort_temp_enabled", default=d.get("comfort_temp_enabled", False)): BooleanSelector(),
-            vol.Optional("comfort_temp", default=d.get("comfort_temp", DEFAULT_COMFORT_TEMP)): NumberSelector(
+            vol.Optional("comfort_temp_enabled"): BooleanSelector(),
+            vol.Optional("comfort_temp"): NumberSelector(
                 NumberSelectorConfig(
                     min=MIN_COMFORT_TEMP, max=MAX_COMFORT_TEMP, step=0.5,
                     mode=NumberSelectorMode.BOX, unit_of_measurement="°C",
@@ -399,11 +411,20 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
             ),
         })
 
+        suggested = {
+            "schedules": prefill_schedules,
+            "comfort_temp_enabled": d.get("comfort_temp_enabled", False),
+            "comfort_temp": d.get("comfort_temp", DEFAULT_COMFORT_TEMP),
+        }
+
         return self.async_show_form(
             step_id="temperature_select",
-            data_schema=schema,
+            data_schema=self.add_suggested_values_to_schema(schema, suggested),
             errors=errors,
-            description_placeholders={"room_name": d.get("room_name", "")},
+            description_placeholders={
+                "room_name": d.get("room_name", ""),
+                "missing_warning": missing_warning,
+            },
             last_step=False,
         )
 

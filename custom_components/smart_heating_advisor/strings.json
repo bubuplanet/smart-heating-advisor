@@ -108,7 +108,7 @@
         },
         "temperature_select": {
           "title": "Add Room — Step 2/4: Schedules ({room_name})",
-          "description": "Select all schedule helpers that define when SHA heats **{room_name}**. You will set the target temperature for each schedule on the next page.",
+          "description": "Select all schedule helpers that define when SHA heats **{room_name}**. You will set the target temperature for each schedule on the next page.{missing_warning}",
           "data": {
             "schedules": "Schedules (optional)",
             "comfort_temp_enabled": "Enable comfort temperature",

@@ -732,27 +732,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Entity registry cleanup is automatic: HA removed all entries linked
         # to the deleted subentry via config_subentry_id before this reload.
 
-        # Explicit device cleanup — HA does not automatically remove the device
-        # when subentry entities are deleted. Look up by the SHA device identifier
-        # and remove if no entities remain on it.
-        ent_reg = er.async_get(hass)
-        dev_reg = dr.async_get(hass)
-        device = dev_reg.async_get_device(
-            identifiers={(DOMAIN, f"{entry.entry_id}_{room_id}")}
-        )
-        if device:
-            remaining = [e for e in ent_reg.entities.values() if e.device_id == device.id]
-            if not remaining:
-                dev_reg.async_remove_device(device.id)
-                _LOGGER.info(
-                    "SHA: removed device '%s' for room_id='%s'", device.name, room_id
-                )
-            else:
-                _LOGGER.warning(
-                    "SHA: device '%s' still has %d entity/entities — not removing",
-                    device.name, len(remaining),
-                )
-
         await _async_delete_room_automation(hass, room_name)
         pn_async_create(
             hass,
@@ -764,6 +743,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             title=f"🗑️ SHA — {room_name} Removed",
             notification_id=f"sha_removed_{room_id}",
         )
+
+    # Global device sweep: remove SHA devices whose subentry no longer exists.
+    # Devices are keyed by (DOMAIN, subentry_id), so we collect all valid
+    # subentry ids and remove any device whose SHA identifier is not in that set.
+    if orphaned:
+        valid_identifiers = {entry.entry_id} | {
+            s.subentry_id for s in entry.subentries.values()
+        }
+        ent_reg = er.async_get(hass)
+        dev_reg = dr.async_get(hass)
+        for device in list(dev_reg.devices.values()):
+            sha_ids = {ident for domain, ident in device.identifiers if domain == DOMAIN}
+            if sha_ids and not (sha_ids & valid_identifiers):
+                remaining = [e for e in ent_reg.entities.values() if e.device_id == device.id]
+                if not remaining:
+                    dev_reg.async_remove_device(device.id)
+                    _LOGGER.info("SHA: removed orphaned device '%s'", device.name)
+                else:
+                    _LOGGER.warning(
+                        "SHA: orphaned device '%s' still has %d entity/entities — not removing",
+                        device.name, len(remaining),
+                    )
 
     # Set up sensor / switch / number platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

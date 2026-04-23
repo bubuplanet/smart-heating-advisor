@@ -143,12 +143,13 @@
     "vacation": {
       "entry_type": "Vacation",
       "initiate_flow": {
-        "user": "Vacation"
+        "user": "Vacation",
+        "reconfigure": "Edit Vacation"
       },
       "step": {
         "user": {
           "title": "Vacation Settings",
-          "description": "Configure vacation mode. SHA will use a reduced heating profile while you are away.\n\nDelete this subentry and recreate to change settings.",
+          "description": "{status}\n\nConfigure vacation settings below. When vacation is active SHA sets all rooms to the selected mode.",
           "data": {
             "vacation_enabled": "Enable vacation mode",
             "vacation_mode": "Vacation heating mode",
@@ -167,7 +168,8 @@
         "end_before_start": "End date must be after start date."
       },
       "abort": {
-        "already_configured": "Vacation settings are already configured. Click the existing Vacation entry to edit it."
+        "already_configured": "Vacation settings are already configured. Click the existing Vacation entry to edit it.",
+        "reconfigure_successful": "Vacation settings updated successfully."
       }
     }
   },

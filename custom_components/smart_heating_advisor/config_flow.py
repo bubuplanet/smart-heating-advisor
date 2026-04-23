@@ -1,5 +1,6 @@
 """Config flow for Smart Heating Advisor."""
 import logging
+from datetime import date as _date
 import voluptuous as vol
 import aiohttp
 
@@ -596,45 +597,36 @@ class SHARoomSubentryFlowHandler(ConfigSubentryFlow):
 # Subentry flow — Vacation Settings (single-step, singleton)
 # ──────────────────────────────────────────────────────────────────────
 
-_VACATION_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_VACATION_ENABLED, default=False): BooleanSelector(),
-        vol.Required(CONF_VACATION_MODE, default=DEFAULT_VACATION_MODE): SelectSelector(
-            SelectSelectorConfig(
-                options=["frost", "eco", "off"],
-                mode=SelectSelectorMode.LIST,
-                translation_key="vacation_mode",
-            )
-        ),
-        vol.Optional(CONF_VACATION_START_DATE): DateSelector(),
-        vol.Optional(CONF_VACATION_END_DATE): DateSelector(),
-    }
-)
-
-
 class SHAVacationSubentryFlowHandler(ConfigSubentryFlow):
-    """Single-step vacation wizard.
+    """Single-step vacation wizard (add and edit)."""
 
-    Only one vacation subentry is allowed per config entry.
-    Delete the existing subentry and recreate to change settings.
-    """
+    async def async_step_reconfigure(
+        self, user_input: dict | None = None
+    ) -> SubentryFlowResult:
+        """Entry point for editing existing vacation settings."""
+        return await self.async_step_user(user_input)
 
     async def async_step_user(
         self, user_input: dict | None = None
     ) -> SubentryFlowResult:
         """Step 1/1 — Vacation configuration."""
         entry = self._get_entry()
+        is_edit = self.source == config_entries.SOURCE_RECONFIGURE
 
-        # Guard: only one vacation subentry allowed
-        for s in entry.subentries.values():
-            if s.subentry_type == "vacation":
-                return self.async_abort(reason="already_configured")
+        # Guard: only one vacation subentry allowed in add mode
+        if not is_edit:
+            for s in entry.subentries.values():
+                if s.subentry_type == "vacation":
+                    return self.async_abort(reason="already_configured")
 
-        # Seed defaults from legacy options so migration is seamless
-        suggested = {
-            CONF_VACATION_ENABLED: entry.options.get(CONF_VACATION_ENABLED, False),
-            CONF_VACATION_MODE: entry.options.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
-        }
+        # Load existing data: subentry in edit mode, legacy options in add mode
+        if is_edit:
+            existing = dict(self._get_reconfigure_subentry().data)
+        else:
+            existing = {
+                CONF_VACATION_ENABLED: entry.options.get(CONF_VACATION_ENABLED, False),
+                CONF_VACATION_MODE: entry.options.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
+            }
 
         errors: dict[str, str] = {}
 
@@ -648,20 +640,88 @@ class SHAVacationSubentryFlowHandler(ConfigSubentryFlow):
                 errors[CONF_VACATION_END_DATE] = "end_before_start"
 
             if not errors:
-                return self.async_create_entry(
-                    title="Vacation",
-                    data={
-                        CONF_VACATION_ENABLED: bool(user_input.get(CONF_VACATION_ENABLED, False)),
-                        CONF_VACATION_MODE: user_input.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
-                        CONF_VACATION_START_DATE: start_date,
-                        CONF_VACATION_END_DATE: end_date,
-                    },
-                )
+                new_data = {
+                    CONF_VACATION_ENABLED: bool(user_input.get(CONF_VACATION_ENABLED, False)),
+                    CONF_VACATION_MODE: user_input.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
+                    CONF_VACATION_START_DATE: start_date,
+                    CONF_VACATION_END_DATE: end_date,
+                }
+                if is_edit:
+                    return self.async_update_and_abort(
+                        entry,
+                        self._get_reconfigure_subentry(),
+                        data=new_data,
+                    )
+                return self.async_create_entry(title="Vacation", data=new_data)
+
+        # Compute current vacation status for the description
+        enabled = existing.get(CONF_VACATION_ENABLED, False)
+        start_str = existing.get(CONF_VACATION_START_DATE)
+        end_str = existing.get(CONF_VACATION_END_DATE)
+
+        status = "inactive"
+        source = ""
+        if start_str and end_str:
+            today = _date.today()
+            try:
+                start = _date.fromisoformat(start_str)
+                end = _date.fromisoformat(end_str)
+                if start <= today <= end:
+                    status = "active"
+                    source = f"date range ({start_str} to {end_str})"
+                elif today < start:
+                    status = "inactive"
+                    source = f"scheduled from {start_str} to {end_str}"
+                else:
+                    status = "inactive"
+                    source = f"date range expired ({end_str})"
+            except ValueError:
+                pass
+        elif enabled:
+            status = "active"
+            source = "manual toggle"
+
+        status_line = (
+            f"Vacation is currently **{status}**"
+            + (f" — {source}" if source else "")
+        )
+
+        # Build schema with current values as defaults
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_VACATION_ENABLED,
+                    default=existing.get(CONF_VACATION_ENABLED, False),
+                ): BooleanSelector(),
+                vol.Optional(
+                    CONF_VACATION_MODE,
+                    default=existing.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=["frost", "eco", "off"],
+                        mode=SelectSelectorMode.LIST,
+                        translation_key="vacation_mode",
+                    )
+                ),
+                vol.Optional(CONF_VACATION_START_DATE): DateSelector(),
+                vol.Optional(CONF_VACATION_END_DATE): DateSelector(),
+            }
+        )
+
+        suggested: dict = {
+            CONF_VACATION_ENABLED: existing.get(CONF_VACATION_ENABLED, False),
+            CONF_VACATION_MODE: existing.get(CONF_VACATION_MODE, DEFAULT_VACATION_MODE),
+        }
+        if existing.get(CONF_VACATION_START_DATE):
+            suggested[CONF_VACATION_START_DATE] = existing[CONF_VACATION_START_DATE]
+        if existing.get(CONF_VACATION_END_DATE):
+            suggested[CONF_VACATION_END_DATE] = existing[CONF_VACATION_END_DATE]
 
         return self.async_show_form(
             step_id="user",
-            data_schema=self.add_suggested_values_to_schema(_VACATION_SCHEMA, suggested),
+            data_schema=self.add_suggested_values_to_schema(schema, suggested),
             errors=errors,
+            description_placeholders={"status": status_line},
         )
 
 

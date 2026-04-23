@@ -19,22 +19,22 @@ Existing automations continue working — re-save to use new features.
 Import it manually using the magic link in the README.
 
 ## setup_message_template
-Smart Heating Advisor is configured and ready.
+Smart Heating Advisor is configured and ready to control your heating.
 
-{bp_msg}
+**How SHA works:**
+SHA uses AI to learn how your home heats. Every day SHA analyses your heating sessions and automatically adjusts your radiator settings to reach the right temperature at the right time. Every week SHA sends you a plain language report on how each room is performing and flags any issues it has detected.
 
-Setup checklist:
-1. Your rooms are pre-configured from the setup wizard
-2. SHA has created disabled blueprint automations for each room
-3. Open each room automation (Settings → Automations) and add Schedule helpers
-   Example schedule name: "Morning Shower 26C"
-4. Enable each automation when ready
-5. Optional: Developer Tools → States → search for "sha_" to verify entities
+Each room you configure gets its own automation named SHA — {{room_name}}. SHA uses this automation to control your radiator thermostats and pre-heat rooms before your schedules start.
 
-Notes:
-- To add or remove rooms later: Settings → Integrations → Smart Heating Advisor → Configure
-- If you change schedules later: edit the automation and save
-- Upgrading from older versions: open and re-save each room automation so it uses the latest blueprint
+**Setup steps:**
+1. Add your rooms using the + Add Room button on the integration card
+2. For each room select your temperature sensor, radiator thermostats and schedules
+3. SHA creates and enables the automation SHA — {{room_name}} automatically — no further setup needed
+
+**To manage your rooms:**
+- Add a room: Integration card → + Add Room
+- Edit a room: Integration card → room name → Reconfigure
+- Change schedules: Integration card → room name → Reconfigure → Step 2
 
 Daily AI analysis runs at 00:01
 Weekly report runs Sunday at 01:00

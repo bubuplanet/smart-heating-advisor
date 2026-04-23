@@ -28,7 +28,7 @@ Always run `./scripts/verify_sha.sh` after Claude finishes.
 
 1. Start a new chat for every major architectural change
 2. Ask Claude to read all files before making any changes
-3. Run `./scripts/verify_sha.sh` after every session
+3. Run py_compile on all .py files after every session (see Prompt 9)
 4. Run Prompt 2 reality check before every commit
 5. Review `git diff` before committing — reject unexpected changes
 6. If Claude modifies a file not in scope ask why before accepting
@@ -329,43 +329,60 @@ The correct HA SubEntry pattern for this version requires:
 - A SEPARATE class extending ConfigSubentryFlow (not methods on the
   main config flow class)
 - async_get_supported_subentry_types classmethod on the main flow
-- async_setup_subentry and async_unload_subentry at module level
-  in __init__.py
 - Translations under config_subentries key in strings.json (NOT
   under config)
-- manifest.json needs single_config_entry: true but NOT
-  subentries: true (not a valid manifest key)
+- manifest.json needs single_config_entry: true
 
-SubEntry flow steps for SHA room management:
-- async_step_user: choose method (select area or manual)
-- async_step_area: select existing HA Area (auto-detects entities)
-- async_step_manual: free-text room name + optional entity selectors
-- async_step_entities: confirm auto-detected entities for area path
+Current room wizard steps (SHARoomSubentryFlowHandler):
+- async_step_user: room name (area dropdown + custom value),
+  temperature sensor, radiator thermostats, optional fixed TRVs
+  section (fixed_trvs + fixed_trv_temp), override section
+  (override_enabled + override_duration_minutes), humidity section
+  (humidity_enabled + humidity_sensor)
+- async_step_temperature_select: schedule helpers multi-select,
+  comfort_temp_enabled toggle, comfort_temp value
+- async_step_temperature_temps: one NumberSelector per schedule
+  for the target temperature
+- async_step_windows: window_sensors multi-select,
+  airing_mode_enabled toggle, airing_duration field
+- async_step_confirm: summary and submit
 
-On subentry creation (async_setup_subentry):
-1. Register room in coordinator registry
-2. Create all entities for the room
-3. Create disabled blueprint automation
-4. Send persistent notification with link to automation
+On room subentry creation:
+1. SHA writes an inline automation to automations.yaml (enabled,
+   not disabled) using the blueprint YAML as a template
+2. SHA registers the room in coordinator registry
+3. All entities are created by switch.py, number.py, binary_sensor.py
+   on the next integration reload
 
-On subentry deletion (async_unload_subentry):
-1. coordinator.async_unregister_room()
-2. Remove all entities from entity registry
-3. Remove device from device registry
-4. Disable blueprint automation (do not delete)
-5. Send persistent notification confirming cleanup
+On room subentry deletion:
+1. HA fires update_listeners with changed subentry IDs
+2. SHA detects the change and calls async_reload
+3. On reload orphan detection finds the room, calls
+   async_unregister_room, deletes the automation from
+   automations.yaml, and sends a persistent notification
+4. HA automatically removes entities linked to the deleted subentry
+   via config_subentry_id
+5. SHA global device sweep removes the orphaned device
 
 [describe specific change needed]
 ````
 
 ---
 
-## Prompt 9 — Verify script runner
+## Prompt 9 — Verify project state
 
 Use to quickly check the project state at any time.
 
 ````
-Run ./scripts/verify_sha.sh and report the results.
+Run the following checks and report the results:
+
+  cd custom_components/smart_heating_advisor
+  for f in *.py; do python3 -m py_compile "$f" && echo "✅ $f" || echo "❌ $f"; done
+  python3 -c "import json; json.load(open('strings.json'))" && echo "✅ strings.json"
+  python3 -c "import json; json.load(open('translations/en.json'))" && echo "✅ en.json"
+  python3 -c "import json; json.load(open('manifest.json'))" && echo "✅ manifest.json"
+  grep '"version"' manifest.json
+
 For any failing check explain why it fails and propose a fix.
 Do not make any changes until I confirm.
 ````
@@ -390,7 +407,7 @@ Read all files and verify the following release checklist:
 7. hacs.json is at repo root (not inside custom_components)
 8. No TODO comments left in any file
 9. No debug-only code committed
-10. ./scripts/verify_sha.sh passes with zero failures
+10. All .py files pass python3 -m py_compile and all JSON files parse
 11. No input_number.sha_* or input_boolean.sha_* references
     remain in the blueprint variables section
 12. All blueprint variables that read SHA entities use the

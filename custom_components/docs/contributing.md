@@ -24,7 +24,7 @@ custom_components/smart_heating_advisor/
   analyzer.py          — heating session analysis, prompt builders (pure functions)
   ollama.py            — Ollama HTTP client
   config_flow.py       — UI config and options flows
-  sensor.py            — read-only sensor entities
+  sensor.py            — sensor platform stub, reserved for future use
   switch.py            — boolean flag switches and override switch
   number.py            — heating rate number entity
   text_store.py        — notification message template loader
@@ -229,19 +229,22 @@ Example:
 
 ## Before every commit
 
-  ./scripts/verify_sha.sh
+  cd custom_components/smart_heating_advisor
+  for f in *.py; do python3 -m py_compile "$f" && echo "✅ $f" || echo "❌ $f"; done
+  python3 -c "import json; json.load(open('strings.json'))" && echo "✅ strings.json"
+  python3 -c "import json; json.load(open('translations/en.json'))" && echo "✅ en.json"
 
-All checks must pass.
+All files must compile and all JSON must parse without errors.
 
 ---
 
 ## Before every merge to master
 
-- All Phase 1–6 tests in docs/test-plan.md pass
-- Dry-run scenarios in docs/dry-run-scenarios.md pass
+- All Phase 1–8 tests in docs/test-plan.md pass with zero critical failures
+- Dry-run scenarios in docs/dry-run-scenarios.md pass against current blueprint
 - No errors in HA logs for 48 hours on production
 - Version bumped in manifest.json
-- Blueprint version bumped in description block
+- SHA_AUTOMATION_VERSION bumped in const.py if blueprint changed
 - CHANGELOG.md [Unreleased] section updated
 
 ---
@@ -266,7 +269,7 @@ for all reusable prompts and rules.
 
 Key rules:
 - Start a new chat for every major architectural change
-- Run ./scripts/verify_sha.sh after every Claude session
+- Run py_compile on all .py files after every Claude session
 - Run the reality check prompt before every commit
 - Review git diff before committing
 - Document major decisions in docs/architecture.md

@@ -55,7 +55,7 @@ Paste this into Claude VS Code extension to run all scenarios:
 | fixed_radiator_temperature | 35°C |
 | schedule | "Morning Shower 26C" — 06:00 to 07:00 |
 | default_hvac_mode | off |
-| default_temp | 16°C |
+| comfort_temp | 16°C |
 | override_minutes | 120 min |
 | window_open_reaction_time | 5 min |
 | vacation_enabled | false |
@@ -310,7 +310,12 @@ Paste this into Claude VS Code extension to run all scenarios:
 
 ---
 
-### Scenario 11 — Schedule name with no C suffix ⚠️
+### Scenario 11 — Schedule fallback temp when target_temp not set ⚠️
+
+Note: target temps are now configured per-schedule in the room wizard.
+This scenario tests the fallback path in the blueprint for schedules
+that have no temperature in their name AND no wizard-configured temp —
+e.g. schedules migrated from old installs without re-saving.
 
 **Context**
 
@@ -345,15 +350,21 @@ Paste this into Claude VS Code extension to run all scenarios:
 
 ### Scenario 13 — Vacation mode activates mid-schedule ⚠️
 
+> ⚠️ **Partially stale** — SHA vacation is now configured via a subentry
+> (date range or manual toggle), not via a calendar entity. The blueprint
+> still reads `vacation_active_bool` from the binary_sensor.sha_vacation
+> entity which SHA creates. Replace the calendar event trigger below with:
+> SHA subentry vacation enabled = true → binary_sensor.sha_vacation = on.
+
 **Context**
 
 | Parameter | Value |
 |---|---|
 | Schedule | active (comfort phase) |
-| vacation_mode | off → triggers at 06:30 |
-| Calendar event | "vacation week" starts 06:30 |
+| binary_sensor.sha_vacation | off → turns on at 06:30 |
+| vacation_mode | off (no heating) |
 
-1. vacation_active_bool via regex_search — evaluates to?
+1. vacation_active_bool reads binary_sensor.sha_vacation — evaluates to true?
 2. target_mode: vacation_active + mode = off → off?
 3. Both TRVs commanded off?
 4. vacation_notified fires once only — subsequent loops skip?

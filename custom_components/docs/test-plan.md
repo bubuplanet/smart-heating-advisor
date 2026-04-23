@@ -15,7 +15,7 @@
 |---|---|---|---|---|
 | 1.1 | Install SHA via git clone on production Pi | No errors in HA logs | ☐ Pass ☐ Fail | |
 | 1.2 | SHA integration appears in Settings → Devices & Services | SHA card visible | ☐ Pass ☐ Fail | |
-| 1.3 | Blueprint auto-installed in /config/blueprints | smart_heating_advisor.yaml present | ☐ Pass ☐ Fail | |
+| 1.3 | Blueprint template present in custom_components/smart_heating_advisor/blueprints/ | smart_heating_advisor.yaml present in component folder | ☐ Pass ☐ Fail | |
 | 1.4 | messages.md present in component folder | File exists | ☐ Pass ☐ Fail | |
 | 1.5 | No ERROR in HA logs after restart | Clean startup | ☐ Pass ☐ Fail | |
 | 1.6 | Setup persistent notification appears | Notification visible in HA UI | ☐ Pass ☐ Fail | |
@@ -31,10 +31,10 @@
 | 2.3 | Enter correct Ollama URL + model | Proceeds to Step 2 | ☐ Pass ☐ Fail | |
 | 2.4 | Enter wrong InfluxDB credentials | Error shown — cannot proceed | ☐ Pass ☐ Fail | |
 | 2.5 | Enter correct InfluxDB credentials | Proceeds to Step 3 | ☐ Pass ☐ Fail | |
-| 2.6 | Step 3 shows HA Areas as multi-select | All areas listed | ☐ Pass ☐ Fail | |
-| 2.7 | Select Bathroom area | Proceeds to entity confirmation | ☐ Pass ☐ Fail | |
-| 2.8 | Entity confirmation shows auto-detected temp sensor | Correct sensor pre-filled | ☐ Pass ☐ Fail | |
-| 2.9 | Entity confirmation shows auto-detected TRVs | Correct TRVs pre-filled | ☐ Pass ☐ Fail | |
+| 2.6 | Step 3 shows weather entity selector | Entity selector shown | ☐ Pass ☐ Fail | |
+| 2.7 | Select a weather entity — form submits | Integration configured | ☐ Pass ☐ Fail | |
+| 2.8 | Optional outside temp sensor field shown | Entity selector optional (no required indicator) | ☐ Pass ☐ Fail | |
+| 2.9 | Complete config flow with weather entity only | SHA configured successfully | ☐ Pass ☐ Fail | |
 | 2.10 | Complete config flow | SHA configured successfully | ☐ Pass ☐ Fail | |
 | 2.11 | SHA cannot be installed twice | Aborts with already configured | ☐ Pass ☐ Fail | |
 
@@ -45,17 +45,17 @@
 | # | Test | Expected | Result | Notes |
 |---|---|---|---|---|
 | 3.1 | + Add Room button visible on SHA integration card | Button present | ☐ Pass ☐ Fail | |
-| 3.2 | Click + Add Room — Step 1 shows method selection | Select Area / Manual options | ☐ Pass ☐ Fail | |
-| 3.3 | Select Area path — already configured areas excluded | Bathroom not shown if already added | ☐ Pass ☐ Fail | |
-| 3.4 | Select Area — entity auto-detection works | Temp sensor + TRVs pre-filled | ☐ Pass ☐ Fail | |
-| 3.5 | Complete Add Room via area | Room subentry appears on card | ☐ Pass ☐ Fail | |
-| 3.6 | Select Manual path — free text room name | Form accepts any name | ☐ Pass ☐ Fail | |
-| 3.7 | Manual path — enter duplicate room name | Error: room already exists | ☐ Pass ☐ Fail | |
-| 3.8 | Manual path — leave entities empty | Room created without entities | ☐ Pass ☐ Fail | |
-| 3.9 | Complete Add Room manually | Room subentry appears on card | ☐ Pass ☐ Fail | |
-| 3.10 | Add Room — blueprint automation created | SHA — ROOM automation in HA | ☐ Pass ☐ Fail | |
-| 3.11 | Blueprint automation created as disabled | Automation state is disabled | ☐ Pass ☐ Fail | |
-| 3.12 | Add Room persistent notification sent | Notification with automation link | ☐ Pass ☐ Fail | |
+| 3.2 | Click + Add Room — Step 1 shows room name, sensor and TRV fields | Form shows all Step 1 fields | ☐ Pass ☐ Fail | |
+| 3.3 | Enter duplicate room name | Error: room already exists | ☐ Pass ☐ Fail | |
+| 3.4 | Select temp sensor and TRVs — proceed to Step 2 | Step 2 shows schedule selectors | ☐ Pass ☐ Fail | |
+| 3.5 | Step 2 — add schedule helpers and set target temperatures | Schedules saved to room | ☐ Pass ☐ Fail | |
+| 3.6 | Step 3 — configure window sensors and airing mode | Step 3 fields shown | ☐ Pass ☐ Fail | |
+| 3.7 | Step 4 — confirm summary and submit | Room subentry appears on card | ☐ Pass ☐ Fail | |
+| 3.8 | Add Room with no schedules — comfort temp only | Room created with comfort temp | ☐ Pass ☐ Fail | |
+| 3.9 | Add Room — SHA automation created and enabled | SHA — ROOM automation in HA automations.yaml | ☐ Pass ☐ Fail | |
+| 3.10 | Automation created as enabled (not disabled) | Automation state is on | ☐ Pass ☐ Fail | |
+| 3.11 | Add Room persistent notification sent | Notification visible in HA | ☐ Pass ☐ Fail | |
+| 3.12 | Reconfigure room — all fields pre-filled | Previous values shown in wizard | ☐ Pass ☐ Fail | |
 
 ---
 
@@ -70,8 +70,8 @@
 | 4.5 | Confirm delete — number entity removed | No number.sha_ROOM_* in HA | ☐ Pass ☐ Fail | |
 | 4.6 | Confirm delete — sensor entities removed | No sensor.sha_ROOM_* in HA | ☐ Pass ☐ Fail | |
 | 4.7 | Confirm delete — device removed | SHA — ROOM device gone from HA | ☐ Pass ☐ Fail | |
-| 4.8 | Confirm delete — automation disabled | SHA — ROOM automation disabled | ☐ Pass ☐ Fail | |
-| 4.9 | Confirm delete — automation NOT deleted | SHA — ROOM automation still exists | ☐ Pass ☐ Fail | |
+| 4.8 | Confirm delete — automation deleted from automations.yaml | SHA — ROOM automation no longer present | ☐ Pass ☐ Fail | |
+| 4.9 | Confirm delete — device removed from HA device registry | SHA — ROOM device gone from HA | ☐ Pass ☐ Fail | |
 | 4.10 | Confirm delete — room removed from registry | Room not in coordinator registry | ☐ Pass ☐ Fail | |
 | 4.11 | Confirm delete — persistent notification sent | Removal notification visible | ☐ Pass ☐ Fail | |
 | 4.12 | No orphan devices after delete | Nothing under "Devices that don't belong to a sub-entry" | ☐ Pass ☐ Fail | |
@@ -98,12 +98,8 @@
 | 5.12 | switch.sha_ROOM_standby_notifications_enabled exists | Default on | ☐ Pass ☐ Fail | |
 | 5.13 | switch.sha_ROOM_window_notifications_enabled exists | Default on | ☐ Pass ☐ Fail | |
 | 5.14 | switch.sha_ROOM_override_notifications_enabled exists | Default on | ☐ Pass ☐ Fail | |
-| 5.15 | sensor.sha_ROOM_heating_rate exists | Shows current rate | ☐ Pass ☐ Fail | |
-| 5.16 | sensor.sha_ROOM_last_analysis exists | Shows unknown initially | ☐ Pass ☐ Fail | |
-| 5.17 | sensor.sha_ROOM_confidence exists | Shows unknown initially | ☐ Pass ☐ Fail | |
-| 5.18 | sensor.sha_ROOM_weekly_report exists | Shows no report yet | ☐ Pass ☐ Fail | |
-| 5.19 | All entities grouped under correct device | SHA — ROOM device in HA | ☐ Pass ☐ Fail | |
-| 5.20 | All switch entities persist after HA restart | States retained | ☐ Pass ☐ Fail | |
+| 5.15 | All entities grouped under correct device | SHA — ROOM device in HA | ☐ Pass ☐ Fail | |
+| 5.16 | All switch entities persist after HA restart | States retained | ☐ Pass ☐ Fail | |
 
 ---
 
@@ -111,9 +107,9 @@
 
 | # | Test | Expected | Result | Notes |
 |---|---|---|---|---|
-| 6.1 | Create schedule helper named "Morning Shower 26C" | Helper created in HA | ☐ Pass ☐ Fail | |
-| 6.2 | Open SHA — Bathroom automation | Pre-filled with correct entities | ☐ Pass ☐ Fail | |
-| 6.3 | Add schedule helper to automation | Schedule visible in blueprint | ☐ Pass ☐ Fail | |
+| 6.1 | Create a schedule helper in Settings → Helpers → Add Helper → Schedule | Helper created in HA | ☐ Pass ☐ Fail | |
+| 6.2 | Add schedule to room via room Reconfigure → Step 2 | Schedule selector shows the helper | ☐ Pass ☐ Fail | |
+| 6.3 | Set target temperature per schedule in wizard | Temperature saved in room subentry | ☐ Pass ☐ Fail | |
 | 6.4 | Enable automation | Automation state: on | ☐ Pass ☐ Fail | |
 | 6.5 | Automation runs on 5 min time_pattern | Logs show control loop | ☐ Pass ☐ Fail | |
 | 6.6 | Schedule active — TRV set to heat at correct temp | climate.set_temperature called | ☐ Pass ☐ Fail | |
@@ -161,13 +157,13 @@
 
 | # | Test | Expected | Result | Notes |
 |---|---|---|---|---|
-| 9.1 | Create calendar event starting with vacation keyword | Event visible in HA | ☐ Pass ☐ Fail | |
-| 9.2 | Calendar event active — vacation_active is true | Template evaluates true | ☐ Pass ☐ Fail | |
+| 9.1 | Click + Vacation on integration card — vacation subentry form opens | Form shows vacation fields | ☐ Pass ☐ Fail | |
+| 9.2 | Enable manual vacation toggle — binary_sensor.sha_vacation turns on | binary_sensor.sha_vacation = on | ☐ Pass ☐ Fail | |
 | 9.3 | Vacation mode off — TRV set to off | Heating stops | ☐ Pass ☐ Fail | |
-| 9.4 | Vacation mode frost — TRV maintains frost temp | TRV set to vacation_temperature | ☐ Pass ☐ Fail | |
+| 9.4 | Vacation mode frost — TRV maintains frost temp (7°C) | TRV set to frost temperature | ☐ Pass ☐ Fail | |
 | 9.5 | Vacation notification sent once | One notification | ☐ Pass ☐ Fail | |
-| 9.6 | Calendar event ends — vacation_active false | Normal heating resumes | ☐ Pass ☐ Fail | |
-| 9.7 | Vacation notification flag reset on vacation end | vacation_notified off | ☐ Pass ☐ Fail | |
+| 9.6 | Set start/end date range — vacation activates automatically when in range | binary_sensor.sha_vacation = on within range | ☐ Pass ☐ Fail | |
+| 9.7 | Outside date range — manual toggle controls vacation | Toggle overrides when no active date range | ☐ Pass ☐ Fail | |
 
 ---
 
@@ -187,7 +183,7 @@
 | 10.10 | Weekly analysis — persistent notification created | Weekly report in HA UI | ☐ Pass ☐ Fail | |
 | 10.11 | Weekly analysis — heating rate NOT changed | Rate unchanged after weekly | ☐ Pass ☐ Fail | |
 | 10.12 | Weekly analysis — sensor.sha_ROOM_weekly_report updated | Report text visible | ☐ Pass ☐ Fail | |
-| 10.13 | Daily analysis runs automatically at 02:00 | Log entry at 02:00 | ☐ Pass ☐ Fail | |
+| 10.13 | Daily analysis runs automatically at 00:01 | Log entry at 00:01 | ☐ Pass ☐ Fail | |
 | 10.14 | Weekly analysis runs automatically Sunday 01:00 | Log entry Sunday 01:00 | ☐ Pass ☐ Fail | |
 
 ---
@@ -244,7 +240,7 @@
 | 2 — Config flow | 11 | | | |
 | 3 — Add room | 12 | | | |
 | 4 — Remove room | 14 | | | |
-| 5 — Entities | 20 | | | |
+| 5 — Entities | 16 | | | |
 | 6 — Blueprint | 12 | | | |
 | 7 — Window detection | 8 | | | |
 | 8 — Manual override | 9 | | | |
@@ -253,7 +249,7 @@
 | 11 — Options flow | 8 | | | |
 | 12 — HA restart | 8 | | | |
 | 13 — Multi-room | 7 | | | |
-| **Total** | **136** | | | |
+| **Total** | **132** | | | |
 
 ---
 
@@ -267,5 +263,5 @@
 
 ## Sign-off
 
-Ready for v0.0.1 release when all Phase 1–6 tests pass with zero failures
-and Phases 7–13 have no critical failures.
+Ready for v0.0.1 release when all Phase 1–8 tests pass with zero failures
+and Phases 9–13 have no critical failures.

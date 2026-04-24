@@ -48,6 +48,11 @@ async def async_setup_entry(
             for s in entry.subentries.values()
             if s.data.get("room_name")
         }
+        subentry_data_by_room_id: dict[str, dict] = {
+            _room_name_to_id(s.data["room_name"]): dict(s.data)
+            for s in entry.subentries.values()
+            if s.data.get("room_name")
+        }
 
         entities: list = []
         for room in rooms:
@@ -71,7 +76,13 @@ async def async_setup_entry(
                 room.room_name,
             )
 
-            comfort_temp_entity = SHAComfortTempNumber(room.room_name, room.room_id, entry.entry_id, room_id_to_subentry.get(room.room_id))
+            sub_data = subentry_data_by_room_id.get(room.room_id, {})
+            initial_comfort_temp = float(sub_data.get("comfort_temp", DEFAULT_COMFORT_TEMP))
+            comfort_temp_entity = SHAComfortTempNumber(
+                room.room_name, room.room_id, entry.entry_id,
+                room_id_to_subentry.get(room.room_id),
+                initial_comfort_temp=initial_comfort_temp,
+            )
             entities.append(comfort_temp_entity)
             _LOGGER.debug(
                 "number platform: prepared entity unique_id=%s expected_entity_id=number.sha_%s_comfort_temp room='%s'",
@@ -267,12 +278,12 @@ class SHAComfortTempNumber(NumberEntity, RestoreEntity):
     _attr_mode = NumberMode.BOX
     _attr_icon = "mdi:thermometer"
 
-    def __init__(self, room_name: str, room_id: str, entry_id: str, subentry_id: str | None = None) -> None:
+    def __init__(self, room_name: str, room_id: str, entry_id: str, subentry_id: str | None = None, *, initial_comfort_temp: float = DEFAULT_COMFORT_TEMP) -> None:
         self._room_name = room_name
         self._room_id = room_id
         self._entry_id = entry_id
         self._subentry_id = subentry_id
-        self._value = DEFAULT_COMFORT_TEMP
+        self._value = initial_comfort_temp
 
         self._attr_name = "Comfort Temperature"
         self._attr_unique_id = f"sha_{room_id}_comfort_temp"

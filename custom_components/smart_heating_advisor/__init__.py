@@ -108,8 +108,6 @@ def _do_create_room_automation(
     Returns True if the automation was created, False if it already existed or
     automations.yaml was not found / not writable.
     """
-    import re as _re
-
     alias = f"SHA — {room_name}"
     automations_file = Path(config_dir) / "automations.yaml"
 
@@ -153,10 +151,7 @@ def _do_create_room_automation(
         automations.remove(existing)
         break
 
-    room_id = room_name.lower()
-    room_id = room_id.replace("'", "")
-    room_id = _re.sub(r"[\s\-]+", "_", room_id)
-    room_id = _re.sub(r"[^a-z0-9_]", "", room_id)
+    room_id = _room_name_to_id(room_name)
 
     # Read blueprint, substitute !input room_id, strip blueprint metadata
     if not BLUEPRINT_SOURCE.exists():

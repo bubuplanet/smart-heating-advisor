@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from .switch import SHAOverrideSwitch
     from .binary_sensor import SHAWindowOpenBinarySensor, SHAVacationBinarySensor
 
+from homeassistant.components.persistent_notification import async_create as pn_async_create
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, Event
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
@@ -1614,6 +1615,16 @@ class SmartHeatingCoordinator:
                     "[%s] Analysis complete — rate: %s°C/min, sessions: %d, target accuracy: %d of %d",
                     room.room_name, rate_str, session_count, on_target, session_count,
                 )
+                analysis_summary = (
+                    self.room_states.get(room.room_id, {}).get("analysis_summary")
+                    or f"Daily analysis complete for {room.room_name}."
+                )
+                pn_async_create(
+                    self.hass,
+                    analysis_summary,
+                    title=f"SHA Daily — {room.room_name}",
+                    notification_id=f"sha_daily_{room.room_id}",
+                )
                 success_count += 1
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.error(
@@ -1625,7 +1636,7 @@ class SmartHeatingCoordinator:
 
     async def _async_run_daily_analysis_for_room(
         self, room: RoomConfig, weather: dict, season: str
-    ) -> None:
+    ) -> dict:
         """Run daily analysis for a single room (hvac_action_str pipeline)."""
         run_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         _LOGGER.debug(
@@ -2117,6 +2128,22 @@ class SmartHeatingCoordinator:
                 )
 
         self._async_log_weekly_summary(room_results, date_str)
+
+        for room, stats in room_results:
+            consistent_miss = stats.get("consistent_miss", False)
+            report_text = stats.get("report", f"Weekly report for {room.room_name}.")
+            title = (
+                f"⚠️ SHA Weekly — {room.room_name}"
+                if consistent_miss
+                else f"✅ SHA Weekly — {room.room_name}"
+            )
+            pn_async_create(
+                self.hass,
+                report_text,
+                title=title,
+                notification_id=f"sha_weekly_{room.room_id}",
+            )
+
         _LOGGER.info("[SHA] Weekly analysis complete — %d of %d rooms processed", success_count, total)
 
     async def _async_run_weekly_analysis_for_room(
@@ -2126,8 +2153,8 @@ class SmartHeatingCoordinator:
 
         Report only — no entity updates, no rate or setpoint changes.
         Queries InfluxDB, calls Ollama for a plain-language homeowner report,
-        sends a persistent notification only when the room is consistently
-        missing target, and returns per-room stats for the overall summary.
+        and returns per-room stats for the overall summary.
+        The persistent notification is sent by the caller (async_run_weekly_analysis).
         """
         _EMPTY: dict = {
             "session_count": 0, "on_target": 0,

@@ -56,7 +56,7 @@
           "title": "Add Room — Step 1/4: Room Setup",
           "description": "Configure room name, temperature sensor, radiator thermostats, override settings and humidity monitoring.",
           "data": {
-            "room_name": "Room name *",
+            "room_name": "Room name",
             "thermostat_sensor": "Room temperature sensor",
             "trvs": "Radiator thermostats",
             "fixed_trvs": "Fixed temperature TRVs",
@@ -87,7 +87,7 @@
               "description": "Manual override lets you temporarily take control of this room's heating. When you activate override this will pause all automatic heating decisions for this room for the duration you set here. After the duration expires automation resumes. Useful when you want to heat the room immediately outside room schedules or comfort zone."
             },
             "humidity_section": {
-              "name": "Humidity Monitoring",
+              "name": "Humidity",
               "description": "SHA can use a humidity sensor to detect when the room is in use — for example a shower or cooking. When humidity rises significantly above the room's normal baseline SHA automatically maintains heating to help bring humidity back to a comfortable level. SHA learns your room's normal humidity baseline from historical data — you do not need to set a threshold manually. This works best in bathrooms and kitchens."
             }
           }

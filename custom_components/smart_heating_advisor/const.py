@@ -72,6 +72,6 @@ BLUEPRINT_RELATIVE_PATH = "blueprints"
 # ── Analysis schedule ─────────────────────────────────────────────────
 DAILY_ANALYSIS_HOUR = 0
 DAILY_ANALYSIS_MINUTE = 1
-WEEKLY_ANALYSIS_WEEKDAY = 5  # Saturday
+WEEKLY_ANALYSIS_WEEKDAY = 6  # Sunday
 WEEKLY_ANALYSIS_HOUR = 1
 WEEKLY_ANALYSIS_MINUTE = 0

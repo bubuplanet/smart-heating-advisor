@@ -57,7 +57,7 @@ custom_components/smart_heating_advisor/
 - **integration_type:** `"service"`, **single_config_entry:** `true`
 - Config uses **subentries**: one per room + one for vacation
 - Automations are written inline to `automations.yaml` — the blueprint file lives in `custom_components` and is never surfaced in the HA UI
-- All analysis is time-driven: daily at 00:01, weekly Sunday at 01:00
+- All analysis is time-driven: daily at 00:01, weekly Saturday at 06:00
 
 ---
 
@@ -163,7 +163,7 @@ Subentry fields: `vacation_enabled`, `vacation_mode` (`frost` / `eco` / `off`), 
 - Rate bounds: min `0.01 °C/min`, max `0.30 °C/min`
 - Sends one persistent HA notification per room (`notification_id: sha_daily_{room_id}`)
 
-### Weekly (Sunday 01:00)
+### Weekly (Saturday 06:00)
 - 30-day performance report via `prompts/weekly_analysis.md`
 - Root cause taxonomy (use these exact strings as constants):
   - `HARDWARE_INSUFFICIENT`
@@ -171,7 +171,7 @@ Subentry fields: `vacation_enabled`, `vacation_mode` (`frost` / `eco` / `off`), 
   - `TRV_SETPOINT_TOO_LOW`
   - `HEAT_LOSS_HIGH`
   - `RECENT_DEGRADATION`
-- Sends one persistent HA notification per room every Sunday (`notification_id: sha_weekly_{room_id}`)
+- Sends one persistent HA notification per room every Saturday (`notification_id: sha_weekly_{room_id}`)
 - Notification title uses ✅ when on target, ⚠️ when `consistent_miss` is True
 - Notification content is the plain-language `report_text` from Ollama
 - **One notification per room** — notifications never clobber each other across rooms
@@ -187,7 +187,7 @@ Three notification touchpoints. All use `pn_async_create` imported from
 |---|---|---|---|
 | Integration install | `__init__.async_setup_entry` | `sha_setup_complete` | Once, guarded by `setup_notification_sent` flag |
 | Daily analysis | `coordinator.async_run_daily_analysis` | `sha_daily_{room_id}` | Every daily run, per room |
-| Weekly analysis | `coordinator.async_run_weekly_analysis` | `sha_weekly_{room_id}` | Every Sunday run, per room |
+| Weekly analysis | `coordinator.async_run_weekly_analysis` | `sha_weekly_{room_id}` | Every Saturday run, per room |
 
 **Rules:**
 - IDs must be room-scoped (include `room_id`) for daily and weekly so notifications across rooms never clobber each other and can be dismissed individually
